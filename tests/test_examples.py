@@ -5,60 +5,46 @@ from pathlib import Path
 
 
 def _example_dir() -> Path:
-    package_examples = Path(__file__).parents[1] / "examples" / "langchain_workflows"
-    repo_examples = Path(__file__).parents[4] / "examples" / "notebooks"
-    if package_examples.exists():
-        return package_examples
-    return repo_examples
+    return Path(__file__).parents[1] / "examples"
 
 
-def test_coding_task_example_improves_with_mark_modes():
+def test_live_example_runner_imports_all_examples():
     example_dir = _example_dir()
     assert example_dir.exists(), f"Example directory not found: {example_dir}"
-    module_path = example_dir / "coding_task_examples.py"
-    spec = importlib.util.spec_from_file_location("coding_task_examples", module_path)
+    module_path = example_dir / "run_live_examples.py"
+    spec = importlib.util.spec_from_file_location("run_live_examples", module_path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
-    sys.modules["coding_task_examples"] = module
+    sys.modules["run_live_examples"] = module
     spec.loader.exec_module(module)
 
-    for runner in [
-        module.run_with_mark_tool,
-        module.run_with_mark_skill,
-        module.run_with_mark_middleware,
-    ]:
-        result = module.compare(runner)
-        assert result["with_mark"].benchmark.total > result["without_mark"].benchmark.total
-        assert "FastAPI" in result["with_mark"].output
+    expected = [
+        "01_local_memory_live.py",
+        "02_agent_ab_live.py",
+        "03_sessions_and_observe_live.py",
+        "04_sync_boundary_live.py",
+    ]
 
-    without_mark = module.run_supervisory_without_mark()
-    with module.TemporaryDirectory() as tmp:
-        with_mark = module.run_supervisory_with_mark(module.Path(tmp))
-    assert with_mark.benchmark.total > without_mark.benchmark.total
+    assert module.EXAMPLES == expected
 
 
-def test_notebooks_are_valid_json_and_document_usage_groups():
+def test_getting_started_notebook_is_valid_json_and_documents_usage_groups():
     example_dir = _example_dir()
     assert example_dir.exists(), f"Example directory not found: {example_dir}"
-    expected = {
-        "01_mark_tool_integration.ipynb": "MARK As An Agent Tool",
-        "02_mark_skill_integration.ipynb": "MARK As A SKILL.md Agent Skill",
-        "03_mark_middleware_integration.ipynb": "MARK As Agent Middleware",
-        "04_supervisory_multi_agent.ipynb": "MARK In A Supervisory Multi-Agent Workflow",
-    }
+    notebook = example_dir / "getting_started_with_mark.ipynb"
+    data = json.loads(notebook.read_text(encoding="utf-8"))
+    text = "\n".join(
+        line
+        for cell in data["cells"]
+        for line in cell.get("source", [])
+    )
 
-    for filename, title in expected.items():
-        data = json.loads((example_dir / filename).read_text(encoding="utf-8"))
-        text = "\n".join(
-            line
-            for cell in data["cells"]
-            for line in cell.get("source", [])
-        )
-
-        assert data["nbformat"] == 4
-        assert title in text
-        assert "without_mark" in text
-        assert "with_mark" in text
+    assert data["nbformat"] == 4
+    assert "Getting Started with MARK" in text
+    assert "Local memory" in text
+    assert "Baseline" in text
+    assert "MarkAgentMiddleware" in text
+    assert "LangChain tools" in text
 
 
 def test_mark_usage_skill_file_uses_agent_skill_format():
