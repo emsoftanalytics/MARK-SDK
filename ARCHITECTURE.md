@@ -258,6 +258,53 @@ Adapter modules are thin framework glue over public MARK APIs. Adapter
 namespaces without complete implementations are excluded from distributions
 until they have real code and tests.
 
+## Core Middleware
+
+Framework-neutral middleware lives under `mark.middleware`. It wraps public
+runtime operations (`store`, `observe`, and `retrieve`) and lets adapters share
+the same local behavior without reaching into private store or pipeline
+internals.
+
+```text
+Agent / Framework
+  ↓
+Adapter middleware
+  ↓
+mark.middleware.MiddlewareStack
+  ↓
+MarkMemory public operations
+  ↓
+MarkRuntime / RetrievalPipeline / CloudSync / LocalTracer
+```
+
+Initial local middleware includes:
+
+- `RecallMiddleware`: default retrieval options such as compression, query
+  expansion, session escalation, and explicit gap healing.
+- `ObserveMiddleware`: default observation source, tags, and metadata.
+- `CompressionMiddleware`: runtime compressor binding plus default retrieval
+  compression.
+- `QueryExpansionMiddleware`: runtime query-expander binding plus default
+  expansion.
+- `GapHealingMiddleware`: opt-in local gap healing and escalation.
+- `GovernanceMiddleware`: explicit local governance gate metadata and
+  quarantine behavior for rejected stores.
+- `LifecycleMiddleware`: explicit local run-cycle triggers after writes.
+- `ObservabilityMiddleware`: local tracer events around middleware operations.
+- `SyncMiddleware`: redacted sync envelope preparation or caller-supplied
+  cloud-client upload.
+- `TrustBusMiddleware`: publish selected observations or writes to the local
+  trust-aware bus.
+- `SandboxMiddleware`: blocked-by-default local sandbox execution wrapper for
+  explicit sandbox operations.
+- `MediaContinuityMiddleware`: creative continuity defaults for observations
+  and graph-expanded recall.
+
+These classes automate local behavior only. Cloud-owned capabilities such as
+managed retrieval, governed compression, browser healing, tenant policy, proof
+anchoring, hosted sandbox execution, and memory observatory retention remain
+outside the MIT SDK.
+
 ## Sync And Observability
 
 The SDK can prepare local sync envelopes but does not implement any remote

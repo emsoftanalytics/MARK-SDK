@@ -9,6 +9,7 @@ from typing import Any, Dict
 from mark.embeddings import EmbeddingProvider
 from mark.governance import ConsolidationGate, ConsolidationGateResult
 from mark.intelligence import RetrievalPipeline, RetrievalPolicy, RetrievalResult, SessionFilter
+from mark.middleware import MiddlewareStack
 from mark.memory.graph import GraphNeighborhood
 from mark.intelligence.extractor import DeterministicExtractor, ExtractionMerger, LLMStructuredExtractor
 from mark.memory.observe import ObserveEvent, ObserveResult
@@ -64,6 +65,8 @@ class MarkMemory:
         executor: ThreadPoolExecutor,
         llm: LLMProvider | None = None,
         consolidation_gate: ConsolidationGate | None = None,
+        middleware_stack: MiddlewareStack | None = None,
+        runtime: Any = None,
     ) -> None:
         self.agent_id = agent_id
         self._store = store
@@ -73,6 +76,8 @@ class MarkMemory:
         self._llm: LLMProvider | None = llm
         self._consolidation_gate = consolidation_gate or ConsolidationGate()
         self._last_rejection: MemoryWriteRejection | None = None
+        self._middleware = middleware_stack
+        self._runtime = runtime
 
     async def store(
         self,
@@ -122,6 +127,52 @@ class MarkMemory:
         metadata: dict[str, Any] | None = None,
     ) -> str:
         """Synchronous variant of store()."""
+        if self._middleware is not None and self._runtime is not None:
+            return self._middleware.run(
+                "store",
+                runtime=self._runtime,
+                agent_id=self.agent_id,
+                payload={
+                    "content": content,
+                    "importance": importance,
+                    "scope": scope,
+                    "tags": tags,
+                    "source": source,
+                    "state": state,
+                    "confidence": confidence,
+                    "session_id": session_id,
+                    "ttl_seconds": ttl_seconds,
+                    "metadata": metadata,
+                },
+                handler=lambda ctx: self._store_sync_impl(**ctx.payload),
+            )
+        return self._store_sync_impl(
+            content,
+            importance=importance,
+            scope=scope,
+            tags=tags,
+            source=source,
+            state=state,
+            confidence=confidence,
+            session_id=session_id,
+            ttl_seconds=ttl_seconds,
+            metadata=metadata,
+        )
+
+    def _store_sync_impl(
+        self,
+        content: str,
+        *,
+        importance: float = 0.5,
+        scope: MemoryScope = MemoryScope.AGENT,
+        tags: list[str] | None = None,
+        source: str | None = None,
+        state: MemoryState = MemoryState.UNVERIFIED,
+        confidence: float = 1.0,
+        session_id: str | None = None,
+        ttl_seconds: int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
         fragment, accepted = self._guarded_fragment(
             content,
             importance=importance,
@@ -219,6 +270,43 @@ class MarkMemory:
         Falls back gracefully — extraction failures never block the write.
         Returns ObserveResult with fragment_id, nodes, edges, and auto_tags.
         """
+        if self._middleware is not None and self._runtime is not None:
+            return self._middleware.run(
+                "observe",
+                runtime=self._runtime,
+                agent_id=self.agent_id,
+                payload={
+                    "text": text,
+                    "session_id": session_id,
+                    "importance": importance,
+                    "tags": tags,
+                    "source": source,
+                    "metadata": metadata,
+                    "memory_type": memory_type,
+                },
+                handler=lambda ctx: self._observe_impl(**ctx.payload),
+            )
+        return self._observe_impl(
+            text,
+            session_id=session_id,
+            importance=importance,
+            tags=tags,
+            source=source,
+            metadata=metadata,
+            memory_type=memory_type,
+        )
+
+    def _observe_impl(
+        self,
+        text: str,
+        *,
+        session_id:  str | None = None,
+        importance:  float = 0.5,
+        tags:        list[str] | None = None,
+        source:      str | None = None,
+        metadata:    dict[str, Any] | None = None,
+        memory_type: str | None = None,
+    ) -> ObserveResult:
         # 1. Deterministic extraction (always runs, no LLM required)
         det_result = DeterministicExtractor().extract(
             text, session_id=session_id, memory_type=memory_type,
@@ -236,7 +324,7 @@ class MarkMemory:
         # 3. Store fragment — all merged tags (deterministic + LLM) applied at write time
         auto_tags   = merged.tags
         all_tags    = [*(tags or []), *auto_tags]
-        fragment_id = self.store_sync(
+        fragment_id = self._store_sync_impl(
             text,
             importance = importance,
             tags       = all_tags,
@@ -358,6 +446,64 @@ class MarkMemory:
         expand: bool = False,
     ) -> RetrievalResult:
         """Synchronous variant of retrieve()."""
+        if self._middleware is not None and self._runtime is not None:
+            return self._middleware.run(
+                "retrieve",
+                runtime=self._runtime,
+                agent_id=self.agent_id,
+                payload={
+                    "query": query,
+                    "policy": policy,
+                    "session_id": session_id,
+                    "session_prefix": session_prefix,
+                    "tags": tags,
+                    "tier": tier,
+                    "scope": scope,
+                    "block_id": block_id,
+                    "block_ids": block_ids,
+                    "escalate_on_gap": escalate_on_gap,
+                    "heal_gaps": heal_gaps,
+                    "web_skill": web_skill,
+                    "compress": compress,
+                    "expand": expand,
+                },
+                handler=lambda ctx: self._retrieve_sync_impl(**ctx.payload),
+            )
+        return self._retrieve_sync_impl(
+            query,
+            policy,
+            session_id=session_id,
+            session_prefix=session_prefix,
+            tags=tags,
+            tier=tier,
+            scope=scope,
+            block_id=block_id,
+            block_ids=block_ids,
+            escalate_on_gap=escalate_on_gap,
+            heal_gaps=heal_gaps,
+            web_skill=web_skill,
+            compress=compress,
+            expand=expand,
+        )
+
+    def _retrieve_sync_impl(
+        self,
+        query: str,
+        policy: RetrievalPolicy = RetrievalPolicy.BALANCED,
+        *,
+        session_id: str | None = None,
+        session_prefix: str | None = None,
+        tags: list[str] | None = None,
+        tier: MemoryTier | None = None,
+        scope: MemoryScope | None = None,
+        block_id: str | None = None,
+        block_ids: list[str] | None = None,
+        escalate_on_gap: bool = False,
+        heal_gaps: bool = False,
+        web_skill: Skill | None = None,
+        compress: bool = False,
+        expand: bool = False,
+    ) -> RetrievalResult:
         sf = SessionFilter(
             session_id=session_id, session_prefix=session_prefix,
             tags=tags, tier=tier, scope=scope,

@@ -10,6 +10,7 @@ from mark.index import VectorIndex
 from mark.intelligence import GraphExpander, RetrievalPipeline
 from mark.intelligence.compressor import ContextualCompressor
 from mark.intelligence.query_expander import QueryExpander
+from mark.middleware import MarkMiddleware, MiddlewareStack
 from mark.observability import LocalTracer, SessionTrace
 from mark.plugins import MarkCorePlugin, PluginRegistry
 from mark.security import EncryptionProvider, NoOpEncryptionProvider
@@ -39,6 +40,7 @@ class MarkRuntime:
         enable_activity_log: bool = False,
         tracer: LocalTracer | None = None,
         retrieval_top_k: int = 20,
+        middleware: Iterable[MarkMiddleware] | None = None,
     ) -> None:
         self.store = store
         self.embedder = embedder
@@ -61,6 +63,8 @@ class MarkRuntime:
             query_expander=query_expander,
             top_k_with_llm=retrieval_top_k,
         )
+        self.middleware = MiddlewareStack(middleware)
+        self.middleware.bind(self)
 
     @classmethod
     def local(
@@ -77,6 +81,7 @@ class MarkRuntime:
         enable_activity_log: bool = False,
         tracer: LocalTracer | None = None,
         retrieval_top_k: int = 20,
+        middleware: Iterable[MarkMiddleware] | None = None,
     ) -> "MarkRuntime":
         """Construct a local instance with default wiring."""
         registry = PluginRegistry()
@@ -91,6 +96,7 @@ class MarkRuntime:
             enable_activity_log=enable_activity_log,
             tracer=tracer,
             retrieval_top_k=retrieval_top_k,
+            middleware=middleware,
         )
         for plugin in plugins or []:
             registry.register(plugin, runtime=runtime)
@@ -111,6 +117,15 @@ class MarkRuntime:
     def configure_retrieval_top_k(self, top_k: int) -> None:
         """Set the LLM-aware candidate pool size for the retrieval pipeline."""
         self.pipeline.configure_top_k_with_llm(top_k)
+
+    def add_middleware(self, middleware: MarkMiddleware) -> MarkMiddleware:
+        """Register middleware for future memory operations."""
+        return self.middleware.add(middleware)
+
+    def use(self, *middleware: MarkMiddleware) -> "MarkRuntime":
+        """Register middleware and return this runtime for chaining."""
+        self.middleware.extend(middleware)
+        return self
 
     def session_log(self, agent_id: str, session_id: str | None = None) -> "SessionActivityLog":
         """Return a SessionActivityLog scoped to agent_id (and optionally session_id)."""
@@ -138,6 +153,8 @@ class MarkRuntime:
             embedder=self.embedder,
             executor=self.executor,
             llm=self._llm,
+            middleware_stack=self.middleware,
+            runtime=self,
         )
 
     def global_bus(self) -> GlobalMemoryBus:

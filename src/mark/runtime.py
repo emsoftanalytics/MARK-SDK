@@ -33,6 +33,7 @@ from mark.skills import SkillRegistry
 if TYPE_CHECKING:
     from mark.media.world_bible import WorldBibleMemory
     from mark.memory.observe import ObserveResult
+    from mark.middleware import MarkMiddleware
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,7 @@ class Mark:
         query_expander:  object | None = None,
         enable_activity_log: bool = False,
         retrieval_top_k: int = 20,
+        middleware:      list["MarkMiddleware"] | None = None,
     ) -> "Mark":
         """
         Create a local Mark instance backed by SQLite.
@@ -149,6 +151,7 @@ class Mark:
             query_expander       = query_expander,   # type: ignore[arg-type]
             enable_activity_log  = enable_activity_log,
             retrieval_top_k      = retrieval_top_k,
+            middleware           = middleware,
         )
 
         # One-time migration: if a legacy memory.json exists, import it into SQLite

@@ -236,6 +236,9 @@ with Mark.local(".") as mark:
 
 - **Agent-loop integration:** wrap simple callables, attach LangChain
   middleware, expose MARK as tools, or serve memory over MCP.
+- **Pluggable middleware:** compose framework-neutral middleware for recall
+  defaults, observation metadata, compression, query expansion, gap healing,
+  lifecycle maintenance, observability, and sync envelope preparation.
 - **Structured memory:** fragments, sessions, graph nodes, graph edges,
   world-bible facts, and graph-scoped blocks.
 - **Retrieval pipeline:** local vector retrieval with graph expansion, scoring,
@@ -299,6 +302,37 @@ python examples/run_live_examples.py
 uv run --extra dev pytest
 uv build
 ```
+
+## Middleware
+
+Core middleware lives under `mark.middleware` and wraps existing public runtime
+operations. It is framework-neutral, so LangChain, MCP, and future adapters can
+share the same behavior instead of reimplementing recall, observation,
+compression, tracing, and sync logic.
+
+```python
+from mark import Mark, ObserveMiddleware, ObservabilityMiddleware, RecallMiddleware
+
+with Mark.local(
+    ".",
+    middleware=[
+        RecallMiddleware(compress=True, expand=True),
+        ObserveMiddleware(source="agent", tags=["workflow"]),
+        ObservabilityMiddleware(),
+    ],
+) as mark:
+    memory = mark.runtime.memory("coder")
+    memory.observe("Use FastAPI dependency injection for routes.")
+    result = memory.retrieve_sync("How should routes be implemented?")
+```
+
+Middleware is local and MIT-safe. Hosted retrieval, governed compression,
+browser healing, and cloud observability remain cloud/client responsibilities
+behind explicit hooks or caller-supplied clients.
+
+Available local middleware includes recall, observe/writeback, compression,
+query expansion, governance, lifecycle, observability, sync, trust bus,
+sandbox, gap healing, and media continuity wrappers.
 
 ## Contributing & support
 

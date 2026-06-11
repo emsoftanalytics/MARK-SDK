@@ -6,6 +6,19 @@ This project follows semantic versioning for public package releases.
 
 ## Unreleased
 
+### Added
+
+- Added `mark.middleware`, a framework-neutral middleware layer for wrapping
+  local `store`, `observe`, and `retrieve` operations through public runtime
+  APIs.
+- Added local middleware for recall defaults, observation source/tags/metadata,
+  compressor binding, query-expander binding, explicit gap healing, lifecycle
+  run-cycle triggers, local tracing, sync envelope preparation, governance,
+  trust-bus publishing, blocked-by-default sandbox execution, and media
+  continuity defaults.
+- Added `MarkRuntime.add_middleware()`, `MarkRuntime.use()`, and
+  `Mark.local(..., middleware=[...])` for ergonomic middleware composition.
+
 ### Changed
 
 - Repositioned public documentation around MARK as a local-first agent memory
