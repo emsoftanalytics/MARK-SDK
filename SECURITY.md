@@ -4,7 +4,7 @@
 
 Please report security issues privately — do not open a public GitHub issue.
 
-- Email: **emisoftdesigns@gmail.com** with subject line `[MARK-SDK SECURITY]`
+- Email: **admin@emsoftanalytics.com** with subject line `[MARK-SDK SECURITY]`
 - Or use GitHub's private vulnerability reporting on this repository
   (Security → Report a vulnerability), if enabled.
 

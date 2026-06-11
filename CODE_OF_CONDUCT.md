@@ -21,9 +21,10 @@ assume good faith.
 
 ## Enforcement
 
-Violations can be reported privately to **emisoftdesigns@gmail.com**. Reports
-are reviewed confidentially. Maintainers may edit, remove, or reject
-contributions and comments that violate this code, and may ban repeat
-offenders.
+Violations can be raised through GitHub repository moderation channels, such
+as issues, discussions, or maintainer review on the relevant thread. If a
+report includes private safety concerns, use GitHub's private reporting tools
+where available. Maintainers may edit, remove, or reject contributions and
+comments that violate this code, and may ban repeat offenders.
 
 Adapted from the spirit of the Contributor Covenant (v2.1).
