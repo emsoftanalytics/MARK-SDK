@@ -72,6 +72,8 @@ temp/
 .ipynb_checkpoints/
 .aiStoryTeller/
 # SDK tutorial run artifacts and local review output
+tutorial.py
+tutorial_mcp_server.py
 tutorial_output/
 review.json
 mark_tutorial_runs/
