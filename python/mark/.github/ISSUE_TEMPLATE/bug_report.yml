@@ -1,0 +1,53 @@
+name: Bug report
+description: Something in mark-sdk doesn't work as documented
+title: "[bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time — bug reports like yours are how MARK gets solid.
+        Two minutes of detail here usually saves days of back-and-forth.
+  - type: input
+    id: version
+    attributes:
+      label: mark-sdk version
+      placeholder: "0.2.0a5  (python -c 'import mark; print(mark.__version__)')"
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version and OS
+      placeholder: "Python 3.12 on Ubuntu 24.04"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: Smallest snippet that shows the problem. Use a temp directory if it involves the store.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Traceback / output
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues first
+          required: true
+        - label: This report contains no secrets or private data
+          required: true

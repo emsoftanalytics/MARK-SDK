@@ -1,0 +1,141 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mark-sdk"
+version = "0.2.0a5"
+description = "Local-first cognitive memory runtime for agent applications."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+  { name = "Somtochukwu Owen Ikeanyi" }
+]
+keywords = ["agents", "memory", "runtime", "ai", "sdk"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+]
+dependencies = [
+  "pydantic>=2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/emsoftanalytics/MARK-SDK"
+Repository = "https://github.com/emsoftanalytics/MARK-SDK.git"
+Issues = "https://github.com/emsoftanalytics/MARK-SDK/issues"
+Changelog = "https://github.com/emsoftanalytics/MARK-SDK/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+crypto = [
+  "cryptography>=42.0",
+]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+  "tomli>=2.0; python_version < '3.11'",
+]
+ollama = [
+  "requests>=2.31",
+]
+sentence-transformers = [
+  "sentence-transformers>=2.7",
+]
+web = [
+  "duckduckgo-search>=6.0",
+  "beautifulsoup4>=4.12",
+  "wikipedia-api>=0.6",
+]
+langchain = [
+  "langchain-core>=0.3",
+]
+mcp = [
+  "mcp>=1.0",
+]
+tutorial = [
+  "langchain>=1.0",
+  "langchain-core>=0.3",
+  "langchain-ollama>=0.2",
+  "langchain-mcp-adapters>=0.1",
+  "langgraph>=0.2",
+  "mcp>=1.0",
+  "python-dotenv>=1.0",
+  "requests>=2.31",
+]
+adapters = [
+  "langchain-core>=0.3",
+  "mcp>=1.0",
+]
+rl = [
+  "pyarrow>=14.0",
+  "numpy>=1.26",
+]
+all = [
+  "cryptography>=42.0",
+  "sentence-transformers>=2.7",
+  "requests>=2.31",
+  "duckduckgo-search>=6.0",
+  "beautifulsoup4>=4.12",
+  "wikipedia-api>=0.6",
+  "langchain-core>=0.3",
+  "langchain>=1.0",
+  "langchain-ollama>=0.2",
+  "langchain-mcp-adapters>=0.1",
+  "langgraph>=0.2",
+  "mcp>=1.0",
+  "python-dotenv>=1.0",
+  "pyarrow>=14.0",
+  "numpy>=1.26",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mark"]
+# Incomplete adapter namespaces stay out of shipped distributions until they
+# have real implementations and tests.
+exclude = [
+  "**/__pycache__",
+  "**/*.py[cod]",
+  ".env",
+  ".venv",
+  ".pytest_cache",
+  ".tmp-check",
+  "dist",
+  "tutorial_output",
+  "src/mark/adapters/langgraph",
+]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+  "/.env",
+  "/.venv",
+  "/.pytest_cache",
+  "/.tmp-check",
+  "**/__pycache__",
+  "**/*.py[cod]",
+  "/review.json",
+  "/tutorial.py",
+  "/tutorial_mcp_server.py",
+  "/tutorial_media.py",
+  "/tutorial_output",
+  "/tutorial_media_output",
+  "/tests",
+  "/dist",
+  "src/mark/adapters/langgraph",
+]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/mark/skills/mark-usage/SKILL.md" = "mark/skills/mark-usage/SKILL.md"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"

@@ -1,0 +1,78 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+.venv/
+venv/
+
+# Node / frontend
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+
+# Keep this repository scoped to the Python MARK SDK package.
+/typescript/
+/python/mark-cloud/
+/python/mark-adapters/
+/mark-cloud/
+/mark-adapters/
+
+# Local MARK/runtime state
+.mark/
+mark_runs/
+mark_runs_test/
+
+# Proprietary planning and system design documentation
+history/
+**/PLAN.md
+docs/
+*.design.md
+*.architecture.md
+*.roadmap.md
+*proposal*.md
+*overview*.md
+recent-thoughts.md
+memory.md
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Editors and OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Logs and temp files
+*.log
+tmp/
+temp/
+
+# Infrastructure state
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Generated notebooks
+.ipynb_checkpoints/
+.aiStoryTeller/
+# SDK tutorial run artifacts and local review output
+tutorial_output/
+review.json
+mark_tutorial_runs/
+tools/ab/results.json

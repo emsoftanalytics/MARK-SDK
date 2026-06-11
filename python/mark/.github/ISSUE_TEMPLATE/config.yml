@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question / discussion
+    url: https://github.com/emsoftanalytics/MARK-SDK/discussions
+    about: Ask usage questions or share what you're building with MARK.
+  - name: Security report (private)
+    url: https://github.com/emsoftanalytics/MARK-SDK/security/advisories/new
+    about: Please report vulnerabilities privately, never as public issues.
