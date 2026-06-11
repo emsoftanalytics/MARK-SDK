@@ -4,6 +4,17 @@ All notable changes to the MARK Python SDK will be documented here.
 
 This project follows semantic versioning for public package releases.
 
+## Unreleased
+
+### Changed
+
+- Repositioned public documentation around MARK as a local-first agent memory
+  runtime for creative continuity, workflow state, middleware integration,
+  structured recall, and provenance rather than a generic memory store.
+- Expanded architecture and examples documentation to explain agent-loop
+  integration, retrieval/context injection, creation memory, and planned
+  proof-oriented demos for character consistency and multi-agent coding.
+
 ## 0.2.0a5 - 2026-06-11
 
 ### Added

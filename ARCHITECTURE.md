@@ -1,12 +1,30 @@
 # MARK Python SDK Architecture
 
-The MARK Python SDK is a local-first runtime for agent memory. It is the open,
-MIT-licensed layer that helps agents recall project facts, organize working
-context, and expose memory to tools, middleware, and framework adapters.
+The MARK Python SDK is a local-first agent memory runtime. It is the open,
+MIT-licensed layer that helps agents remember what they create, decide,
+observe, and learn across long-running workflows.
+
+MARK is more than a memory store. It combines storage, retrieval, context
+injection, automatic observation, structured memory graphs, provenance, and
+framework adapters so memory can participate in the agent execution loop.
 
 Everything documented here runs locally. Hosted MARK services are separate
 products that connect through the SDK's public plugin hooks; their design is
 out of scope for this document.
+
+## Design Goals
+
+MARK is designed around four practical goals:
+
+- **Creation memory:** preserve continuity for stories, characters, scenes,
+  images, videos, generated artifacts, code, plans, and decisions.
+- **Runtime integration:** add memory to existing agents through wrappers,
+  middleware, tools, or MCP rather than forcing a new application architecture.
+- **Structured recall:** organize memory as fragments, nodes, edges, sessions,
+  and blocks instead of treating memory as a flat vector collection.
+- **Trust and provenance:** inspect, seal, verify, and quarantine memory so
+  autonomous and multi-agent workflows can reason about where context came
+  from.
 
 ## Entrypoints
 
@@ -81,6 +99,10 @@ chain     → blocks sealed and linked forward/backward per agent
 An agent owns a namespace. Sessions partition it (`session_id`,
 `session_prefix`), tags narrow it, and blocks group it into inspectable units.
 
+This model lets MARK represent both factual memory and creative/workflow
+memory. A block can hold a character bible, a generated scene, a design
+decision, a coding plan, a test result, or a complete handoff between agents.
+
 ### Memory Blocks And Provenance
 
 Blocks are graph containers: a block can represent a topic within a session,
@@ -125,6 +147,31 @@ in-process `GovernanceAuditLog`.
 Deduplication is transparent and local. The SDK clusters stored embeddings,
 keeps the highest-importance canonical fragment, records `merged_from_ids`,
 and reattaches graph nodes from deleted duplicates to the kept fragment.
+
+## Retrieval And Context Injection
+
+MARK's retrieval path is intentionally layered:
+
+```text
+query
+  ↓
+session / tag / block filters
+  ↓
+local vector retrieval
+  ↓
+graph expansion and scoring
+  ↓
+gap reporting
+  ↓
+optional query expansion / contextual compression
+  ↓
+agent context, tool result, or MCP response
+```
+
+Framework adapters use the same runtime APIs. Middleware retrieves relevant
+memory before model calls and can archive reasoning or tool results after the
+agent acts. Tools expose explicit recall/remember operations when the model
+should decide when to use memory.
 
 ## Architecture Diagram
 

@@ -1,12 +1,17 @@
 # MARK Python SDK
 
-`mark-sdk` is a local-first cognitive memory runtime for agent applications.
-It installs as `mark-sdk` from PyPI and imports as `mark` in Python.
+`mark-sdk` is a local-first agent memory runtime. It installs as `mark-sdk`
+from PyPI and imports as `mark` in Python.
 
-MARK gives agents durable local memory: session-aware retrieval, graph-linked
-facts, memory blocks with tamper-evident provenance, working memory,
-consolidation, and pruning — all on your machine, no account or network
-required.
+MARK helps agents remember what they create, decide, observe, and learn across
+long-running workflows. It is built for more than chat history: stories,
+characters, images, videos, software projects, plans, design decisions, tool
+results, and multi-agent workflow state all need continuity.
+
+The SDK combines local memory storage, retrieval, context injection,
+observability, graph-scoped memory blocks, and tamper-evident provenance into a
+small developer API. Everything runs locally by default: no account, network,
+cloud service, or API key is required.
 
 ```python
 from mark import Mark
@@ -20,6 +25,31 @@ with Mark.local(project_path=".") as mark:
     context = mark.memory.retrieve("Which API framework does this project use?")
     print(context.as_text())
 ```
+
+## Why MARK
+
+Most memory integrations start and end with `store()` and `retrieve()`. MARK is
+designed as an agent memory runtime: it participates in the agent loop, injects
+useful context before work, observes outcomes after work, and keeps memory
+inspectable as connected evidence rather than flat chunks.
+
+Use MARK when an agent needs to:
+
+- remember creative continuity: characters, objects, scenes, styles, plot
+  points, and generated artifacts;
+- remember project decisions: architecture, conventions, constraints,
+  implementation plans, and test results;
+- coordinate across agents: one agent plans, another implements, another tests,
+  while all share durable local context;
+- preserve trust and provenance: group related memory into blocks, seal them,
+  verify them later, and quarantine bad memory without breaking the rest of the
+  agent;
+- adopt memory incrementally: add middleware or tools to an existing agent
+  rather than rebuilding the application around a database.
+
+MARK is not a hosted memory database. The open SDK is the MIT-licensed local
+runtime and integration layer. Hosted services, dashboards, and commercial
+cloud infrastructure are separate from this package.
 
 ## Install
 
@@ -61,7 +91,7 @@ with Mark.local(".") as mark:
     print(result.as_text())
 ```
 
-### 2. Use MARK with an agent
+### 2. Run the same agent with memory
 
 ```python
 import asyncio
@@ -81,7 +111,7 @@ with Mark.local(".") as mark:
     print(result.output)
 ```
 
-### 3. Use sessions for long-running work
+### 3. Track continuity across creative sessions
 
 ```python
 from mark import Mark
@@ -102,7 +132,7 @@ with Mark.local(".") as mark:
     print(scene_context.as_context())
 ```
 
-### 4. Group memory into blocks with provenance
+### 4. Group creations and decisions into provenance blocks
 
 Memory blocks bundle related fragments, nodes, and edges into one unit per
 topic, session, or world-bible scope. Blocks link to each other forward and
@@ -135,7 +165,7 @@ with Mark.local(".") as mark:
     chain.quarantine(scene.id)
 ```
 
-### 5. Plug MARK into a LangChain agent (adapters)
+### 5. Add memory to a LangChain agent as middleware
 
 `MarkAgentMiddleware` turns MARK into a transparent context-window manager for
 any LangChain v1 agent: it retrieves relevant memory before each model call,
@@ -186,7 +216,7 @@ The full middleware walkthrough — the same agent run with and without MARK,
 side by side — lives in the tutorial notebook under
 [examples/](examples/).
 
-### 6. Keep canonical facts in a world bible
+### 6. Keep canonical creative facts in a world bible
 
 ```python
 from mark import Mark
@@ -204,21 +234,27 @@ with Mark.local(".") as mark:
 
 ## Features
 
-- SQLite-backed local memory at `.mark/memory.db`
-- memory fragments, sessions, graph nodes, graph edges, and world-bible facts
-- graph-scoped memory blocks with forward/backward links, SHA-256 seal +
-  verify, and quarantine isolation
-- local vector retrieval with graph expansion
-- session-aware retrieval by exact session, session prefix, tags, tier, scope,
-  and block
-- deterministic local entity extraction; optionally bring your own LLM
-- optional contextual compression and query expansion
-- working memory with TTL expiry; consolidation, deduplication, and pruning
-- trust-aware local bus for multi-agent sharing
-- local governance heuristics and audit records
-- local observability with JSONL trace/replay support
-- optional framework adapters under `mark.adapters.*` (LangChain tools and
-  middleware, MCP server)
+- **Agent-loop integration:** wrap simple callables, attach LangChain
+  middleware, expose MARK as tools, or serve memory over MCP.
+- **Structured memory:** fragments, sessions, graph nodes, graph edges,
+  world-bible facts, and graph-scoped blocks.
+- **Retrieval pipeline:** local vector retrieval with graph expansion, scoring,
+  gap reporting, optional query expansion, and optional contextual compression.
+- **Creative continuity:** session prefixes, tags, scopes, world-bible facts,
+  and blocks make it natural to track characters, objects, locations, scenes,
+  styles, and generated artifacts.
+- **Workflow memory:** store plans, conventions, decisions, tool outputs, test
+  results, and implementation state for coding or autonomous agents.
+- **Provenance and integrity:** SHA-256 block sealing, whole-chain verification,
+  pinpointed corruption reports, and quarantine isolation.
+- **Memory lifecycle:** working memory with TTL expiry, consolidation,
+  deduplication, pruning, reinforcement, and local governance gates.
+- **Multi-agent sharing:** trust-aware local bus for publisher trust,
+  subscriptions, snapshots, and trust-filtered retrieval.
+- **Local observability:** JSONL traces, replay support, session activity logs,
+  and middleware observation of reasoning/tool outcomes.
+- **MIT local boundary:** everything in this package runs locally; cloud
+  clients are caller-supplied and hosted services are outside the SDK.
 
 Everything in this package runs locally under the MIT license.
 
@@ -246,7 +282,15 @@ The live examples cover:
 - redacted sync envelope preparation without cloud transport.
 
 The notebook in [examples/](examples/) provides a longer step-by-step
-walkthrough for memory, retrieval, sessions, adapters, and agent integration.
+walkthrough for memory, retrieval, sessions, middleware, tools, MCP exposure,
+memory inspection, and provenance sealing.
+
+Planned proof-oriented examples:
+
+- `examples/character-consistency/`: demonstrate a character, object, or style
+  staying consistent across repeated creative generations.
+- `examples/multi-agent-coding/`: demonstrate planner, implementer, and tester
+  agents sharing decisions and workflow state through MARK.
 
 ## Development
 
