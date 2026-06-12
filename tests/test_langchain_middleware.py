@@ -164,3 +164,24 @@ def test_wrap_model_call_logs_skill_quality() -> None:
     assert skill_events
     assert skill_events[-1]["present"] is True
     assert skill_events[-1]["score"] >= 0.85
+
+
+def test_sync_hooks_work_inside_running_event_loop() -> None:
+    """Jupyter regression: ipykernel keeps a loop running in the main thread,
+    so LangGraph's sync path invokes sync hooks while a loop is active.
+    _run_sync must bridge to a worker thread instead of raising."""
+    import asyncio
+
+    backend = _Backend()
+    mw = MarkAgentMiddleware(backend=backend, agent_id="nb-agent")
+    human = _msg("human", "How are routes structured?")
+
+    async def drive() -> dict[str, Any] | None:
+        # Called synchronously while this coroutine's loop is running —
+        # exactly what agent.invoke() does inside a notebook cell.
+        mw.before_agent({"messages": [human]}, runtime=None)
+        return mw.before_model({"messages": [human]}, runtime=None)
+
+    update = asyncio.run(drive())
+    assert backend.retrieve_calls, "retrieval should have run via the worker-thread bridge"
+    assert update is not None

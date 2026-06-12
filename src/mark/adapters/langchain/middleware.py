@@ -46,6 +46,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from time import perf_counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
@@ -80,19 +82,36 @@ class _MarkAgentState(AgentState):  # type: ignore[misc,valid-type]
 
 
 # ---------------------------------------------------------------------------
-# Internal helper (kept for MarkMemoryMiddleware sync surface only)
+# Internal helper — bridges async middleware internals to sync call sites
 # ---------------------------------------------------------------------------
 
+_SYNC_EXECUTOR: ThreadPoolExecutor | None = None
+_SYNC_EXECUTOR_LOCK = threading.Lock()
+
+
 def _run_sync(coro: Any) -> Any:
-    """Run an async coroutine synchronously — only safe outside a running loop."""
+    """Run an async coroutine from synchronous code.
+
+    Outside an event loop this is plain ``asyncio.run()``. When a loop is
+    already running in the current thread — Jupyter kernels, GUI frameworks,
+    or servers driving the sync agent API — the coroutine executes on a
+    dedicated worker thread with its own loop instead: the caller blocks for
+    the result and the outer loop is never touched. MARK's middleware
+    coroutines only talk to the (thread-safe) local backend, so they do not
+    depend on the caller's loop.
+    """
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
-    raise RuntimeError(
-        "MARK sync helpers cannot be called inside a running event loop. "
-        "Use the async methods (recall / remember) instead."
-    )
+    global _SYNC_EXECUTOR
+    if _SYNC_EXECUTOR is None:
+        with _SYNC_EXECUTOR_LOCK:
+            if _SYNC_EXECUTOR is None:
+                _SYNC_EXECUTOR = ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix="mark-sync-bridge"
+                )
+    return _SYNC_EXECUTOR.submit(asyncio.run, coro).result()
 
 
 # ---------------------------------------------------------------------------
