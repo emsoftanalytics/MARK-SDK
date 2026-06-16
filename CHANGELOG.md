@@ -4,7 +4,7 @@ All notable changes to the MARK Python SDK will be documented here.
 
 This project follows semantic versioning for public package releases.
 
-## 0.2.0a5 - 2026-06-11
+## 0.2.0a6 - 2026-06-16
 
 ### Added
 

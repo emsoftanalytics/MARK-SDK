@@ -12,7 +12,7 @@ body:
     id: version
     attributes:
       label: mark-sdk version
-      placeholder: "0.2.0a5  (python -c 'import mark; print(mark.__version__)')"
+      placeholder: "0.2.0a6  (python -c 'import mark; print(mark.__version__)')"
     validations:
       required: true
   - type: input

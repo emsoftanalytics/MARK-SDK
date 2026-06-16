@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mark-sdk"
-version = "0.2.0a5"
+version = "0.2.0a6"
 description = "Local-first cognitive memory runtime for agent applications."
 readme = "README.md"
 requires-python = ">=3.10"
