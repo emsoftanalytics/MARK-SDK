@@ -7,15 +7,14 @@ from dataclasses import dataclass, replace
 from typing import Any, Dict
 
 from mark.embeddings import EmbeddingProvider
-from mark.governance import ConsolidationGate, ConsolidationGateResult
 from mark.intelligence import RetrievalPipeline, RetrievalPolicy, RetrievalResult, SessionFilter
-from mark.middleware import MiddlewareStack
+from mark.middlewares.base import MiddlewareStack
 from mark.memory.graph import GraphNeighborhood
 from mark.intelligence.extractor import DeterministicExtractor, ExtractionMerger, LLMStructuredExtractor
 from mark.memory.observe import ObserveEvent, ObserveResult
 from mark.plugins import HOOK_OBSERVE_EVENT
 from mark.store import LocalMemoryStore
-from mark.skills.base import Skill
+from mark.middlewares.skills.base import Skill
 from mark.types import MemoryEdge, MemoryFragment, MemoryNode, MemoryScope, MemoryState, MemoryTier
 from mark.types.graph import EdgeRelation, NodeType
 from mark.types.llm import LLMProvider
@@ -64,7 +63,7 @@ class MarkMemory:
         embedder: EmbeddingProvider,
         executor: ThreadPoolExecutor,
         llm: LLMProvider | None = None,
-        consolidation_gate: ConsolidationGate | None = None,
+        consolidation_gate: Any = None,
         middleware_stack: MiddlewareStack | None = None,
         runtime: Any = None,
     ) -> None:
@@ -74,7 +73,7 @@ class MarkMemory:
         self._embedder = embedder
         self._executor = executor
         self._llm: LLMProvider | None = llm
-        self._consolidation_gate = consolidation_gate or ConsolidationGate()
+        self._consolidation_gate = consolidation_gate
         self._last_rejection: MemoryWriteRejection | None = None
         self._middleware = middleware_stack
         self._runtime = runtime
@@ -250,25 +249,22 @@ class MarkMemory:
         source:      str | None = None,
         metadata:    dict[str, Any] | None = None,
         memory_type: str | None = None,
+        auto_structure: bool = False,
     ) -> ObserveResult:
-        """Store an observation and automatically structure it into memory.
+        """Store an observation.
 
-        Always:
-          • Stores the text as a fragment.
-          • Runs the deterministic extractor (no LLM needed) to find named
-            entities, relationships, and generate tags.
-          • Creates graph nodes and edges for extracted entities.
-          • Applies auto-generated tags to the fragment for filtered retrieval.
-
-        If an LLM is configured (Mark.local(llm=...) or mark.configure_llm(...)):
-          • Runs LLM-based extraction in addition (additive, skips duplicates).
+        Bare MARK stores the text as a fragment and emits an observe event.
+        Automatic structuring is a middleware battery: pass
+        ``auto_structure=True`` through middleware to create tags, nodes, and
+        edges from deterministic or developer-provided LLM extraction.
 
         memory_type — override the context node type (default: "scene").
                       Use "episode", "session", "shot", or any NodeType value.
                       Applies to the context entity derived from session_id.
 
         Falls back gracefully — extraction failures never block the write.
-        Returns ObserveResult with fragment_id, nodes, edges, and auto_tags.
+        Returns ObserveResult with fragment_id and, when enabled, nodes, edges,
+        and auto_tags.
         """
         if self._middleware is not None and self._runtime is not None:
             return self._middleware.run(
@@ -283,6 +279,7 @@ class MarkMemory:
                     "source": source,
                     "metadata": metadata,
                     "memory_type": memory_type,
+                    "auto_structure": auto_structure,
                 },
                 handler=lambda ctx: self._observe_impl(**ctx.payload),
             )
@@ -294,6 +291,7 @@ class MarkMemory:
             source=source,
             metadata=metadata,
             memory_type=memory_type,
+            auto_structure=auto_structure,
         )
 
     def _observe_impl(
@@ -306,7 +304,42 @@ class MarkMemory:
         source:      str | None = None,
         metadata:    dict[str, Any] | None = None,
         memory_type: str | None = None,
+        auto_structure: bool = False,
     ) -> ObserveResult:
+        if not auto_structure:
+            fragment_id = self._store_sync_impl(
+                text,
+                importance=importance,
+                tags=tags,
+                source=source or "observe",
+                session_id=session_id,
+                metadata=metadata,
+            )
+            hook = self._pipeline._plugins.get(HOOK_OBSERVE_EVENT) if hasattr(self._pipeline, "_plugins") else None
+            if hook is not None:
+                try:
+                    hook(ObserveEvent(
+                        agent_id=self.agent_id,
+                        fragment_id=fragment_id,
+                        content=text,
+                        session_id=session_id,
+                        node_labels=[],
+                        auto_tags=[],
+                        edge_count=0,
+                        inferred=False,
+                    ))
+                except Exception:
+                    pass
+            return ObserveResult(
+                fragment_id=fragment_id,
+                content=text,
+                session_id=session_id,
+                nodes=[],
+                edges=[],
+                auto_tags=[],
+                inferred=False,
+            )
+
         # 1. Deterministic extraction (always runs, no LLM required)
         det_result = DeterministicExtractor().extract(
             text, session_id=session_id, memory_type=memory_type,
@@ -592,12 +625,12 @@ class MarkMemory:
         """Run an explicit local web lookup and persist attributed evidence.
 
         Local lookup is intentionally basic. Smart browser automation belongs
-        to MARK Cloud where an LLM, source policy, and observability can guide it.
+        to a registered plugin where an LLM, source policy, and observability can guide it.
         """
         skill = web_skill
         if skill is None:
             try:
-                from mark.skills.web_search import WebSearchSkill
+                from mark.middlewares.skills.web_search import WebSearchSkill
                 skill = WebSearchSkill()
             except Exception:
                 return False
@@ -849,27 +882,27 @@ class MarkMemory:
 
     def character(self, name: str) -> "CharacterMemory":
         """Return a CharacterMemory scoped to a named person/agent."""
-        from mark.media.entity import CharacterMemory
+        from mark.middlewares.media_continuity.entity import CharacterMemory
         return CharacterMemory(name, self)
 
     def location(self, name: str) -> "LocationMemory":
         """Return a LocationMemory scoped to a named place."""
-        from mark.media.entity import LocationMemory
+        from mark.middlewares.media_continuity.entity import LocationMemory
         return LocationMemory(name, self)
 
     def object(self, name: str) -> "ObjectMemory":
         """Return an ObjectMemory scoped to a named object or artifact."""
-        from mark.media.entity import ObjectMemory
+        from mark.middlewares.media_continuity.entity import ObjectMemory
         return ObjectMemory(name, self)
 
     def session(self, session_id: str) -> "SessionMemory":
         """Return a SessionMemory scoped to a specific session context."""
-        from mark.media.session_memory import SessionMemory
+        from mark.middlewares.media_continuity.session_memory import SessionMemory
         return SessionMemory(session_id, self)
 
     def world_bible(self) -> "WorldBibleMemory":
         """Return a WorldBibleMemory for this agent's canonical facts."""
-        from mark.media.world_bible import WorldBibleMemory
+        from mark.middlewares.media_continuity.world_bible import WorldBibleMemory
         return WorldBibleMemory(self)
 
     # ── memory blocks ─────────────────────────────────────────────────────────
@@ -954,6 +987,21 @@ class MarkMemory:
         ttl_seconds: int | None,
         metadata: dict[str, Any] | None,
     ) -> tuple[MemoryFragment, bool]:
+        if self._consolidation_gate is None:
+            self._last_rejection = None
+            return self._fragment(
+                content,
+                importance=importance,
+                scope=scope,
+                tags=tags,
+                source=source,
+                state=state,
+                confidence=confidence,
+                session_id=session_id,
+                ttl_seconds=ttl_seconds,
+                metadata=metadata,
+            ), True
+
         if state == MemoryState.QUARANTINED:
             fragment = self._fragment(
                 content,
@@ -969,7 +1017,7 @@ class MarkMemory:
             )
             return fragment, False
 
-        gate_result: ConsolidationGateResult = self._consolidation_gate.check(
+        gate_result = self._consolidation_gate.check(
             content,
             confidence=confidence,
         )

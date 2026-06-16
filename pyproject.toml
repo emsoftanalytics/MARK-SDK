@@ -8,7 +8,7 @@ version = "0.2.0a5"
 description = "Local-first cognitive memory runtime for agent applications."
 readme = "README.md"
 requires-python = ">=3.10"
-license = "MIT"
+license = "Apache-2.0"
 authors = [
   { name = "Somtochukwu Owen Ikeanyi" }
 ]
@@ -16,7 +16,7 @@ keywords = ["agents", "memory", "runtime", "ai", "sdk"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
+  "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.10",
@@ -56,11 +56,25 @@ web = [
   "wikipedia-api>=0.6",
 ]
 langchain = [
+  "langchain>=1.0",
   "langchain-core>=0.3",
 ]
 mcp = [
   "mcp>=1.0",
 ]
+middleware-recall = []
+middleware-observe = []
+middleware-compression = []
+middleware-query-expansion = []
+middleware-gap-healing = []
+middleware-governance = []
+middleware-lifecycle = []
+middleware-observability = []
+middleware-sync = []
+middleware-trust-bus = []
+middleware-sandbox = []
+middleware-media-continuity = []
+middleware = []
 tutorial = [
   "langchain>=1.0",
   "langchain-core>=0.3",
@@ -70,8 +84,10 @@ tutorial = [
   "mcp>=1.0",
   "python-dotenv>=1.0",
   "requests>=2.31",
+  "nest-asyncio>=1.6.0",
 ]
 adapters = [
+  "langchain>=1.0",
   "langchain-core>=0.3",
   "mcp>=1.0",
 ]
@@ -110,7 +126,6 @@ exclude = [
   ".tmp-check",
   "dist",
   "tutorial_output",
-  "src/mark/adapters/langgraph",
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -129,11 +144,11 @@ exclude = [
   "/tutorial_media_output",
   "/tests",
   "/dist",
-  "src/mark/adapters/langgraph",
 ]
 
 [tool.hatch.build.targets.wheel.force-include]
-"src/mark/skills/mark-usage/SKILL.md" = "mark/skills/mark-usage/SKILL.md"
+"src/mark/middlewares/skills/mark-usage/SKILL.md" = "mark/middlewares/skills/mark-usage/SKILL.md"
+"src/mark/middlewares/skills/mark-memory-middleware/SKILL.md" = "mark/middlewares/skills/mark-memory-middleware/SKILL.md"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

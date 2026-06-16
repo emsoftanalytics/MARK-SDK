@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 """Feature encoding for locally collected signals."""
 from __future__ import annotations
@@ -11,9 +11,8 @@ class StateEncoder:
     Encodes memory system state into a fixed-length float vector.
 
     Open-contract note:
-    This MIT SDK encoder is a transparent local feature-shape helper. MARK
-    Cloud may use a richer private feature set, but that implementation and
-    any trained policy model remain outside this package.
+    This Apache-2.0 SDK encoder is a transparent local feature-shape helper.
+    Registered plugins may use richer private feature sets.
 
     Features encoded (each normalised to [0, 1]):
       query_complexity   — 0=simple, 0.5=medium, 0.9=complex
@@ -24,8 +23,7 @@ class StateEncoder:
 
     The vector is L2-normalised to produce consistent input magnitudes.
 
-    Cloud extension: register HOOK_FEEDBACK to activate the cloud
-    feedback plugin, which uses an extended feature set.
+    Register HOOK_FEEDBACK to activate a feedback plugin.
     """
 
     DEFAULT_FEATURES = [

@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 """URL safety for the explicit local web lookup skill."""
 
 import pytest
 
-from mark.skills.web_search import WebSearchSkill, _validate_fetch_url
+from mark.middlewares.skills.web_search import WebSearchSkill, _validate_fetch_url
 
 
 @pytest.mark.parametrize(

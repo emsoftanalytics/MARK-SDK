@@ -1,7 +1,7 @@
 # MARK Python SDK Architecture
 
 The MARK Python SDK is a local-first agent memory runtime. It is the open,
-MIT-licensed layer that helps agents remember what they create, decide,
+Apache-2.0-licensed layer that helps agents remember what they create, decide,
 observe, and learn across long-running workflows.
 
 MARK is more than a memory store. It combines storage, retrieval, context
@@ -11,6 +11,11 @@ framework adapters so memory can participate in the agent execution loop.
 Everything documented here runs locally. Hosted MARK services are separate
 products that connect through the SDK's public plugin hooks; their design is
 out of scope for this document.
+
+Framework adapters in `mark.adapters` are optional compatibility shims over
+public MARK APIs. They may expose MARK to LangChain, MCP, or similar runtimes,
+but they must not move cloud sync, hosted control-plane behavior, or
+framework-specific product logic into the local SDK core.
 
 ## Design Goals
 
@@ -252,6 +257,7 @@ mark/
 pip install "mark-sdk[langchain]"
 pip install "mark-sdk[mcp]"
 pip install "mark-sdk[adapters]"
+pip install "mark-sdk[middleware]"
 ```
 
 Adapter modules are thin framework glue over public MARK APIs. Adapter
@@ -260,17 +266,25 @@ until they have real code and tests.
 
 ## Core Middleware
 
-Framework-neutral middleware lives under `mark.middleware`. It wraps public
+Framework-neutral middleware lives under `mark.middlewares`. It wraps public
 runtime operations (`store`, `observe`, and `retrieve`) and lets adapters share
 the same local behavior without reaching into private store or pipeline
 internals.
+
+Middleware is a battery layer: `pip install mark-sdk` gives the local memory
+core, but none of these behaviors are active until a developer passes the
+specific middleware into `Mark.local(..., middleware=[...])` or
+`runtime.use(...)`. The `middleware` extra installs the full middleware bundle,
+and named extras such as `middleware-governance`, `middleware-trust-bus`,
+`middleware-sandbox`, and `middleware-media-continuity` provide per-battery
+install targets.
 
 ```text
 Agent / Framework
   ↓
 Adapter middleware
   ↓
-mark.middleware.MiddlewareStack
+mark.middlewares.MiddlewareStack
   ↓
 MarkMemory public operations
   ↓
@@ -303,7 +317,7 @@ Initial local middleware includes:
 These classes automate local behavior only. Cloud-owned capabilities such as
 managed retrieval, governed compression, browser healing, tenant policy, proof
 anchoring, hosted sandbox execution, and memory observatory retention remain
-outside the MIT SDK.
+outside the Apache-2.0 SDK.
 
 ## Sync And Observability
 

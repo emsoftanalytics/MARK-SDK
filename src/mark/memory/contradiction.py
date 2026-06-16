@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 #
 # ContradictionDetector — detects conflicting memory fragments.
@@ -6,8 +6,8 @@
 # Biological analogy: the hippocampus flags conflicting memories for
 # review rather than silently accepting contradictions.
 #
-# Cloud hook: HOOK_CONTRADICTION_RESOLVER uses an LLM to arbitrate
-# conflicts and produce a resolved, authoritative fragment.
+# HOOK_CONTRADICTION_RESOLVER can arbitrate conflicts and produce a resolved,
+# authoritative fragment.
 """Heuristic contradiction detection between fragments."""
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ class ContradictionDetector:
     - Their state transitions to CONTRADICTED (excluded from retrieval)
     - A ContradictionReport is returned for developer inspection
 
-    Cloud replacement: HOOK_CONTRADICTION_RESOLVER uses semantic similarity
+    Register HOOK_CONTRADICTION_RESOLVER to use semantic similarity
     + LLM arbitration to determine which fragment is correct and resolves
     the conflict automatically.
 

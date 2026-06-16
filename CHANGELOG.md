@@ -4,40 +4,42 @@ All notable changes to the MARK Python SDK will be documented here.
 
 This project follows semantic versioning for public package releases.
 
-## Unreleased
+## 0.2.0a5 - 2026-06-11
 
 ### Added
 
-- Added `mark.middleware`, a framework-neutral middleware layer for wrapping
+- Added `AgentRun`, a reusable per-run lifecycle object for `MarkAgent`
+  executions, including prompts, session data, metadata, retrieved memories,
+  policy decisions, skill outputs, stored output IDs, and middleware mutations.
+- Added production-oriented `MarkAgent` support for optional middleware,
+  policy actions, skill execution, output persistence, per-run metadata, and
+  runtime-backed recall while preserving a no-LLM fallback path.
+- Added `mark.middlewares`, a framework-neutral middleware layer for wrapping
   local `store`, `observe`, and `retrieve` operations through public runtime
   APIs.
 - Added local middleware for recall defaults, observation source/tags/metadata,
   compressor binding, query-expander binding, explicit gap healing, lifecycle
   run-cycle triggers, local tracing, sync envelope preparation, governance,
-  trust-bus publishing, blocked-by-default sandbox execution, and media
-  continuity defaults.
+  trust-bus publishing, blocked-by-default sandbox execution, and local media
+  continuity memory.
+- Added middleware extras so developers can install the full middleware bundle
+  with `mark-sdk[middleware]` or choose specific battery targets such as
+  `middleware-governance`, `middleware-trust-bus`, `middleware-sandbox`, and
+  `middleware-media-continuity`.
 - Added `MarkRuntime.add_middleware()`, `MarkRuntime.use()`, and
   `Mark.local(..., middleware=[...])` for ergonomic middleware composition.
-
-### Changed
-
-- Repositioned public documentation around MARK as a local-first agent memory
-  runtime for creative continuity, workflow state, middleware integration,
-  structured recall, and provenance rather than a generic memory store.
-- Expanded architecture and examples documentation to explain agent-loop
-  integration, retrieval/context injection, creation memory, and planned
-  proof-oriented demos for character consistency and multi-agent coding.
-
-## 0.2.0a5 - 2026-06-11
-
-### Added
-
+- Added broader MCP adapter tool options for scoped retrieval, observation,
+  canonical writes, tags, session IDs, agent IDs, and block filters.
+- Added packaged MARK usage skills under `mark.middlewares.skills` so installed
+  users can load middleware guidance through `importlib.resources`.
+- Added regression coverage for LangChain tool sync calls inside running event
+  loops, native async `ainvoke()` usage, middleware context injection, MCP tool
+  options, and `MarkAgent` lifecycle behavior.
 - Live developer usage examples under `examples/`:
   - `01_local_memory_live.py` for local `Mark.local()` storage/retrieval.
   - `02_agent_ab_live.py` for with/without MARK agent context comparison.
   - `03_sessions_and_observe_live.py` for session-aware `observe()` continuity.
-  - `04_sync_boundary_live.py` for redacted sync envelope preparation with no
-    cloud client.
+  - `04_sync_envelope_live.py` for redacted sync envelope preparation.
   - `run_live_examples.py` to run the live examples as MVP smoke tests.
 - Python 3.10+ release coverage in CI and release workflows
   (`3.10`, `3.11`, `3.12`, `3.13`, `3.14`).
@@ -69,6 +71,25 @@ This project follows semantic versioning for public package releases.
 
 ### Changed
 
+- Changed the SDK license from MIT to Apache-2.0 for explicit patent protection.
+- Split middleware into one package per battery under `mark.middlewares`.
+- Reworked LangChain tool creation to expose `StructuredTool` instances with
+  both sync and async implementations backed by the same MARK backend.
+- Clarified LangChain guidance: middleware is the automatic context-loading
+  path, tools are the deliberate/canonical memory-write path, and combining both
+  is an advanced mode that should avoid duplicate context.
+- Updated the LangChain extra to install the agent middleware dependency surface
+  required by the current adapter tests.
+- Reframed `MarkAgentMiddleware` as a message-context memory layer and made the
+  optional `thinking_model` documentation explicitly experimental and opt-in.
+- Repositioned public documentation around MARK as an agent memory
+  runtime for creative continuity, workflow state, middleware integration,
+  structured recall, and provenance rather than a generic memory store.
+- Expanded architecture and examples documentation to explain agent-loop
+  integration, retrieval/context injection, creation memory, and planned
+  proof-oriented demos for character consistency and multi-agent coding.
+- Updated README and examples documentation so media, video, music, and
+  generated demo outputs are not described as current package examples.
 - Core install now depends only on `pydantic`; unused `openai` and
   `langchain-openai` core dependencies were removed.
 - The `adapters` extra now installs LangChain and MCP dependencies only.
@@ -79,10 +100,27 @@ This project follows semantic versioning for public package releases.
 - The explicit web fetch skill now rejects hostnames that resolve to private,
   loopback, link-local, reserved, multicast, or unspecified addresses.
 
+### Fixed
+
+- Fixed `MarkAgent` so configured policies, skills, middleware, and output
+  storage participate in agent runs instead of being isolated constructor data.
+- Fixed LangChain MARK tools raising inside notebook/async environments when a
+  sync `invoke()` happened while an event loop was already running.
+- Fixed LangChain middleware context handling for missing system messages and
+  string/list message content.
+- Fixed canonical `mark_write(..., canonical=True)` memories to store with high
+  importance and canonical tags so retrieval ranks them above episodic
+  observations.
+- Fixed MCP and backend retrieval wiring so block filters are passed through the
+  public runtime/backend API consistently.
+
 ### Removed
 
-- The empty LlamaIndex adapter namespace and its extra; the minimal LangGraph
-  state scaffold is excluded from built distributions until complete.
+- Removed packaged media/image/video/music demo files and their test claims from
+  the current SDK package.
+- Removed heavy provider-demo dependencies such as `gradio-client` and `pillow`
+  from SDK extras and lockfile state.
+- The empty LlamaIndex adapter namespace and its extra.
 - Tests and tutorial scripts are no longer packaged in the sdist; the wheel
   ships only the `mark` package.
 
@@ -96,7 +134,7 @@ This project follows semantic versioning for public package releases.
 - Added PyPI project URLs pointing at the public SDK repository:
   `emsoftanalytics/MARK-SDK`.
 - Reworked the README into a release-ready quickstart with install, tutorial,
-  package boundary, build, publish, and repository strategy sections.
+  build, publish, and repository strategy sections.
 - Added a runnable `tutorial.py` coding-task walkthrough using the installed
   `mark` package import.
 - Added a GitHub Actions release workflow for tests, build artifacts, and PyPI
@@ -148,8 +186,8 @@ This project follows semantic versioning for public package releases.
 - Local observability: tracer, session trace, JSONL event replay, and runtime
   maintenance events.
 - Sync preparation with `SyncDelta`, block filtering, local redaction, optional
-  event inclusion, and cloud-client forwarding without embedding cloud transport.
-- Local RL/plasticity data structures and tests kept MIT-safe.
+  event inclusion, and optional caller-supplied upload forwarding.
+- Local RL/plasticity data structures and tests kept Apache-2.0-safe.
 
 ### Changed
 
@@ -190,11 +228,9 @@ This project follows semantic versioning for public package releases.
 ### Added
 
 - SDK architecture document covering `Mark.local()`, `MarkRuntime.local()`,
-  local runtime boundaries, plugin boundaries, and MCP placement.
-- License boundary documents separating MIT local SDK code from separately
-  licensed MARK Cloud services.
-- Coding-task tutorial showing MARK as a tool, middleware, and cloud MCP
-  boundary with a simple with/without MARK benchmark.
+  runtime extension points, plugin placement, and MCP placement.
+- Coding-task tutorial showing MARK as a tool and middleware with a simple
+  with/without MARK benchmark.
 - Repo-level example relocation for generated notebook documentation assets.
 
 ### Changed
@@ -211,8 +247,8 @@ This project follows semantic versioning for public package releases.
   plugin hooks, and stronger memory lifecycle types.
 - Conversation memory, persona memory, global memory bus, working memory,
   consolidation, contradiction detection, local plasticity, RL signal schemas,
-  cloud policy safety constraints, optional embedding adapters, and Docker
-  sandbox boundary.
+  policy safety constraints, optional embedding adapters, and Docker sandbox
+  support.
 
 ### Changed
 
@@ -220,11 +256,6 @@ This project follows semantic versioning for public package releases.
   through `run_sync()`.
 - The package version now uses PyPI-compatible pre-release numbering for SDK
   phase checkpoints.
-
-### Boundary
-
-- Cloud implementation details remain outside the MIT SDK and are
-  represented only as plugin capability slots.
 
 ## 0.1.0 - Previous foundation
 
@@ -240,25 +271,17 @@ This project follows semantic versioning for public package releases.
 - Conversation memory, persona memory, global memory bus, working memory,
   consolidation, contradiction detection, local plasticity, and safety schemas.
 - Optional local embedding adapters for Ollama and sentence-transformers.
-- Local sandbox boundary for Docker-backed code execution.
-- MIT/MSAL boundary documentation.
-- Coding-task tutorial showing MARK as a tool, middleware, and cloud MCP
-  boundary with simple benchmarks.
+- Local sandbox support for Docker-backed code execution.
+- Coding-task tutorial showing MARK as a tool and middleware with simple
+  benchmarks.
 
 ### Changed
 
 - Built-in skills keep the async skill contract and support synchronous usage
   through `run_sync()`.
-- Cloud implementation details were removed from public SDK comments. The
-  SDK describes cloud extension points by capability only.
+- Public SDK comments describe extension points by capability only.
 
 ### Security
 
 - Added content hashing, optional local encryption provider interfaces, redaction
   helpers, and raw-data opt-in boundaries for local signal collection.
-
-### Boundary
-
-- The Python `mark` package remains MIT licensed.
-- MARK Cloud implementations are kept outside the MIT package and accessed
-  through plugin hooks or cloud clients.

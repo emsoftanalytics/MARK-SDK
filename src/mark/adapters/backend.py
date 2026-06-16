@@ -18,7 +18,7 @@ class BackendResult:
 
 
 class MarkBackend(Protocol):
-    """Public backend protocol implemented by local and cloud MARK adapters."""
+    """Public backend protocol implemented by MARK adapters."""
 
     async def retrieve(self, query: str, **options: Any) -> BackendResult:
         """Retrieve memory relevant to the query."""
@@ -54,7 +54,9 @@ class LocalMarkBackend:
         """Retrieve memory relevant to the query."""
         try:
             memory = self._memory(options.pop("agent_id", self.default_agent_id))
-            options.pop("blocks", None)  # MarkMemory.retrieve_sync does not accept blocks
+            blocks = options.pop("blocks", None)
+            if blocks and "block_ids" not in options and "block_id" not in options:
+                options["block_ids"] = list(blocks)
             if hasattr(memory, "retrieve_sync"):
                 result = memory.retrieve_sync(query, **options)
                 return BackendResult(True, result)
@@ -90,7 +92,7 @@ class LocalMarkBackend:
 
     async def compress(self, query: str, candidates: list[Any], **options: Any) -> BackendResult:
         # Local compression is performed during retrieve(compress=True). This method
-        # exists so framework adapters can share a protocol with cloud backends.
+        # exists so framework adapters can share one backend protocol.
         """Reduce candidate fragments to query-relevant evidence."""
         return BackendResult(True, candidates, {"local_passthrough": True, "query": query, **options})
 

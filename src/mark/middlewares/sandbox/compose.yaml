@@ -1,0 +1,13 @@
+services:
+  sandbox:
+    build:
+      context: .
+    image: mark-sdk-sandbox:0.1
+    network_mode: "none"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m

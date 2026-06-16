@@ -48,6 +48,8 @@ def create_mark_mcp_server(
     *,
     name: str = "mark-memory",
     default_agent_id: str = "__mark__",
+    default_blocks: list[str] | None = None,
+    compress: bool = False,
 ) -> Any:
     """
     Create a FastMCP server that exposes MARK memory as MCP tools.
@@ -62,6 +64,8 @@ def create_mark_mcp_server(
         backend:          A :class:`~mark.adapters.backend.MarkBackend` instance.
         name:             Human-readable name for the MCP server.
         default_agent_id: Agent namespace for all memory operations.
+        default_blocks:   Optional graph block ids used when retrieval omits blocks.
+        compress:         Opt-in local/developer-LLM compression for retrieval.
 
     Returns:
         A ``FastMCP`` server instance. Call ``.run()`` to start it
@@ -76,15 +80,32 @@ def create_mark_mcp_server(
     server = FastMCP(name)
 
     @server.tool()
-    async def mark_retrieve(query: str) -> str:
+    async def mark_retrieve(
+        query: str,
+        agent_id: str = "",
+        session_id: str | None = None,
+        session_prefix: str | None = None,
+        tags: list[str] | None = None,
+        block_id: str | None = None,
+        block_ids: list[str] | None = None,
+    ) -> str:
         """Call this as your VERY FIRST action before planning or writing any code.
 
         MARK stores project memory: coding conventions, API patterns, architectural
-        decisions, and past task outcomes. The returned context contains requirements
-        you MUST follow. Always call before starting work.
+        decisions, and past task outcomes. The returned context contains local
+        evidence the agent should use before starting work.
         Example query: "FastAPI endpoint conventions and project structure".
         """
-        result = await backend.retrieve(query, agent_id=default_agent_id)
+        result = await backend.retrieve(
+            query,
+            agent_id=agent_id or default_agent_id,
+            session_id=session_id,
+            session_prefix=session_prefix,
+            tags=tags,
+            block_id=block_id,
+            block_ids=block_ids or default_blocks,
+            compress=compress,
+        )
         if not result.ok:
             return f"MARK retrieve failed: {result.error}"
         value = result.value
@@ -95,31 +116,65 @@ def create_mark_mcp_server(
         return str(value)
 
     @server.tool()
-    async def mark_observe(content: str) -> str:
+    async def mark_observe(
+        content: str,
+        agent_id: str = "",
+        session_id: str | None = None,
+        tags: list[str] | None = None,
+        source: str = "mcp",
+        importance: float = 0.5,
+    ) -> str:
         """Record an episodic observation after completing meaningful work.
 
         Call this after finishing a task or making an important decision.
         MARK structures the observation into memory so future agents can learn from it.
         Example: "Implemented Product CRUD with Pydantic model in routers/products.py".
         """
-        result = await backend.observe(content, agent_id=default_agent_id)
+        result = await backend.observe(
+            content,
+            agent_id=agent_id or default_agent_id,
+            session_id=session_id,
+            tags=tags,
+            source=source,
+            importance=importance,
+        )
         if not result.ok:
             return f"MARK observe failed: {result.error}"
         fragment_id = result.metadata.get("fragment_id", "")
         return f"MARK observation stored{f' as {fragment_id}' if fragment_id else ''}."
 
     @server.tool()
-    async def mark_write(content: str) -> str:
+    async def mark_write(
+        content: str,
+        agent_id: str = "",
+        session_id: str | None = None,
+        tags: list[str] | None = None,
+        source: str = "mcp",
+        importance: float = 0.8,
+        canonical: bool = False,
+    ) -> str:
         """Write a durable, reusable memory fragment to MARK.
 
         Use for recording conventions, patterns, or facts that should always
         be remembered across future agent runs. Unlike mark_observe (episodic),
         mark_write stores persistent reference knowledge.
         """
-        result = await backend.write(content, agent_id=default_agent_id)
+        write_tags = list(tags or [])
+        if canonical and "canonical" not in write_tags:
+            write_tags.append("canonical")
+        result = await backend.write(
+            content,
+            agent_id=agent_id or default_agent_id,
+            session_id=session_id,
+            tags=write_tags or None,
+            source=source,
+            importance=0.95 if canonical else importance,
+        )
         if not result.ok:
             return f"MARK write failed: {result.error}"
-        return "MARK memory written."
+        fragment_id = result.metadata.get("fragment_id", "")
+        label = "canonical memory" if canonical else "memory"
+        return f"MARK {label} written{f' as {fragment_id}' if fragment_id else ''}."
 
     return server
 
@@ -129,6 +184,8 @@ def create_mark_mcp_server_from_local(
     *,
     name: str = "mark-memory",
     agent_id: str = "__mark__",
+    default_blocks: list[str] | None = None,
+    compress: bool = False,
 ) -> Any:
     """
     Convenience wrapper: create a MARK MCP server directly from a
@@ -148,7 +205,13 @@ def create_mark_mcp_server_from_local(
     from mark.adapters.backend import LocalMarkBackend
 
     backend = LocalMarkBackend(mark, default_agent_id=agent_id)
-    return create_mark_mcp_server(backend, name=name, default_agent_id=agent_id)
+    return create_mark_mcp_server(
+        backend,
+        name=name,
+        default_agent_id=agent_id,
+        default_blocks=default_blocks,
+        compress=compress,
+    )
 
 
 __all__ = [

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 #
 # One-time migration from the legacy JSON store to the SQLite backend.

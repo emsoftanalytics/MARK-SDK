@@ -1,8 +1,9 @@
 """LangChain middleware for MARK — real-time context window management.
 
 MARK operates as a transparent context window manager inside the agent lifecycle.
-It intercepts every piece of information that enters the agent's context and every
-piece of reasoning the agent produces — archiving losslessly, retrieving precisely.
+It watches the message history that LangChain passes toward the LLM, retrieves
+only relevant durable memory before the model call, and archives useful evidence
+that would otherwise fall out of the active context window.
 
 Two surfaces are provided:
 
@@ -39,7 +40,7 @@ Two surfaces are provided:
    Useful for scripts, notebooks, or framework-agnostic code.
 
 Both back onto the same :class:`~mark.adapters.backend.MarkBackend`
-protocol, so they work identically against local and cloud runtimes.
+protocol, so they work identically against compatible runtimes.
 """
 
 from __future__ import annotations
@@ -191,26 +192,30 @@ class MarkAgentMiddleware(_AgentMiddlewareBase):  # type: ignore[misc]
         observe_tool_results: bool = True,
         immediate_tool_observe: bool = False,
         retrieval_timeout_ms: int = 2500,
+        include_skill: bool = True,
         thinking_model: "Any | None" = None,
         thinking_budget_tokens: int = 2000,
     ) -> None:
         """
         Args:
-            thinking_model: Optional secondary LLM to use as a reasoning layer for
-                non-thinking models.  When set and planning/reasoning patterns are
-                detected in the agent's context, MARK calls this model first to
-                generate a structured thought plan.  The thoughts + MARK memory are
-                both injected into the main agent's system prompt and archived for
-                future retrieval.  Accepts a model identifier string (e.g.,
-                ``"ollama:qwen3:4b"``) or a ``BaseChatModel`` instance.
-                Default ``None`` — thinking mode disabled.
+            include_skill: Automatically append the packaged
+                ``mark-memory-middleware`` agent skill to the system message
+                when it is not already present, so agents know how to work
+                with MARK-injected context without manual prompt wiring.
+                Default ``True``.
+            thinking_model: Advanced, opt-in helper model for experiments where
+                MARK should compile a compact planning note before the main model
+                call.  The primary LangChain model remains the agent's reasoner;
+                MARK's default role is memory retrieval and observation.  Accepts
+                a model identifier string (e.g., ``"ollama:qwen3:4b"``) or a
+                ``BaseChatModel`` instance.  Default ``None`` - disabled.
             thinking_budget_tokens: Maximum tokens in the thinking output (default 2000).
                 Only used when ``thinking_model`` is set.
         """
         if not _LANGCHAIN_AVAILABLE:
             raise ImportError(
                 "LangChain is required for MarkAgentMiddleware. "
-                'Install with: pip install "mark-sdk[langchain]" langchain'
+                'Install with: pip install "mark-sdk[langchain]"'
             )
         super().__init__()
         self._backend = backend
@@ -222,6 +227,8 @@ class MarkAgentMiddleware(_AgentMiddlewareBase):  # type: ignore[misc]
         self._observe_tool_results = observe_tool_results
         self._immediate_tool_observe = immediate_tool_observe
         self._retrieval_timeout_s = max(retrieval_timeout_ms, 0) / 1000
+        self._include_skill = include_skill
+        self._skill_text: str | None = None  # lazy-loaded packaged skill
         self._thinking_budget = thinking_budget_tokens
         # Per-session cache: human query → retrieved context.
         # Cleared by aafter_agent so the next session starts fresh.
@@ -822,33 +829,70 @@ class MarkAgentMiddleware(_AgentMiddlewareBase):  # type: ignore[misc]
             query = self._get_human_query_from_messages(getattr(request, "messages", []))
             context = self._recall_cache.get(query, "")
 
-        if not context or "no relevant local memory found" in context:
-            return handler(request)
-
         system_text = self._system_text(getattr(request, "system_message", None))
-        skill_hash = self._hash(system_text)
-        if skill_hash != self._last_skill_hash:
-            skill = self._score_skill(system_text)
-            self._record("skill", skill_hash=skill_hash, **skill)
-            self._last_skill_hash = skill_hash
-        context = self._truncate_context(context)
-        context_hash = self._hash(context)
-        if context_hash == self._last_prompt_context_hash:
-            self._record("inject_skip", chars=len(context), context_hash=context_hash)
+        additions: list[dict[str, str]] = []
+
+        # Auto-inject the packaged middleware skill once, so agents know how
+        # to treat MARK-injected memory without manual prompt wiring.
+        skill_block = self._packaged_skill() if self._include_skill else ""
+        if skill_block and "mark-memory-middleware" not in system_text:
+            additions.append({"type": "text", "text": skill_block})
+
+        has_context = bool(context) and "no relevant local memory found" not in context
+        if has_context:
+            skill_hash = self._hash(system_text)
+            if skill_hash != self._last_skill_hash:
+                skill = self._score_skill(system_text + skill_block)
+                self._record("skill", skill_hash=skill_hash, **skill)
+                self._last_skill_hash = skill_hash
+            context = self._truncate_context(context)
+            context_hash = self._hash(context)
+            if context_hash == self._last_prompt_context_hash:
+                self._record("inject_skip", chars=len(context), context_hash=context_hash)
+            else:
+                self._last_prompt_context_hash = context_hash
+                self._record("inject", chars=len(context), context_hash=context_hash)
+                additions.append({"type": "text", "text": (
+                    "[MARK project memory]\n"
+                    "Use this as durable project memory. Prefer live tool results for "
+                    "current-session file contents.\n"
+                    f"{context}\n"
+                    "[/MARK project memory]"
+                )})
+
+        if not additions:
             return handler(request)
-        self._last_prompt_context_hash = context_hash
-        self._record("inject", chars=len(context), context_hash=context_hash)
-        mark_block = (
-            "[MARK project memory]\n"
-            "Use this as durable project memory. Prefer live tool results for "
-            "current-session file contents.\n"
-            f"{context}\n"
-            "[/MARK project memory]"
-        )
-        new_content = list(request.system_message.content_blocks) + [
-            {"type": "text", "text": mark_block}
-        ]
+        new_content = self._system_content_blocks(getattr(request, "system_message", None)) + additions
         return handler(request.override(system_message=_SystemMessage(content=new_content)))
+
+    def _system_content_blocks(self, system_message: Any) -> list[dict[str, Any]]:
+        """Return LangChain-compatible system content blocks.
+
+        LangChain model requests may carry no system message, a string content
+        system message, or an already-blocked message.  `wrap_model_call` should
+        be a pure transform and must not assume a specific provider shape.
+        """
+        if system_message is None:
+            return []
+        blocks = getattr(system_message, "content_blocks", None)
+        if blocks is not None:
+            return list(blocks)
+        content = getattr(system_message, "content", "")
+        if isinstance(content, list):
+            return list(content)
+        if content:
+            return [{"type": "text", "text": str(content)}]
+        return []
+
+    def _packaged_skill(self) -> str:
+        """Lazy-load the packaged mark-memory-middleware skill text."""
+        if self._skill_text is None:
+            try:
+                from mark.middlewares.skills import load_skill_text
+                self._skill_text = load_skill_text("mark-memory-middleware")
+            except Exception:
+                self._skill_text = ""
+        return self._skill_text
 
     def wrap_tool_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
         """Sync: execute tool and queue useful result for session-end archival."""

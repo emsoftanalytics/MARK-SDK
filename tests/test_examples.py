@@ -22,7 +22,7 @@ def test_live_example_runner_imports_all_examples():
         "01_local_memory_live.py",
         "02_agent_ab_live.py",
         "03_sessions_and_observe_live.py",
-        "04_sync_boundary_live.py",
+        "04_sync_envelope_live.py",
     ]
 
     assert module.EXAMPLES == expected
@@ -48,7 +48,7 @@ def test_getting_started_notebook_is_valid_json_and_documents_usage_groups():
 
 
 def test_mark_usage_skill_file_uses_agent_skill_format():
-    skill = Path(__file__).parents[1] / "src" / "mark" / "skills" / "mark-usage" / "SKILL.md"
+    skill = Path(__file__).parents[1] / "src" / "mark" / "middlewares" / "skills" / "mark-usage" / "SKILL.md"
     text = skill.read_text(encoding="utf-8")
     frontmatter = text.split("---", 2)[1]
     metadata = dict(
@@ -72,7 +72,7 @@ def test_mark_usage_skill_file_uses_agent_skill_format():
 def test_mark_usage_skill_is_importable_as_package_data():
     from importlib.resources import files
 
-    text = files("mark.skills").joinpath("mark-usage/SKILL.md").read_text(encoding="utf-8")
+    text = files("mark.middlewares.skills").joinpath("mark-usage/SKILL.md").read_text(encoding="utf-8")
 
     assert "name: mark-usage" in text
     assert "## Core MARK Setup" in text

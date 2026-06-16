@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   test:
-    name: Test (Python ${{ matrix.python-version }})
+    name: Core tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -25,16 +25,42 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: uv run --extra dev pytest
 
+  adapters:
+    name: Adapter tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: >
+          uv run --extra dev --extra adapters --extra langchain --extra mcp
+          pytest
+          tests/test_langchain_middleware.py
+          tests/test_adapters_mcp_tools.py
+          tests/test_agent.py
+          tests/test_examples.py
+          tests/test_install_smoke.py
+          tests/test_package_boundaries.py
+
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, adapters]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
       - run: uv build
       - run: |
+          # Shipped artifacts must not contain tests, tutorials, planning docs, or local env files.
           ! unzip -l dist/*.whl | grep -E "tests/|tutorial|PLAN\.md|__pycache__|\.pyc|\.env|\.venv"
+      - run: |
+          # Generated media demos are not part of the SDK package.
+          ! unzip -l dist/*.whl | grep -E "05_image_consistency|image_consistency|mark_image_consistency|gradio|pillow|PIL"
+      - run: |
+          # Heavy media dependencies must not be reintroduced through extras.
+          ! grep -E "gradio-client|pillow|PIL" pyproject.toml uv.lock
       - uses: actions/upload-artifact@v4
         with:
           name: dist

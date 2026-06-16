@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 #
 # observe() result types and lightweight local entity extraction.
@@ -47,7 +47,7 @@ class ObserveEvent:
     """Event emitted through HOOK_OBSERVE_EVENT after every observe() call.
 
     The local SDK fires this with no registered handler (no-op).
-    MARK Cloud registers a handler to collect events for the Memory Observatory.
+    Registered handlers may collect events for observability.
 
     Schema is intentionally flat so it can be serialised and shipped cheaply.
     """

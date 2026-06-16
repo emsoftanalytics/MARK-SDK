@@ -10,17 +10,14 @@ from mark.index import VectorIndex
 from mark.intelligence import GraphExpander, RetrievalPipeline
 from mark.intelligence.compressor import ContextualCompressor
 from mark.intelligence.query_expander import QueryExpander
-from mark.middleware import MarkMiddleware, MiddlewareStack
-from mark.observability import LocalTracer, SessionTrace
+from mark.middlewares.base import MarkMiddleware, MiddlewareStack
 from mark.plugins import MarkCorePlugin, PluginRegistry
 from mark.security import EncryptionProvider, NoOpEncryptionProvider
 from mark.store import LocalMemoryStore
 from mark.types.llm import LLMProvider
 
-from mark.governance import GovernanceAuditLog
 from mark.memory.global_bus import GlobalMemoryBus
 from mark.memory.mark_memory import MarkMemory
-from mark.memory.trust_bus import TrustAwareGlobalMemoryBus
 
 
 class MarkRuntime:
@@ -38,7 +35,7 @@ class MarkRuntime:
         compressor: ContextualCompressor | None = None,
         query_expander: QueryExpander | None = None,
         enable_activity_log: bool = False,
-        tracer: LocalTracer | None = None,
+        tracer: object | None = None,
         retrieval_top_k: int = 20,
         middleware: Iterable[MarkMiddleware] | None = None,
     ) -> None:
@@ -50,9 +47,9 @@ class MarkRuntime:
         self._llm: LLMProvider | None = llm
         self._enable_activity_log = enable_activity_log
         self._global_bus: GlobalMemoryBus | None = None
-        self._trust_bus: TrustAwareGlobalMemoryBus | None = None
-        self._governance_audit_log = GovernanceAuditLog()
-        self._tracer = tracer or LocalTracer()
+        self._trust_bus: object | None = None
+        self._governance_audit_log: object | None = None
+        self._tracer = tracer
         self.pipeline = RetrievalPipeline(
             store=store,
             index=self.index,
@@ -79,7 +76,7 @@ class MarkRuntime:
         compressor: ContextualCompressor | None = None,
         query_expander: QueryExpander | None = None,
         enable_activity_log: bool = False,
-        tracer: LocalTracer | None = None,
+        tracer: object | None = None,
         retrieval_top_k: int = 20,
         middleware: Iterable[MarkMiddleware] | None = None,
     ) -> "MarkRuntime":
@@ -132,16 +129,26 @@ class MarkRuntime:
         from mark.store.activity_log import SessionActivityLog
         return SessionActivityLog(self.store, agent_id, session_id)
 
-    def tracer(self) -> LocalTracer:
+    def tracer(self):
         """Return the local runtime tracer."""
+        if self._tracer is None:
+            from mark.middlewares.observability import LocalTracer
+
+            self._tracer = LocalTracer()
         return self._tracer
 
-    def session_trace(self, session_id: str) -> SessionTrace:
+    def session_trace(self, session_id: str):
         """Return a session-scoped view over local runtime events."""
-        return SessionTrace(self._tracer, session_id)
+        from mark.middlewares.observability import SessionTrace
 
-    def governance_audit_log(self) -> GovernanceAuditLog:
+        return SessionTrace(self.tracer(), session_id)
+
+    def governance_audit_log(self):
         """Return the in-process local governance audit log."""
+        if self._governance_audit_log is None:
+            from mark.middlewares.governance import GovernanceAuditLog
+
+            self._governance_audit_log = GovernanceAuditLog()
         return self._governance_audit_log
 
     def memory(self, agent_id: str) -> MarkMemory:
@@ -168,9 +175,11 @@ class MarkRuntime:
             )
         return self._global_bus
 
-    def trust_bus(self) -> TrustAwareGlobalMemoryBus:
+    def trust_bus(self):
         """Return the trust-aware global memory bus."""
         if self._trust_bus is None:
+            from mark.middlewares.trust_bus import TrustAwareGlobalMemoryBus
+
             self._trust_bus = TrustAwareGlobalMemoryBus(
                 store=self.store,
                 pipeline=self.pipeline,
@@ -187,15 +196,16 @@ class MarkRuntime:
     def consolidate(self, agent_id: str, *, promote_threshold: float = 0.7) -> "ConsolidationResult":
         """Promote high-importance working memory to LTM; delete expired fragments."""
         from mark.memory.consolidation import ConsolidationManager
-        self._tracer.emit("memory.consolidate.start", agent_id=agent_id)
+        tracer = self.tracer()
+        tracer.emit("memory.consolidate.start", agent_id=agent_id)
         result = ConsolidationManager(
             self.store,
             agent_id=agent_id,
-            audit_log=self._governance_audit_log,
+            audit_log=self.governance_audit_log(),
         ).run(
             promote_threshold=promote_threshold
         )
-        self._tracer.emit(
+        tracer.emit(
             "memory.consolidate.finish",
             agent_id=agent_id,
             promoted=result.promoted,
@@ -217,7 +227,7 @@ class MarkRuntime:
         result = DeduplicationConsolidator(
             self.store, agent_id, similarity_threshold=similarity_threshold
         ).run()
-        self._tracer.emit(
+        self.tracer().emit(
             "memory.deduplicate",
             agent_id=agent_id,
             merged=result.merged,
@@ -230,7 +240,7 @@ class MarkRuntime:
         """Apply decay, cull forgotten fragments, and dissolve weak edges."""
         from mark.plasticity.pruner import MemoryPruner
         stats = MemoryPruner(self.store).run(agent_id)
-        self._tracer.emit(
+        self.tracer().emit(
             "memory.prune",
             agent_id=agent_id,
             fragments_pruned=stats.fragments_pruned,

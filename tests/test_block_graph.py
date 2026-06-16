@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 """Graph-scoped memory blocks: membership, block-scoped edges, links, traversal."""
 

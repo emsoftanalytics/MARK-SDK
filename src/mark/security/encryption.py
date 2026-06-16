@@ -21,7 +21,7 @@ def _require_cryptography() -> None:
     if _CRYPTO_IMPORT_ERROR is not None:
         raise ImportError(
             "FernetEncryptionProvider requires the optional dependency "
-            "`cryptography`. Install `mark[crypto]` or use "
+            '`cryptography`. Install "mark-sdk[crypto]" or use '
             "NoOpEncryptionProvider for local development."
         ) from _CRYPTO_IMPORT_ERROR
 

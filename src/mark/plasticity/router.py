@@ -1,16 +1,13 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors — v1.3 plasticity
 #
-# MIT (open SDK):
+# Apache-2.0 (open SDK):
 #   RoutingFeedback  — reward signal data structure
 #   RouterDecision   — routing decision data structure
 #   StaticRouter     — stateless router; wraps QueryClassifier
 #
-# MARK Core (MSAL) — registered via HOOK_LEARNING_ROUTER:
-#   Cloud adaptive routing plugin.
-#
-# MARK Cloud (BSL) — registered via HOOK_RL_POLICY:
-#   Cloud RL memory policy plugin (server-side only).
+# HOOK_LEARNING_ROUTER can register an adaptive routing plugin.
+# HOOK_RL_POLICY can register a learned memory policy plugin.
 """Static local routing defaults; hooks may supply learned routers."""
 from __future__ import annotations
 
@@ -24,8 +21,7 @@ class RoutingFeedback:
     """
     Reward signal for a routing decision.
 
-    Pass to the HOOK_LEARNING_ROUTER plugin (when registered) so the
-    cloud adaptive router can update its policy weights.
+    Pass to the HOOK_LEARNING_ROUTER plugin when registered.
     """
     decision_id: str
     reward:      float   # 0.0–1.0
@@ -34,7 +30,7 @@ class RoutingFeedback:
 @dataclass
 class RouterDecision:
     """
-    A routing decision produced by StaticRouter or a cloud router plugin.
+    A routing decision produced by StaticRouter or a registered router plugin.
     """
     id:         str   = field(default_factory=lambda: uuid.uuid4().hex[:12])
     policy:     str   = "BALANCED"   # FAST | BALANCED | DEEP
@@ -48,8 +44,7 @@ class StaticRouter:
     Converts a query into a RouterDecision without any learning state.
     Suitable for small projects and local development.
 
-    Cloud upgrade: register HOOK_LEARNING_ROUTER (MARK Core, MSAL) to
-    activate the cloud adaptive routing plugin.
+    Register HOOK_LEARNING_ROUTER to activate an adaptive routing plugin.
     """
 
     def __init__(self) -> None:
@@ -65,5 +60,5 @@ class StaticRouter:
         )
 
     def record_feedback(self, feedback: RoutingFeedback) -> None:
-        """No-op locally. Register HOOK_LEARNING_ROUTER to activate cloud feedback handling."""
+        """No-op locally. Register HOOK_LEARNING_ROUTER to handle feedback."""
         pass

@@ -166,6 +166,34 @@ def test_wrap_model_call_logs_skill_quality() -> None:
     assert skill_events[-1]["score"] >= 0.85
 
 
+def test_wrap_model_call_handles_missing_system_message() -> None:
+    backend = _Backend()
+    mw = MarkAgentMiddleware(backend, agent_id="coder")
+    agent_state = {"messages": [_msg("human", "Implement a FastAPI product router")]}
+    update = mw.before_model(agent_state, runtime=None)
+    assert update is not None
+
+    class _Request:
+        state = update
+        messages = agent_state["messages"]
+        system_message = None
+
+        def override(self, **kwargs: Any) -> Any:
+            clone = SimpleNamespace()
+            clone.state = self.state
+            clone.messages = self.messages
+            clone.system_message = kwargs.get("system_message", self.system_message)
+            return clone
+
+    result = mw.wrap_model_call(_Request(), lambda request: request)
+
+    assert result.system_message is not None
+    assert any(
+        "MARK project memory" in str(block.get("text", ""))
+        for block in result.system_message.content
+    )
+
+
 def test_sync_hooks_work_inside_running_event_loop() -> None:
     """Jupyter regression: ipykernel keeps a loop running in the main thread,
     so LangGraph's sync path invokes sync hooks while a loop is active.

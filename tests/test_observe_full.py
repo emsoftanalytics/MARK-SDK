@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 #
 # Tests for: DeterministicExtractor, WorldBibleMemory, scoped entity helpers,
@@ -11,7 +11,7 @@ import pytest
 
 from mark import (
     CharacterMemory, DeterministicExtractor, ExtractionResult,
-    LocationMemory, Mark, ObjectMemory, SessionMemory, WorldBibleMemory,
+    LocationMemory, Mark, ObjectMemory, ObserveMiddleware, SessionMemory, WorldBibleMemory,
 )
 from mark.intelligence.extractor import ExtractionResult
 from mark.memory.runtime import MarkRuntime
@@ -107,7 +107,8 @@ def test_extractor_returns_extraction_result_type() -> None:
 # ---------------------------------------------------------------------------
 
 def test_observe_auto_tags_applied_to_fragment(tmp_path: Path) -> None:
-    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db")
+    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db",
+                                middleware=[ObserveMiddleware()])
     mem = runtime.memory("agent")
 
     result = mem.observe(
@@ -124,7 +125,8 @@ def test_observe_auto_tags_applied_to_fragment(tmp_path: Path) -> None:
 
 
 def test_observe_memory_type_creates_correct_context_node(tmp_path: Path) -> None:
-    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db")
+    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db",
+                                middleware=[ObserveMiddleware()])
     mem = runtime.memory("agent")
 
     result = mem.observe(

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 #
 # ConsolidationManager — promotes working memory to long-term memory.
@@ -7,7 +7,7 @@
 # experiences are transferred to the cortex (semantic/episodic LTM)
 # during rest periods or when importance exceeds threshold.
 #
-# Cloud hook: HOOK_CONSOLIDATION provides LLM-backed consolidation with
+# Hook: HOOK_CONSOLIDATION can provide LLM-backed consolidation with
 # quality scoring, deduplication, and semantic summarisation.
 """Working-memory consolidation into long-term memory."""
 from __future__ import annotations
@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
-from mark.governance import ConsolidationGate, GovernanceAuditLog
+from mark.middlewares.governance import ConsolidationGate, GovernanceAuditLog
 from mark.types import MemoryFragment, MemoryState, MemoryTier
 
 
@@ -46,9 +46,8 @@ class ConsolidationManager:
 
     Expired fragments are deleted.
 
-    Cloud replacement: HOOK_CONSOLIDATION uses an LLM to score content
-    quality, deduplicate similar fragments, and produce summarised
-    representations before promoting to semantic memory.
+    Register HOOK_CONSOLIDATION to score content quality, deduplicate similar
+    fragments, or produce summarised representations before promotion.
 
     Media agent usage:
         After each episode:

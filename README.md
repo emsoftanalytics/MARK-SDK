@@ -1,17 +1,17 @@
-# MARK Python SDK
+# MARK (Memory-Augmented Agent Recall Kit) Python SDK
 
-`mark-sdk` is a local-first agent memory runtime. It installs as `mark-sdk`
-from PyPI and imports as `mark` in Python.
+`mark-sdk` is an agent memory runtime. It installs as `mark-sdk` from PyPI and
+imports as `mark` in Python.
 
 MARK helps agents remember what they create, decide, observe, and learn across
 long-running workflows. It is built for more than chat history: stories,
 characters, images, videos, software projects, plans, design decisions, tool
 results, and multi-agent workflow state all need continuity.
 
-The SDK combines local memory storage, retrieval, context injection,
-observability, graph-scoped memory blocks, and tamper-evident provenance into a
-small developer API. Everything runs locally by default: no account, network,
-cloud service, or API key is required.
+The SDK combines memory storage, retrieval, context injection, observability,
+graph-scoped memory blocks, and tamper-evident provenance into a small
+developer API. Everything runs locally by default: no account, network, or API
+key is required.
 
 ```python
 from mark import Mark
@@ -35,7 +35,7 @@ inspectable as connected evidence rather than flat chunks.
 
 Use MARK when an agent needs to:
 
-- remember creative continuity: characters, objects, scenes, styles, plot
+- remember creative continuity: characters, objects, shots, styles, plot
   points, and generated artifacts;
 - remember project decisions: architecture, conventions, constraints,
   implementation plans, and test results;
@@ -47,9 +47,8 @@ Use MARK when an agent needs to:
 - adopt memory incrementally: add middleware or tools to an existing agent
   rather than rebuilding the application around a database.
 
-MARK is not a hosted memory database. The open SDK is the MIT-licensed local
-runtime and integration layer. Hosted services, dashboards, and commercial
-cloud infrastructure are separate from this package.
+MARK is not a managed memory database. The open SDK is the Apache-2.0-licensed
+runtime and integration layer.
 
 ## Install
 
@@ -66,7 +65,14 @@ through extras:
 pip install "mark-sdk[langchain]"   # LangChain tools + agent middleware
 pip install "mark-sdk[mcp]"        # MCP server over MARK memory
 pip install "mark-sdk[adapters]"   # both of the above
+pip install "mark-sdk[middleware]" # all local middleware batteries
 ```
+
+Specific middleware install targets are also available, for example
+`mark-sdk[middleware-governance]`, `mark-sdk[middleware-trust-bus]`,
+`mark-sdk[middleware-sandbox]`, and `mark-sdk[middleware-media-continuity]`.
+Most middleware batteries are pure Python today, so the extras mainly provide a
+stable install contract as dependency-bearing middleware grows.
 
 Verify the installed package:
 
@@ -147,30 +153,31 @@ with Mark.local(".") as mark:
     graph  = memory.blocks()
     chain  = memory.chain()
 
-    scene = graph.create_block("ep01-scene04", session_id="season-01/episode-01")
-    graph.add_fragment(scene.id, memory.store_sync("Elena hides the key in the rafters."))
+    shot = graph.create_block("ep01-scene04", session_id="season-01/episode-01")
+    graph.add_fragment(shot.id, memory.store_sync("Elena hides the key in the rafters."))
 
     # Retrieval scoped to one block
-    result = memory.retrieve_sync("Where is the key?", block_id=scene.id)
+    result = memory.retrieve_sync("Where is the key?", block_id=shot.id)
 
     # Seal the block into the agent's provenance chain
-    sealed = chain.seal(scene.id)
+    sealed = chain.seal(shot.id)
     print(sealed.content_hash)
 
     # Verify integrity later — pinpoints any corrupted member
-    print(chain.verify(scene.id).valid)
+    print(chain.verify(shot.id).valid)
     print(chain.verify_chain().valid)
 
     # Isolate a bad block without touching anything else
-    chain.quarantine(scene.id)
+    chain.quarantine(shot.id)
 ```
 
 ### 5. Add memory to a LangChain agent as middleware
 
 `MarkAgentMiddleware` turns MARK into a transparent context-window manager for
-any LangChain v1 agent: it retrieves relevant memory before each model call,
-injects it into the system message, and archives the agent's reasoning and
-tool results in the background — the agent code stays unchanged.
+any LangChain v1 agent: it watches the LangChain message history, retrieves
+only relevant memory before each model call, injects a compact memory block,
+and archives useful AI/tool evidence in the background. The LLM remains the
+reasoning machine; MARK supplies durable working memory.
 
 ```python
 from langchain.agents import create_agent
@@ -193,14 +200,24 @@ with Mark.local(".") as mark:
 ```
 
 Prefer explicit control? `create_mark_tools` exposes memory as ordinary
-LangChain tools the model calls itself:
+LangChain tools the model calls itself. The tools support both sync `invoke()`
+and async `ainvoke()` paths, including notebook environments with an already
+running event loop:
 
 ```python
 from mark.adapters.langchain import create_mark_tools
 
-tools = create_mark_tools(LocalMarkBackend(mark, default_agent_id="coder"))
+tools = create_mark_tools(
+    LocalMarkBackend(mark, default_agent_id="coder"),
+    default_agent_id="coder",
+)
 agent = create_agent(model, [*tools, *my_other_tools])
 ```
+
+Use one surface by default: middleware for automatic context loading, or tools
+when the model should deliberately write canonical facts. Combining both is an
+advanced mode for targeted recall/write operations; keep injected context small
+so MARK does not duplicate information already loaded by the middleware.
 
 And `mark.adapters.mcp` serves the same memory to any MCP-compatible client:
 
@@ -232,6 +249,20 @@ with Mark.local(".") as mark:
         print(fact.content)
 ```
 
+## Comparative Samples
+
+MARK examples are written as A/B comparisons: the same task runs once with
+ordinary short-term context and once with MARK-backed recall.
+
+| Scenario | Without MARK | With MARK | What to inspect |
+| --- | --- | --- | --- |
+| Coding agent | The agent answers from the current prompt only. Project conventions must be repeated. | MARK recalls stored conventions before the model reasons. | `examples/02_agent_ab_live.py` and `examples/getting_started_with_mark.ipynb` |
+| LangChain agent | Message history is whatever LangChain keeps in the active loop. | `MarkAgentMiddleware` retrieves compact memory before model calls and observes useful tool/model evidence. | README section 5 and the tutorial notebook |
+| Creative continuity | A generator without MARK only sees its prompt and short-term carryover. | A MARK-aware agent recalls canonical identity/world facts and writes continuity observations between steps. | `MarkAgent`, sessions, and `world_bible` |
+
+Generated media demo outputs and heavyweight provider clients are not included
+in `mark-sdk`.
+
 ## Features
 
 - **Agent-loop integration:** wrap simple callables, attach LangChain
@@ -244,7 +275,7 @@ with Mark.local(".") as mark:
 - **Retrieval pipeline:** local vector retrieval with graph expansion, scoring,
   gap reporting, optional query expansion, and optional contextual compression.
 - **Creative continuity:** session prefixes, tags, scopes, world-bible facts,
-  and blocks make it natural to track characters, objects, locations, scenes,
+  and blocks make it natural to track characters, objects, locations, shots,
   styles, and generated artifacts.
 - **Workflow memory:** store plans, conventions, decisions, tool outputs, test
   results, and implementation state for coding or autonomous agents.
@@ -256,18 +287,12 @@ with Mark.local(".") as mark:
   subscriptions, snapshots, and trust-filtered retrieval.
 - **Local observability:** JSONL traces, replay support, session activity logs,
   and middleware observation of reasoning/tool outcomes.
-- **MIT local boundary:** everything in this package runs locally; cloud
-  clients are caller-supplied and hosted services are outside the SDK.
 
-Everything in this package runs locally under the MIT license.
+Everything in this package runs locally under the Apache-2.0 license.
 
 ## MARK Cloud — coming soon
 
-A hosted MARK Cloud is in development: managed memory for teams, cross-device
-sync, shared agent memory, and a dashboard to inspect what your agents know.
-It will connect through the same public hook interfaces this SDK already
-ships — code written against local MARK will work unchanged. Watch the
-repository for the announcement.
+Watch out for MARK Cloud updates.
 
 ## Examples
 
@@ -282,7 +307,7 @@ The live examples cover:
 - local project memory storage and retrieval,
 - A/B agent usage with and without MARK context injection,
 - session-aware `observe()` continuity retrieval,
-- redacted sync envelope preparation without cloud transport.
+- redacted sync envelope preparation.
 
 The notebook in [examples/](examples/) provides a longer step-by-step
 walkthrough for memory, retrieval, sessions, middleware, tools, MCP exposure,
@@ -290,8 +315,6 @@ memory inspection, and provenance sealing.
 
 Planned proof-oriented examples:
 
-- `examples/character-consistency/`: demonstrate a character, object, or style
-  staying consistent across repeated creative generations.
 - `examples/multi-agent-coding/`: demonstrate planner, implementer, and tester
   agents sharing decisions and workflow state through MARK.
 
@@ -305,7 +328,7 @@ uv build
 
 ## Middleware
 
-Core middleware lives under `mark.middleware` and wraps existing public runtime
+Core middleware lives under `mark.middlewares` and wraps existing public runtime
 operations. It is framework-neutral, so LangChain, MCP, and future adapters can
 share the same behavior instead of reimplementing recall, observation,
 compression, tracing, and sync logic.
@@ -326,13 +349,19 @@ with Mark.local(
     result = memory.retrieve_sync("How should routes be implemented?")
 ```
 
-Middleware is local and MIT-safe. Hosted retrieval, governed compression,
-browser healing, and cloud observability remain cloud/client responsibilities
-behind explicit hooks or caller-supplied clients.
+Middleware is local and Apache-2.0-safe. Optional integrations can be attached
+through explicit hooks or caller-supplied clients.
+
+Middleware batteries are opt-in. Without a middleware instance in the runtime,
+MARK stores and retrieves through the core memory primitives only; governance,
+trust-bus publication, sandbox execution, media continuity defaults, sync
+envelopes, compression, expansion, and automatic observation structuring are
+not activated.
 
 Available local middleware includes recall, observe/writeback, compression,
 query expansion, governance, lifecycle, observability, sync, trust bus,
-sandbox, gap healing, and media continuity wrappers.
+sandbox, gap healing, and media continuity wrappers. Each middleware lives in
+its own package under `mark.middlewares`.
 
 ## Contributing & support
 
@@ -348,4 +377,4 @@ sandbox, gap healing, and media continuity wrappers.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Apache-2.0 — see [LICENSE](LICENSE).

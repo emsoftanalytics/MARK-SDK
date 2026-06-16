@@ -34,7 +34,7 @@ Agents should be able to use MARK as:
 
 - direct runtime: `Mark.local()` and `mark.wrap_agent(...)`,
 - tool: callable retrieval/write functions,
-- skill: `src/mark/skills/mark-usage/SKILL.md`,
+- skill middleware: `src/mark/middlewares/skills/mark-usage/SKILL.md`,
 - MCP: protocol server exposing retrieve/write/list operations,
 - middleware: context retrieval before model/tool execution and memory writeback after accepted outcomes.
 
@@ -61,5 +61,5 @@ uv build
 Before committing, verify the package contains the MARK usage skill:
 
 ```bash
-uv run python -B -c "from importlib.resources import files; print(files('mark.skills').joinpath('mark-usage/SKILL.md').read_text().splitlines()[1])"
+uv run python -B -c "from importlib.resources import files; print(files('mark.middlewares.skills').joinpath('mark-usage/SKILL.md').read_text().splitlines()[1])"
 ```

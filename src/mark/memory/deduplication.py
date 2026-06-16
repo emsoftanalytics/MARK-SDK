@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 #
 # DeduplicationConsolidator — embedding-similarity-based near-duplicate clustering.
@@ -6,9 +6,9 @@
 # Biological analogy: schema consolidation — repeated exposures to nearly identical
 # content should merge into a single stronger memory rather than cluttering recall.
 #
-# Design adapted from mark-v0/v4 clustering.py (MIT-safe subset).
-# Cloud replacement: HOOK_CONSOLIDATION adds LLM-backed content summarisation,
-# contradiction review, canonical entity resolution, and nightly scheduling.
+# Design adapted from mark-v0/v4 clustering.py (Apache-2.0-safe subset).
+# HOOK_CONSOLIDATION can add LLM-backed content summarisation, contradiction
+# review, canonical entity resolution, and scheduled maintenance.
 """Embedding-cluster deduplication of stored fragments."""
 from __future__ import annotations
 
@@ -108,8 +108,8 @@ class DeduplicationConsolidator:
     so provenance is traceable.
 
     Local SDK: O(N × C) pass — suitable for agent memory sizes (<10k fragments).
-    Cloud replacement: HOOK_CONSOLIDATION handles larger corpora, LLM-summarised
-    merges, contradiction review, and nightly scheduling.
+    Register HOOK_CONSOLIDATION to handle larger corpora, LLM-summarised merges,
+    contradiction review, or scheduled maintenance.
 
     Usage::
 

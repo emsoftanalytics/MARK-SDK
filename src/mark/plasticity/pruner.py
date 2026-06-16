@@ -1,10 +1,10 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors — v1.3 plasticity
 #
 # MemoryPruner — maintenance job that culls forgotten fragments and
 # dissolves weak edges. Run nightly or after N agent interactions.
 #
-# Cloud hook: HOOK_PLASTICITY activates the cloud plasticity plugin.
+# Hook: HOOK_PLASTICITY activates a registered plasticity plugin.
 """Decay-driven pruning of fragments and dissolution of weak edges."""
 from __future__ import annotations
 

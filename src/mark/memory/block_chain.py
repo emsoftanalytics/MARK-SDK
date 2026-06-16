@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 """Tamper-evident sealing and chaining of memory blocks.
 
@@ -21,7 +21,7 @@ the chain.
 
 This is a local hash chain, not a consensus ledger: it makes tampering
 evident, not impossible. Anchoring sealed hashes to an external ledger and
-encrypting sealed blocks are hosted (cloud) concerns exposed only through
+encrypting sealed blocks are deployment concerns exposed only through
 hook contracts.
 """
 

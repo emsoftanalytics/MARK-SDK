@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 #
 # Local deterministic entity and relation extractor.
@@ -383,7 +383,7 @@ class LLMStructuredExtractor:
     output is always well-typed before reaching the memory graph.
 
     Works with any LLMProvider: Ollama, OpenAI-compatible endpoints, llama.cpp,
-    or cloud-hosted models. Does NOT bundle or download any model.
+    or remote models. Does NOT bundle or download any model.
 
     Use ExtractionMerger to combine this with DeterministicExtractor output.
     LangChain's with_structured_output() integration lives in mark-adapters.

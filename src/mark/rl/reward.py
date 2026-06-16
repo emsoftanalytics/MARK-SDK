@@ -1,13 +1,12 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors — v1.4 RL data pipeline
 #
-# MIT (open SDK):
+# Apache-2.0 (open SDK):
 #   RewardSignal  — structured record of one interaction's outcome
 #   RewardComputer — trivial local placeholder (quality score only)
 #
-# MARK Core (MSAL) — registered via HOOK_FEEDBACK:
-#   Cloud reward scoring plugin. Calibrated weights are not part of the
-#   public SDK.
+# HOOK_FEEDBACK may register a custom reward scoring plugin. Calibrated
+# weights are not part of the public SDK.
 """Transparent local reward scoring schema."""
 from __future__ import annotations
 
@@ -21,12 +20,11 @@ class RewardSignal:
     Structured record of one agent interaction's outcome.
 
     Open-contract note:
-    This MIT SDK type is only the public outcome envelope. Hosted reward
-    models, calibrated scoring formulas, and training pipelines remain outside
+    This Apache-2.0 SDK type is only the public outcome envelope. Reward models,
+    calibrated scoring formulas, and training pipelines are not implemented by
     this package.
 
-    Collected locally and fed to the HOOK_FEEDBACK plugin (when registered)
-    which routes signals to MARK Cloud.
+    Collected locally and passed to the HOOK_FEEDBACK plugin when registered.
     """
     decision_id:           str
     agent_id:              str
@@ -50,8 +48,7 @@ class RewardComputer:
     Uses only the evaluator_score — no weighted penalty formula.
     Sufficient for local development and SDK smoke tests.
 
-    Cloud replacement: register HOOK_FEEDBACK to activate the cloud
-    reward scoring plugin.
+    Register HOOK_FEEDBACK to activate a custom reward scoring plugin.
     """
 
     def compute(self, signal: RewardSignal) -> float:

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors — v1.4 RL data pipeline
 """Local experience buffer for plasticity/feedback signals."""
 from __future__ import annotations
@@ -14,8 +14,8 @@ class ExperienceTuple:
     One (state, action, reward, next_state, done) transition for RL training.
 
     Open-contract note:
-    This MIT SDK type is only a transparent telemetry/learning-signal envelope.
-    It does not include MARK Cloud training, policy optimization, model
+    This Apache-2.0 SDK type is only a transparent telemetry/learning-signal envelope.
+    It does not include training, policy optimization, model
     inference, or proprietary reward calibration.
 
     state       — encoded feature vector (List[float], length = StateEncoder.state_dim)
@@ -52,8 +52,8 @@ class ReplayBuffer:
 
     Open-contract note:
     This local buffer is provided so developers can inspect and test the shape
-    of learning signals. Cloud dataset ingestion, retention, training, and
-    model promotion remain outside the MIT SDK.
+    of learning signals. Dataset ingestion, retention, training, and model
+    promotion are not implemented by the Apache-2.0 SDK.
 
     When capacity is reached, oldest experiences are overwritten (FIFO).
     Supports random sampling for mini-batch training.

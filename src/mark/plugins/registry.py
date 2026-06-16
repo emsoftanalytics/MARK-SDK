@@ -1,11 +1,11 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 #
-# Plugin hook constants — the cloud integration points.
+# Plugin hook constants — public extension points.
 #
 # Each HOOK_* constant names a slot in the PluginRegistry. The local SDK
-# defines the slot and its fallback; cloud plugins register implementations
-# that activate transparently — no developer code changes required.
+# defines the slot and its fallback; plugins register implementations that
+# activate transparently without developer code changes.
 """Plugin registry and the public HOOK_* extension slots."""
 from __future__ import annotations
 
@@ -16,101 +16,99 @@ from typing import Any
 # ── Retrieval and ranking ──────────────────────────────────────────────────────
 
 HOOK_SCORING              = "scoring"
-# Cloud: advanced memory ranking plugin.
+# Extension: advanced memory ranking plugin.
 # Local: simple similarity + importance reranker.
 
 HOOK_POLICY_ENGINE        = "policy_engine"
-# Cloud: cloud routing plugin (adaptive, learned from usage).
+# Extension: adaptive routing plugin.
 # Local: QueryClassifier heuristic.
 
 HOOK_CRITIC               = "critic"
-# Cloud: cloud memory quality critic.
+# Extension: memory quality critic.
 # Local: not active.
 
 HOOK_DECOMPOSER           = "decomposer"
-# Cloud: cloud query decomposition plugin.
+# Extension: query decomposition plugin.
 # Local: single-pass retrieval.
 
 HOOK_SELF_HEALING         = "self_healing"
-# Cloud: cloud gap-repair plugin (automatic search + fill).
+# Extension: gap-repair plugin.
 # Local: GapReport surfaced to developer; no automatic action.
 
 HOOK_CONTRADICTION_RESOLVER = "contradiction_resolver"
-# Cloud: cloud contradiction arbitration plugin.
+# Extension: contradiction arbitration plugin.
 # Local: ContradictionDetector flags conflicts for developer review.
 
 HOOK_REASONING_CHAIN      = "reasoning_chain"
-# Cloud: cloud reasoning record plugin.
+# Extension: reasoning record plugin.
 # Local: not active.
 
 HOOK_PROOF_ANCHOR         = "proof_anchor"
-# Cloud: cloud proof anchoring plugin.
+# Extension: proof anchoring plugin.
 # Local: not active.
 
 # ── Memory learning and plasticity ────────────────────────────────────────────
 
 HOOK_PLASTICITY           = "plasticity"
-# Cloud: cloud plasticity plugin.
+# Extension: plasticity plugin.
 # Local: ExponentialDecay + HebbianReinforcement (plasticity/).
 
 HOOK_CONSOLIDATION        = "consolidation"
-# Cloud: cloud consolidation plugin (intelligent working→LTM promotion).
+# Extension: consolidation plugin.
 # Local: ConsolidationManager importance threshold (memory/).
 
 HOOK_LEARNING_ROUTER      = "learning_router"
-# Cloud: cloud adaptive routing plugin.
+# Extension: adaptive routing plugin.
 # Local: StaticRouter wrapping QueryClassifier.
 
 HOOK_RL_POLICY            = "rl_policy"
-# Cloud: cloud RL memory policy plugin (server-side, trained model).
+# Extension: learned memory policy plugin.
 # Local: not active (falls back to HOOK_LEARNING_ROUTER or QueryClassifier).
 
 HOOK_FEEDBACK             = "feedback"
-# Cloud: cloud reward collection and training pipeline plugin.
+# Extension: reward collection and training pipeline plugin.
 # Local: RewardSignal schema in rl/ (local capture only, not uploaded).
 
 # ── Governance and data ───────────────────────────────────────────────────────
 
 HOOK_GOVERNANCE           = "governance"
-# Cloud: cloud governance validation plugin.
+# Extension: governance validation plugin.
 # Local: content hash integrity check.
 
 HOOK_SYNC                 = "sync"
-# Cloud: cloud sync plugin (encrypted block sync).
+# Cloud: sync plugin.
 # Local: not active.
 
 HOOK_EMBEDDING            = "embedding"
-# Cloud: cloud embedding plugin (hosted model with caching).
+# Extension: embedding plugin.
 # Local: sentence-transformers / Ollama / hash embedder.
 
 # ── Media and long-running agents ─────────────────────────────────────────────
 
 HOOK_NARRATOR             = "narrator"
-# Cloud: cloud narrative consistency plugin (for media agents).
+# Extension: narrative consistency plugin.
 # Local: not active (graph expansion provides context; no active validation).
 
 HOOK_CONTINUITY           = "continuity"
-# Cloud: cloud continuity guard plugin (character/object consistency).
+# Extension: continuity guard plugin.
 # Local: ContradictionDetector flags conflicts post-hoc.
 
 HOOK_WORLD_STATE          = "world_state"
-# Cloud: cloud world-state management plugin (long-running creative agents).
+# Extension: world-state management plugin.
 # Local: working memory blocks managed by developer.
 
 # ── Observability ──────────────────────────────────────────────────────────────
 
 HOOK_OBSERVE_EVENT        = "observe_event"
-# Cloud: Memory Observatory event collector.
-#   Receives an ObserveEvent on every mark.observe() call and emits structured
-#   telemetry to the cloud dashboard (memory timeline, graph activity,
-#   session explorer, brain-firing replay).
+# Extension: ObserveEvent collector.
+#   Receives an ObserveEvent on every mark.observe() call.
 # Local: no-op (event is constructed and fired, but no handler is registered).
 
 
 # ── Plugin interface ───────────────────────────────────────────────────────────
 
 class MarkCorePlugin(ABC):
-    """MIT interface boundary for separately licensed MARK extensions."""
+    """Plugin interface for MARK extension hooks."""
 
     @property
     @abstractmethod
@@ -142,10 +140,10 @@ class MarkCorePlugin(ABC):
 
 class PluginRegistry:
     """
-    Runtime hook table for MARK Core, MARK Cloud, and third-party plugins.
+    Runtime hook table for MARK and third-party plugins.
 
     Local SDK defines hook constants and fallback behaviour.
-    Cloud plugins register implementations transparently at startup.
+    Plugins register implementations transparently at startup.
     """
 
     def __init__(self) -> None:
@@ -187,8 +185,8 @@ class PluginRegistry:
         """Return registered hook names."""
         return sorted(self._hook_index)
 
-    def available_cloud_hooks(self) -> list[str]:
-        """Return hook names with no registered plugin (available cloud upgrade slots)."""
+    def available_extension_hooks(self) -> list[str]:
+        """Return hook names with no registered plugin."""
         all_hooks = [
             HOOK_SCORING, HOOK_POLICY_ENGINE, HOOK_CRITIC, HOOK_DECOMPOSER,
             HOOK_SELF_HEALING, HOOK_CONTRADICTION_RESOLVER, HOOK_REASONING_CHAIN,

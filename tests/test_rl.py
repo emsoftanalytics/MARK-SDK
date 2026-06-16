@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 from __future__ import annotations
 
@@ -10,10 +10,12 @@ from mark.rl import (
     ExperienceTuple,
     GovernanceSignal,
     GovernanceSignalCollector,
+    RLAction,
     ReplayBuffer,
     RewardComputer,
     RewardSignal,
     RoutingDecisionLogger,
+    SafetyConstraintLayer,
     StateEncoder,
 )
 
@@ -32,6 +34,22 @@ def _make_tuple(action: str = "BALANCED", reward: float = 0.8) -> ExperienceTupl
 
 def test_experience_tuple_valid() -> None:
     assert _make_tuple().is_valid()
+
+
+def test_safety_constraint_layer_lives_in_rl_package() -> None:
+    layer = SafetyConstraintLayer()
+    action = RLAction(
+        consolidation_decision="APPROVE",
+        gov_override_attempt=True,
+        edge_weight_delta=2.0,
+        hook_mask={"validation_gate": False},
+    )
+
+    filtered = layer.filter(action)
+
+    assert filtered.consolidation_decision == "QUARANTINE"
+    assert filtered.edge_weight_delta == 1.0
+    assert filtered.hook_mask["validation_gate"] is True
 
 
 def test_experience_tuple_invalid_action() -> None:

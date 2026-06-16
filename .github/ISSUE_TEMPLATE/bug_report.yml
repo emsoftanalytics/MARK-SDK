@@ -22,6 +22,25 @@ body:
       placeholder: "Python 3.12 on Ubuntu 24.04"
     validations:
       required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Pick the closest SDK surface.
+      options:
+        - Core runtime / MarkAgent
+        - Local memory / blocks
+        - LangChain adapter / middleware
+        - MCP adapter
+        - Examples / docs
+        - Packaging / install
+    validations:
+      required: true
+  - type: input
+    id: install
+    attributes:
+      label: Install command or extras
+      placeholder: "pip install mark-sdk[langchain] or uv run --extra dev ..."
   - type: textarea
     id: what-happened
     attributes:
@@ -49,5 +68,7 @@ body:
       options:
         - label: I searched existing issues first
           required: true
+        - label: I can reproduce this with the public SDK package
+          required: false
         - label: This report contains no secrets or private data
           required: true

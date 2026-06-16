@@ -1,11 +1,11 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 #
 # QueryClassifier — heuristic query complexity classifier.
 # Runs in <1 ms with no LLM call. Drives retrieval depth (top_k, graph_depth).
 #
-# Cloud hook: HOOK_POLICY_ENGINE overrides classifier decisions at runtime.
-# MARK Cloud replaces this with a cloud adaptive routing plugin that improves
+# HOOK_POLICY_ENGINE can override classifier decisions at runtime.
+# A registered adaptive routing plugin can replace this heuristic and improve
 # through agent usage over time.
 """Deterministic query classification used to pick retrieval policies."""
 from __future__ import annotations
@@ -29,7 +29,7 @@ class QueryAnalysis(BaseModel):
     Rich result of classifying a query before retrieval.
 
     Drives top_k and graph_depth in RetrievalPipeline.
-    Cloud hook HOOK_POLICY_ENGINE may override these values.
+    HOOK_POLICY_ENGINE may override these values.
     """
     query:           str
     complexity:      float          # 0.0 (simple lookup) → 1.0 (multi-hop reasoning)
@@ -40,7 +40,7 @@ class QueryAnalysis(BaseModel):
     keywords:        List[str]      # salient content words for keyword fallback
     reasoning:       str            # full scoring breakdown string
     reasons:         List[str]      = Field(default_factory=list)
-    # Richer feature flags — used by cloud plasticity/routing hooks
+    # Richer feature flags used by plasticity/routing hooks.
     has_temporal:    bool = False   # temporal references ("last week", "in 2024")
     has_comparison:  bool = False   # comparative intent ("vs", "compare")
     has_multi_entity: bool = False  # two or more named entities detected
@@ -88,9 +88,8 @@ class QueryClassifier:
       BALANCED (0.30–0.59)  top_k=10, graph_depth=1
       DEEP     (0.60–1.00)  top_k=15, graph_depth=2
 
-    Cloud replacement: register HOOK_POLICY_ENGINE or HOOK_LEARNING_ROUTER
-    to activate the cloud adaptive routing plugin, which improves through
-    agent usage over time.
+    Register HOOK_POLICY_ENGINE or HOOK_LEARNING_ROUTER to activate an adaptive
+    routing plugin.
     """
 
     _SIMPLE: List[str] = [

@@ -7,9 +7,9 @@ from mark.embeddings import HashEmbeddingProvider
 from mark.index import VectorIndex
 from mark.intelligence import RetrievalPolicy
 from mark.plugins import HOOK_SCORING, MarkCorePlugin, PluginRegistry
-from mark.sandbox import DockerSandbox
+from mark.middlewares.sandbox import DockerSandbox
 from mark.security import ContentHasher, NoOpEncryptionProvider
-from mark.skills import AgentPersona
+from mark.middlewares.skills import AgentPersona
 from mark.store import LocalMemoryStore
 from mark.types import MemoryEdge, MemoryFragment, MemoryNode, MemoryScope, MemoryState
 from mark.types.graph import EdgeRelation
@@ -47,9 +47,9 @@ def test_vector_index_and_mark_runtime_retrieve_memory() -> None:
     runtime = MarkRuntime.local(embedder=HashEmbeddingProvider(dim=64))
     memory = runtime.memory("coder")
 
-    memory.store_sync("The project uses FastAPI for the cloud API.", importance=0.9)
+    memory.store_sync("The project uses FastAPI for the public API.", importance=0.9)
     memory.store_sync("The local SDK starts from a lightweight hippocampus.", importance=0.8)
-    result = memory.retrieve_sync("Which framework powers the cloud API?", policy=RetrievalPolicy.BALANCED)
+    result = memory.retrieve_sync("Which framework powers the public API?", policy=RetrievalPolicy.BALANCED)
 
     assert result.fragments
     assert any("FastAPI" in fragment.content for fragment in result.fragments)

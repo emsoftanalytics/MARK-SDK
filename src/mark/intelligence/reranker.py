@@ -30,7 +30,7 @@ class RerankResult:
 
 
 class MemoryReranker:
-    """MIT fallback reranker: cosine + importance + graph node weight."""
+    """Apache-2.0 fallback reranker: cosine + importance + graph node weight."""
 
     _W_COSINE = 0.60
     _W_IMPORTANCE = 0.25

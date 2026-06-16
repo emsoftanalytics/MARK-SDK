@@ -1,7 +1,7 @@
 """Local-first MARK runtime SDK."""
 
 from mark._version import __version__
-from mark.agent import AgentResult, MarkAgent
+from mark.agent import AgentResult, AgentRun, MarkAgent
 from mark.context import ContextBundle, ContextBuilder
 from mark.embeddings import CachedEmbeddingProvider, EmbeddingProvider, HashEmbeddingProvider
 from mark.index import VectorIndex, VectorSearchResult
@@ -23,9 +23,6 @@ from mark.memory import (
     BlockChain,
     BlockGraph,
     BlockVerification,
-    BusMessage,
-    BusSnapshot,
-    BusSubscription,
     ChainVerification,
     ClusterResult,
     ConversationMemory,
@@ -42,21 +39,8 @@ from mark.memory import (
     MemoryWriteRejection,
     ObserveEvent,
     ObserveResult,
-    PublisherTrust,
     SimpleMemory,
     SimpleBlock,
-    TrustAwareGlobalMemoryBus,
-)
-from mark.governance import (
-    AuditEntry,
-    ConsolidationGate,
-    ConsolidationGateResult,
-    ContentSanitizer,
-    DuplicateHashGate,
-    FailureFilter,
-    GateResult,
-    GovernanceAuditLog,
-    ValidationGate,
 )
 from mark.intelligence import (
     DeterministicExtractor,
@@ -67,38 +51,81 @@ from mark.intelligence import (
     LLMStructuredExtractor,
     StructuredExtraction,
 )
-from mark.media import CharacterMemory, LocationMemory, ObjectMemory, SessionMemory, WorldBibleMemory
-from mark.middleware import (
-    BaseMiddleware,
-    CompressionMiddleware,
-    GapHealingMiddleware,
-    GovernanceMiddleware,
-    LifecycleMiddleware,
-    MarkMiddleware,
-    MediaContinuityMiddleware,
-    MiddlewareContext,
-    MiddlewareStack,
-    ObservabilityMiddleware,
-    ObserveMiddleware,
-    QueryExpansionMiddleware,
-    RecallMiddleware,
-    SandboxMiddleware,
-    SyncMiddleware,
-    TrustBusMiddleware,
-)
 from mark.plugins import HOOK_OBSERVE_EVENT
 from mark.policies import PolicyDecision, PolicyRegistry
 from mark.runtime import Mark, MarkConfig
-from mark.skills import AgentPersona, SkillRegistry
-from mark.store import LocalMemoryStore, SessionActivityLog
+from mark.middlewares.skills import AgentPersona, SkillRegistry, agent_skill, list_packaged_skills, load_skill_text
+from mark.store import JsonMemoryStore, LocalMemoryStore, SessionActivityLog
 from mark.types import BlockLink, BlockStatus
 from mark.types.llm import LLMProvider
-from mark.observability import EventReplayer, LocalTracer, RuntimeEvent, RuntimeEventLog, SessionTrace
-from mark.sync import CloudSync, SyncDelta, SyncMode, SyncOptions, SyncStats
+
+_LAZY_EXPORTS = {
+    "AuditEntry": "mark.middlewares.governance",
+    "BaseMiddleware": "mark.middlewares.base",
+    "BusMessage": "mark.middlewares.trust_bus",
+    "BusSnapshot": "mark.middlewares.trust_bus",
+    "BusSubscription": "mark.middlewares.trust_bus",
+    "CharacterMemory": "mark.middlewares.media_continuity",
+    "CloudSync": "mark.middlewares.sync",
+    "CompressionMiddleware": "mark.middlewares.compression",
+    "ConsolidationGate": "mark.middlewares.governance",
+    "ConsolidationGateResult": "mark.middlewares.governance",
+    "ContentSanitizer": "mark.middlewares.governance",
+    "DuplicateHashGate": "mark.middlewares.governance",
+    "EventReplayer": "mark.middlewares.observability",
+    "FailureFilter": "mark.middlewares.governance",
+    "GapHealingMiddleware": "mark.middlewares.gap_healing",
+    "GateResult": "mark.middlewares.governance",
+    "GovernanceAuditLog": "mark.middlewares.governance",
+    "GovernanceMiddleware": "mark.middlewares.governance",
+    "LifecycleMiddleware": "mark.middlewares.lifecycle",
+    "LocalTracer": "mark.middlewares.observability",
+    "LocationMemory": "mark.middlewares.media_continuity",
+    "MarkMiddleware": "mark.middlewares.base",
+    "MediaContinuityMiddleware": "mark.middlewares.media_continuity",
+    "MiddlewareContext": "mark.middlewares.base",
+    "MiddlewareStack": "mark.middlewares.base",
+    "ObjectMemory": "mark.middlewares.media_continuity",
+    "ObservabilityMiddleware": "mark.middlewares.observability",
+    "ObserveMiddleware": "mark.middlewares.observe",
+    "PublisherTrust": "mark.middlewares.trust_bus",
+    "QueryExpansionMiddleware": "mark.middlewares.query_expansion",
+    "RecallMiddleware": "mark.middlewares.recall",
+    "SkillMiddleware": "mark.middlewares.skills",
+    "RuntimeEvent": "mark.middlewares.observability",
+    "RuntimeEventLog": "mark.middlewares.observability",
+    "SandboxMiddleware": "mark.middlewares.sandbox",
+    "SessionMemory": "mark.middlewares.media_continuity",
+    "SessionTrace": "mark.middlewares.observability",
+    "SyncDelta": "mark.middlewares.sync",
+    "SyncMiddleware": "mark.middlewares.sync",
+    "SyncMode": "mark.middlewares.sync",
+    "SyncOptions": "mark.middlewares.sync",
+    "SyncStats": "mark.middlewares.sync",
+    "TrustAwareGlobalMemoryBus": "mark.middlewares.trust_bus",
+    "TrustBusMiddleware": "mark.middlewares.trust_bus",
+    "ValidationGate": "mark.middlewares.governance",
+    "WorldBibleMemory": "mark.middlewares.media_continuity",
+}
+
+
+def __getattr__(name: str):
+    if name not in _LAZY_EXPORTS:
+        raise AttributeError(f"module 'mark' has no attribute {name!r}")
+    from importlib import import_module
+
+    module = import_module(_LAZY_EXPORTS[name])
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
 
 __all__ = [
     "AgentResult",
+    "AgentRun",
     "AgentPersona",
+    "agent_skill",
+    "list_packaged_skills",
+    "load_skill_text",
     "AuditEntry",
     "BaseMiddleware",
     "BlockChain",
@@ -142,6 +169,7 @@ __all__ = [
     "HashEmbeddingProvider",
     "HOOK_OBSERVE_EVENT",
     "KeywordQueryExpander",
+    "JsonMemoryStore",
     "LLMContextualCompressor",
     "LLMProvider",
     "LLMQueryExpander",
@@ -197,6 +225,7 @@ __all__ = [
     "SimpleMemory",
     "SimpleWindowCompressor",
     "StructuredExtraction",
+    "SkillMiddleware",
     "SkillRegistry",
     "TrustAwareGlobalMemoryBus",
     "ValidationGate",

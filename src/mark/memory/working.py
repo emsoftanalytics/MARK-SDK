@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 #
 # WorkingMemoryManager — short-term memory with TTL expiry.
@@ -6,8 +6,8 @@
 # Biological analogy: the hippocampus holds recent experiences in
 # fast-access working memory before consolidation into the cortex (LTM).
 #
-# Cloud hook: HOOK_CONSOLIDATION triggers LLM-backed promotion of
-# working memory to LTM with quality scoring and summarisation.
+# HOOK_CONSOLIDATION can trigger LLM-backed promotion of working memory to LTM
+# with quality scoring and summarisation.
 """TTL-bound working memory manager."""
 from __future__ import annotations
 

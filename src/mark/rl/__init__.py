@@ -1,28 +1,29 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors — v1.4 RL data pipeline
 #
-# MIT (open SDK): open-contract data structures for collecting training signals.
+# Apache-2.0 (open SDK): open-contract data structures for collecting training signals.
 # Developers can inspect exactly what is being recorded about their agents.
 #
 # Open-contract note:
-#   This package does not include MARK Cloud training, hosted datasets, model
+#   This package does not include training pipelines, managed datasets, model
 #   promotion, adaptive policy inference, or proprietary reward calibration.
 #
-# Cloud: HOOK_FEEDBACK uploads collected signals to MARK Cloud's training
-# pipeline (encrypted, tenanted, with consent and audit hooks).
-# The full multi-factor reward formula and training pipeline are MSAL/BSL.
+# HOOK_FEEDBACK lets callers register their own signal handling pipeline.
 from .buffer     import ExperienceTuple, ReplayBuffer
 from .collectors import GovernanceSignal, GovernanceSignalCollector, RoutingDecisionLogger
 from .encoder    import StateEncoder
 from .reward     import RewardComputer, RewardSignal
+from .safety     import RLAction, SafetyConstraintLayer
 
 __all__ = [
     "ExperienceTuple",
     "GovernanceSignal",
     "GovernanceSignalCollector",
+    "RLAction",
     "ReplayBuffer",
     "RewardComputer",
     "RewardSignal",
     "RoutingDecisionLogger",
+    "SafetyConstraintLayer",
     "StateEncoder",
 ]

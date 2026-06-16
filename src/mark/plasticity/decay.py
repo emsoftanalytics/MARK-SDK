@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors — v1.3 plasticity
 #
 # ExponentialDecay — importance decay for MemoryFragments.
@@ -6,7 +6,7 @@
 # Biological analogy: LTD (long-term depression) — memories that are not
 # accessed weaken over time until they fall below the pruning floor.
 #
-# Cloud hook: HOOK_PLASTICITY activates the cloud plasticity plugin.
+# Hook: HOOK_PLASTICITY activates a registered plasticity plugin.
 """Time-based importance decay with tier half-lives."""
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ class ExponentialDecay:
     Does NOT mutate fragments — returns the new importance value.
     Caller (MemoryPruner or scheduled job) applies the result.
 
-    Cloud replacement: HOOK_PLASTICITY activates the cloud plasticity plugin.
+    Register HOOK_PLASTICITY to activate a custom plasticity plugin.
     """
 
     def __init__(self, temporal_scope: TemporalScope = TemporalScope.MEDIUM_TERM,

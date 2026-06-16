@@ -1,10 +1,9 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors — v1.4 RL data pipeline
 #
 # Collectors store MINIMAL signals by default — no raw fragment content.
 # Raw payloads require explicit opt-in (raw=True) and should only be
-# enabled after reviewing your data governance policy. Cloud ingestion
-# runs full redaction, consent, tenancy, and audit checks regardless.
+# enabled after reviewing your data governance policy.
 """Local collectors for retrieval and feedback signals."""
 from __future__ import annotations
 
@@ -19,9 +18,9 @@ class GovernanceSignal:
     Supervised training label from the governance pipeline.
 
     Open-contract note:
-    This MIT SDK type records the public shape of a governance label. Hosted
-    governance models, audit ledgers, training datasets, and promotion systems
-    remain outside this package.
+    This Apache-2.0 SDK type records the public shape of a governance label.
+    Governance models, audit ledgers, training datasets, and promotion systems
+    are not implemented by this package.
 
     content_hash  — SHA-256 of fragment content (never raw text by default)
     label         — "approve" | "reject" | "quarantine"
@@ -38,7 +37,7 @@ class RoutingDecisionLogger:
     """Logs routing decisions for audit and replay (no raw content stored).
 
     Open-contract note:
-    This is a local transparency helper, not a cloud adaptive router or model
+    This is a local transparency helper, not an adaptive router or model
     training implementation.
     """
 
@@ -66,19 +65,16 @@ class GovernanceSignalCollector:
     Accumulates governance gate decisions as supervised training labels.
 
     Open-contract note:
-    This collector only stores transparent local signal records. Cloud
-    ingestion, tenancy, consent checks, dataset lineage, and training pipelines
-    are not implemented in the MIT SDK.
+    This collector only stores transparent local signal records. Ingestion,
+    consent checks, dataset lineage, and training pipelines are not implemented
+    in the Apache-2.0 SDK.
 
     Raw fragment content is NEVER stored by default — only SHA-256 hashes.
     This prevents sensitive agent data from leaking through the training
-    pipeline. DatasetExporter uploads hashes to MARK Cloud; the cloud
-    side joins hashes to content only within its secure, tenanted boundary.
+    pipeline.
 
-    To store raw content (for on-premise or fully self-hosted deployments):
+    To store raw content in a controlled deployment:
         collector = GovernanceSignalCollector(raw=True)
-
-    Cloud ingestion always runs redaction regardless of this setting.
     """
 
     def __init__(self, raw: bool = False) -> None:

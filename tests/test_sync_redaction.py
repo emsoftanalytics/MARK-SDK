@@ -1,5 +1,5 @@
 from mark import Mark
-from mark.sync import redact_records_for_sync
+from mark.middlewares.sync import redact_records_for_sync
 
 
 def test_sync_redacts_secrets(tmp_path):

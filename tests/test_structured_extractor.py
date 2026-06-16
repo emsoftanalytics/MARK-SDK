@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 #
 # Tests for: ExtractedEntity, ExtractedRelation, StructuredExtraction,
@@ -18,6 +18,7 @@ from mark import (
     ExtractedRelation,
     LLMStructuredExtractor,
     Mark,
+    ObserveMiddleware,
     StructuredExtraction,
 )
 from mark.embeddings import HashEmbeddingProvider
@@ -327,6 +328,7 @@ def test_observe_with_llm_creates_structured_nodes(tmp_path: Path) -> None:
         store_path=tmp_path / "mem.db",
         embedder=HashEmbeddingProvider(dim=32),
         llm=llm,
+        middleware=[ObserveMiddleware()],
     )
     mem = runtime.memory("agent")
 
@@ -345,7 +347,8 @@ def test_observe_with_llm_creates_structured_nodes(tmp_path: Path) -> None:
 def test_observe_llm_tags_stored_on_fragment(tmp_path: Path) -> None:
     """LLM-derived tags are applied to the fragment at write time (merged before store)."""
     llm = _FakeLLM(_VALID_JSON)
-    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db", llm=llm)
+    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db", llm=llm,
+                                middleware=[ObserveMiddleware()])
     mem = runtime.memory("agent")
 
     result = mem.observe("Some observation text.")
@@ -362,7 +365,8 @@ def test_observe_llm_tags_stored_on_fragment(tmp_path: Path) -> None:
 def test_observe_malformed_llm_falls_back_to_deterministic(tmp_path: Path) -> None:
     """Malformed LLM output → structured extraction returns empty → deterministic only."""
     llm = _FakeLLM("not json")
-    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db", llm=llm)
+    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db", llm=llm,
+                                middleware=[ObserveMiddleware()])
     mem = runtime.memory("agent")
 
     result = mem.observe(
@@ -378,7 +382,8 @@ def test_observe_malformed_llm_falls_back_to_deterministic(tmp_path: Path) -> No
 
 def test_observe_node_types_from_structured_extraction(tmp_path: Path) -> None:
     llm = _FakeLLM(_VALID_JSON)
-    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db", llm=llm)
+    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db", llm=llm,
+                                middleware=[ObserveMiddleware()])
     mem = runtime.memory("agent")
 
     result = mem.observe("Elena enters the warehouse.")
@@ -392,7 +397,8 @@ def test_observe_node_types_from_structured_extraction(tmp_path: Path) -> None:
 
 def test_observe_edge_relations_from_structured_extraction(tmp_path: Path) -> None:
     llm = _FakeLLM(_VALID_JSON)
-    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db", llm=llm)
+    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db", llm=llm,
+                                middleware=[ObserveMiddleware()])
     mem = runtime.memory("agent")
 
     result = mem.observe("Elena enters the warehouse.")

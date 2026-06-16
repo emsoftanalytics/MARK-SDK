@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 """Protocol for developer-supplied LLM providers."""
 from __future__ import annotations
@@ -11,8 +11,8 @@ class LLMProvider(Protocol):
     """Minimal protocol for an LLM callable used by local MARK features.
 
     Implementations only need to satisfy complete(). Streaming, tool-use,
-    and structured-output are out of scope at this boundary — they are
-    implementation details of the caller or of cloud plugins.
+    and structured-output are out of scope here; they are implementation
+    details of the caller or registered plugins.
 
     Example adapter for any OpenAI-compatible client::
 

@@ -35,7 +35,7 @@ class RecorderMiddleware(BaseMiddleware):
 
 
 def test_middleware_imports_from_public_package() -> None:
-    from mark.middleware import MiddlewareStack
+    from mark.middlewares import MiddlewareStack
 
     assert MiddlewareStack is not None
     assert RecallMiddleware(compress=True).name == "recall"

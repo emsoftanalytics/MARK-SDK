@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 #
 # Tests for mark.observe(), LLMProvider protocol, ObserveResult, ObserveEvent,
@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from mark import LLMProvider, Mark, ObserveEvent, ObserveResult
+from mark import LLMProvider, Mark, ObserveEvent, ObserveMiddleware, ObserveResult
 from mark.embeddings import HashEmbeddingProvider
 from mark.memory.observe import _parse_extraction, extract_entities
 from mark.memory.runtime import MarkRuntime
@@ -139,7 +139,8 @@ def test_extract_entities_llm_exception_returns_empty() -> None:
 def test_observe_without_llm_stores_fragment(tmp_path: Path) -> None:
     """Deterministic extractor runs even without an LLM configured."""
     runtime = MarkRuntime.local(store_path=tmp_path / "mem.db",
-                                embedder=HashEmbeddingProvider(dim=32))
+                                embedder=HashEmbeddingProvider(dim=32),
+                                middleware=[ObserveMiddleware()])
     mem = runtime.memory("director")
 
     result = mem.observe(
@@ -165,7 +166,8 @@ def test_observe_without_llm_stores_fragment(tmp_path: Path) -> None:
 
 def test_observe_plain_text_no_entities_inferred_false(tmp_path: Path) -> None:
     """Text with no extractable entities gives inferred=False without LLM."""
-    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db")
+    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db",
+                                middleware=[ObserveMiddleware()])
     mem = runtime.memory("director")
 
     result = mem.observe("The sky is blue.")
@@ -184,7 +186,8 @@ def test_observe_with_llm_creates_nodes_and_edges(tmp_path: Path) -> None:
     llm = _FakeLLM(_ELENA_JSON_RESPONSE)
     runtime = MarkRuntime.local(store_path=tmp_path / "mem.db",
                                 embedder=HashEmbeddingProvider(dim=32),
-                                llm=llm)
+                                llm=llm,
+                                middleware=[ObserveMiddleware()])
     mem = runtime.memory("director")
 
     result = mem.observe(
@@ -204,7 +207,8 @@ def test_observe_with_llm_creates_nodes_and_edges(tmp_path: Path) -> None:
 
 def test_observe_nodes_have_correct_types(tmp_path: Path) -> None:
     llm = _FakeLLM(_ELENA_JSON_RESPONSE)
-    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db", llm=llm)
+    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db", llm=llm,
+                                middleware=[ObserveMiddleware()])
     mem = runtime.memory("director")
 
     result = mem.observe("Elena enters the warehouse.")
@@ -218,7 +222,8 @@ def test_observe_nodes_have_correct_types(tmp_path: Path) -> None:
 
 def test_observe_edge_relations_correct(tmp_path: Path) -> None:
     llm = _FakeLLM(_ELENA_JSON_RESPONSE)
-    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db", llm=llm)
+    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db", llm=llm,
+                                middleware=[ObserveMiddleware()])
     mem = runtime.memory("director")
 
     result = mem.observe("Elena enters the warehouse.")
@@ -234,7 +239,8 @@ def test_observe_fragment_attached_to_nodes(tmp_path: Path) -> None:
     llm = _FakeLLM(_ELENA_JSON_RESPONSE)
     runtime = MarkRuntime.local(store_path=tmp_path / "mem.db",
                                 embedder=HashEmbeddingProvider(dim=32),
-                                llm=llm)
+                                llm=llm,
+                                middleware=[ObserveMiddleware()])
     mem = runtime.memory("director")
 
     result = mem.observe("Elena enters the warehouse.")
@@ -250,7 +256,8 @@ def test_observe_fragment_attached_to_nodes(tmp_path: Path) -> None:
 def test_observe_with_empty_extraction_stores_fragment(tmp_path: Path) -> None:
     """Plain text with no entities + LLM returning NONE → inferred=False."""
     llm = _FakeLLM(_EMPTY_RESPONSE)
-    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db", llm=llm)
+    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db", llm=llm,
+                                middleware=[ObserveMiddleware()])
     mem = runtime.memory("director")
 
     result = mem.observe("The sky is blue.")
@@ -263,7 +270,8 @@ def test_observe_with_empty_extraction_stores_fragment(tmp_path: Path) -> None:
 
 def test_observe_with_malformed_llm_output_stores_fragment(tmp_path: Path) -> None:
     llm = _FakeLLM(_MALFORMED_RESPONSE)
-    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db", llm=llm)
+    runtime = MarkRuntime.local(store_path=tmp_path / "mem.db", llm=llm,
+                                middleware=[ObserveMiddleware()])
     mem = runtime.memory("director")
 
     result = mem.observe("Chaos reigns.")
@@ -287,6 +295,7 @@ def test_configure_llm_enables_extraction(tmp_path: Path) -> None:
     # Bind LLM and observe again
     llm = _FakeLLM(_ELENA_JSON_RESPONSE)
     runtime.configure_llm(llm)
+    runtime.use(ObserveMiddleware())
     mem2 = runtime.memory("director")  # new MarkMemory picks up the LLM
     r2 = mem2.observe("Elena enters the warehouse.")
     assert r2.inferred is True
@@ -294,7 +303,7 @@ def test_configure_llm_enables_extraction(tmp_path: Path) -> None:
 
 
 def test_mark_configure_llm_propagates_to_simple_memory(tmp_path: Path) -> None:
-    with Mark.local(project_path=tmp_path) as mark:
+    with Mark.local(project_path=tmp_path, middleware=[ObserveMiddleware()]) as mark:
         llm = _FakeLLM(_ELENA_JSON_RESPONSE)
         mark.configure_llm(llm)
 
@@ -312,7 +321,8 @@ def test_mark_configure_llm_propagates_to_simple_memory(tmp_path: Path) -> None:
 
 def test_mark_local_with_llm(tmp_path: Path) -> None:
     llm = _FakeLLM(_ELENA_JSON_RESPONSE)
-    with Mark.local(project_path=tmp_path, llm=llm) as mark:
+    with Mark.local(project_path=tmp_path, llm=llm,
+                    middleware=[ObserveMiddleware()]) as mark:
         result = mark.memory.observe("Elena wears the red scarf.")
         assert result.inferred is True
         assert len(result.nodes) == 3
@@ -326,7 +336,8 @@ def test_observe_event_schema_fields(tmp_path: Path) -> None:
     llm = _FakeLLM(_ELENA_JSON_RESPONSE)
     runtime = MarkRuntime.local(store_path=tmp_path / "mem.db",
                                 embedder=HashEmbeddingProvider(dim=32),
-                                llm=llm)
+                                llm=llm,
+                                middleware=[ObserveMiddleware()])
     mem = runtime.memory("director")
     result = mem.observe("Elena enters the warehouse.", session_id="ep-01")
 
@@ -371,6 +382,7 @@ def test_hook_observe_event_fires(tmp_path: Path) -> None:
         embedder=HashEmbeddingProvider(dim=32),
         plugins=[ObservatoryPlugin()],
         llm=llm,
+        middleware=[ObserveMiddleware()],
     )
     mem = runtime.memory("director")
     mem.observe("Elena enters the warehouse.", session_id="ep-01")
@@ -418,7 +430,7 @@ def test_hook_observe_event_still_fires_without_llm(tmp_path: Path) -> None:
 
 def test_simple_memory_observe_without_llm(tmp_path: Path) -> None:
     """Deterministic extractor runs on simple memory observe without LLM."""
-    with Mark.local(project_path=tmp_path) as mark:
+    with Mark.local(project_path=tmp_path, middleware=[ObserveMiddleware()]) as mark:
         result = mark.memory.observe(
             "Elena enters the warehouse.",
             session_id="ep-01",

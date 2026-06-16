@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors — v1.3 plasticity
 #
 # HebbianReinforcement + EdgeCoActivation
@@ -6,7 +6,7 @@
 # Biological analogy: LTP (long-term potentiation) and Hebbian learning —
 # "neurons that fire together wire together."
 #
-# Cloud hook: HOOK_PLASTICITY activates the cloud plasticity plugin.
+# Hook: HOOK_PLASTICITY activates a registered plasticity plugin.
 """Hebbian reinforcement and edge co-activation arithmetic."""
 from __future__ import annotations
 

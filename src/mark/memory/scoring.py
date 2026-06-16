@@ -9,7 +9,7 @@ from mark.memory.record import MemoryRecord
 TOKEN_RE = re.compile(r"[a-zA-Z0-9_]+")
 
 # Transparent legacy fallback weights for the old block/record API.
-# These are not production-calibrated MARK Cloud weights, and this scorer is
+# These are not production-calibrated learned weights, and this scorer is
 # not used by the current SQLite fragment RetrievalPipeline.
 _OVERLAP_WEIGHT = 0.52
 _IMPORTANCE_WEIGHT = 0.22

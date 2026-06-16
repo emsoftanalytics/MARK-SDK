@@ -13,7 +13,7 @@ EXAMPLES = [
     "01_local_memory_live.py",
     "02_agent_ab_live.py",
     "03_sessions_and_observe_live.py",
-    "04_sync_boundary_live.py",
+    "04_sync_envelope_live.py",
 ]
 
 

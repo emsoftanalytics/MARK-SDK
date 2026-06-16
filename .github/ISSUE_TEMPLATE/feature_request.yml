@@ -29,5 +29,7 @@ body:
     attributes:
       label: Checks
       options:
-        - label: This fits the local-first SDK (works offline, no required services)
+        - label: This can be exercised through the public SDK API
+          required: false
+        - label: This does not add heavy generated-media dependencies to package extras
           required: false

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 """SimpleMemory: the ergonomic block/write/retrieve surface for scripts."""
 from __future__ import annotations
@@ -280,7 +280,7 @@ class SimpleMemory:
     # ── feedback API ──────────────────────────────────────────────────────────
 
     def feedback(self, record_id: str, score: float) -> None:
-        """Signal quality feedback. Register HOOK_FEEDBACK for cloud collection."""
+        """Signal quality feedback. Register HOOK_FEEDBACK for custom collection."""
         pass
 
     # ── graph API (delegates to the underlying MarkMemory) ───────────────────

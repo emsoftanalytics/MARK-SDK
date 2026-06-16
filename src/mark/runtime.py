@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 #
 # Mark — the single public entrypoint for the local MARK SDK.
@@ -28,12 +28,13 @@ from mark.agent import MarkAgent
 from mark.context import ContextBuilder
 from mark.memory.simple import SimpleMemory
 from mark.policies import PolicyRegistry
-from mark.skills import SkillRegistry
+from mark.middlewares.base import MarkMiddleware
+from mark.middlewares.skills import SkillRegistry
 
 if TYPE_CHECKING:
-    from mark.media.world_bible import WorldBibleMemory
+    from mark.middlewares.media_continuity.world_bible import WorldBibleMemory
     from mark.memory.observe import ObserveResult
-    from mark.middleware import MarkMiddleware
+    from mark.middlewares import MarkMiddleware
 
 
 @dataclass(frozen=True)
@@ -48,7 +49,7 @@ class Mark:
     Primary local MARK runtime entrypoint.
 
     Use Mark.local() to create an instance. All data stays local unless
-    you explicitly register a HOOK_SYNC cloud plugin.
+    you explicitly register a HOOK_SYNC plugin.
 
     Simple API (mark.memory):
         mark.memory.block("project").write("...")
@@ -188,7 +189,7 @@ class Mark:
             conflicts = mark.world_bible.check("Elena uses her right hand.")
         """
         if self._world_bible is None:
-            from mark.media.world_bible import WorldBibleMemory
+            from mark.middlewares.media_continuity.world_bible import WorldBibleMemory
             self._world_bible = WorldBibleMemory(
                 self._runtime_engine.memory("__world_bible__")  # type: ignore[union-attr]
             )
@@ -280,8 +281,18 @@ class Mark:
         blocks: list[str] | None = None,
         policy: str = "default",
         skills: list[str] | None = None,
+        middleware: list[MarkMiddleware] | None = None,
+        agent_id: str = "mark-agent",
+        max_context_chars: int = 6000,
     ) -> MarkAgent:
         """Wrap an LLM callable with MARK memory, policies, and skills."""
+        skill_prompt = ""
+        runtime_skill_prompt = getattr(self.runtime, "skill_prompt", None)
+        if callable(runtime_skill_prompt):
+            try:
+                skill_prompt = runtime_skill_prompt()
+            except Exception:
+                skill_prompt = ""
         return MarkAgent(
             llm          = llm,
             memory       = self.memory,
@@ -290,6 +301,11 @@ class Mark:
             block_labels = blocks or [],
             policy_name  = policy,
             skill_names  = skills or [],
+            skill_prompt = skill_prompt,
+            runtime      = self.runtime,
+            middleware   = middleware,
+            agent_id     = agent_id,
+            default_max_context_chars = max_context_chars,
         )
 
     def shutdown(self) -> None:

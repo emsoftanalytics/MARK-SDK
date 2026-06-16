@@ -36,8 +36,8 @@ class MemoryManager:
     """Compatibility facade for the original block/record memory API.
 
     New SDK code should prefer Mark.local(), SimpleMemory, or MarkRuntime.
-    This class remains MIT-licensed local functionality for older examples and
-    tests; it does not contain cloud ranking, adaptive routing, or training
+    This class remains Apache-2.0-licensed local functionality for older examples and
+    tests; it does not contain adaptive ranking, adaptive routing, or training
     logic.
     """
 
