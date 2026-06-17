@@ -9,7 +9,7 @@ The PyPI distribution name is `mark-sdk`; the Python import name remains
 
 - Package metadata: `pyproject.toml`
 - Runtime export: `mark.__version__`
-- Git release tags: `sdk-python-mark-vX.Y.Z`
+- Git release tags: `vX.Y.Z`
 
 The package version and `mark.__version__` must stay identical.
 
@@ -28,7 +28,7 @@ Before `1.0.0`, minor versions may still refine APIs, but every breaking change 
 - `0.2.x`: stable release line for SQLite memory, vector retrieval, graph expansion,
   plugin boundaries, and stronger local SDK documentation.
 - `0.3.x`: stable agent middleware interfaces and framework adapters.
-- `0.4.x`: explicit cloud sync handoff to `mark-cloud`.
+- `0.4.x`: hardened sync-envelope contracts and adapter compatibility.
 - `1.0.0`: stable local SDK API, documented compatibility, CI, packaging, and security review.
 
 ## Release Checklist
@@ -40,7 +40,7 @@ Before `1.0.0`, minor versions may still refine APIs, but every breaking change 
 5. Tag the release:
 
 ```bash
-git tag sdk-python-mark-v0.2.0a4
+git tag v0.2.0a6
 ```
 
 6. Build and inspect the release artifacts:

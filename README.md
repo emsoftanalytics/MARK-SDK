@@ -369,7 +369,11 @@ its own package under `mark.middlewares`.
   the templates take two minutes, and "this surprised me" reports are welcome too.
 - **Want to contribute?** Start with [CONTRIBUTING.md](CONTRIBUTING.md) and the
   [`good first issue`](https://github.com/emsoftanalytics/MARK-SDK/labels/good%20first%20issue) label.
-  Draft PRs and questions are encouraged.
+  Contributions should be made from a separate branch and submitted through a
+  Pull Request for review before they land on `main`. Draft PRs and questions
+  are encouraged.
+- **Want to know where MARK is going?** See [ROADMAP.md](ROADMAP.md) for the
+  current SDK roadmap and contributor-friendly work areas.
 - **Using MARK in a project?** Tell us in
   [Discussions](https://github.com/emsoftanalytics/MARK-SDK/discussions) — real
   workloads drive the roadmap.

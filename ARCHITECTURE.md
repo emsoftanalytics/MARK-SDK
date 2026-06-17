@@ -8,13 +8,13 @@ MARK is more than a memory store. It combines storage, retrieval, context
 injection, automatic observation, structured memory graphs, provenance, and
 framework adapters so memory can participate in the agent execution loop.
 
-Everything documented here runs locally. Hosted MARK services are separate
-products that connect through the SDK's public plugin hooks; their design is
-out of scope for this document.
+Everything documented here runs locally. Any remote behavior must enter through
+public SDK hooks or developer-supplied clients; service-side design is out of
+scope for this document.
 
 Framework adapters in `mark.adapters` are optional compatibility shims over
 public MARK APIs. They may expose MARK to LangChain, MCP, or similar runtimes,
-but they must not move cloud sync, hosted control-plane behavior, or
+but they must not move remote transport, account infrastructure, or
 framework-specific product logic into the local SDK core.
 
 ## Design Goals
@@ -228,9 +228,9 @@ This package includes:
 - plugin interfaces and hook constants,
 - optional framework adapters and skills.
 
-Hosted services, managed infrastructure, and commercial features are not part
-of this package. The only paths from the SDK outward are `PluginRegistry`
-hooks and clients that the developer explicitly supplies.
+Managed infrastructure and service-side features are not part of this package.
+The only paths from the SDK outward are `PluginRegistry` hooks and clients that
+the developer explicitly supplies.
 
 ## Tool, Middleware, And Adapters
 
@@ -306,7 +306,7 @@ Initial local middleware includes:
 - `LifecycleMiddleware`: explicit local run-cycle triggers after writes.
 - `ObservabilityMiddleware`: local tracer events around middleware operations.
 - `SyncMiddleware`: redacted sync envelope preparation or caller-supplied
-  cloud-client upload.
+  client upload.
 - `TrustBusMiddleware`: publish selected observations or writes to the local
   trust-aware bus.
 - `SandboxMiddleware`: blocked-by-default local sandbox execution wrapper for
@@ -314,10 +314,9 @@ Initial local middleware includes:
 - `MediaContinuityMiddleware`: creative continuity defaults for observations
   and graph-expanded recall.
 
-These classes automate local behavior only. Cloud-owned capabilities such as
-managed retrieval, governed compression, browser healing, tenant policy, proof
-anchoring, hosted sandbox execution, and memory observatory retention remain
-outside the Apache-2.0 SDK.
+These classes automate local behavior only. Managed retrieval, governed
+compression, browser healing, tenant policy, proof anchoring, remote sandbox
+execution, and long-term observability retention remain outside the local SDK.
 
 ## Sync And Observability
 

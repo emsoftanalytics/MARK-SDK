@@ -29,6 +29,27 @@ Issues labeled [`good first issue`](https://github.com/emsoftanalytics/MARK-SDK/
 and [`help wanted`](https://github.com/emsoftanalytics/MARK-SDK/labels/help%20wanted)
 are the best places to start.
 
+## Contribution flow
+
+Please do not push directly to `main`.
+
+All contributions should be made from a separate branch and submitted through a
+Pull Request. This keeps the SDK stable, allows tests and packaging checks to
+run, and gives maintainers a chance to review changes before they are merged.
+
+Recommended flow:
+
+1. Fork the repository or create a feature branch from `main`.
+2. Make your changes in that branch.
+3. Run the relevant checks locally.
+4. Open a Pull Request against `main`.
+5. Respond to review feedback.
+6. A maintainer will merge the PR when it is ready.
+
+Maintainers review contributions before they land on `main`. This is how MARK
+protects release quality while still making it easy for new contributors to
+help.
+
 ## Ground rules
 
 - This package is local-first: the core must work without network, Docker,
@@ -39,10 +60,14 @@ are the best places to start.
 - Schema changes need a migration entry (`LocalMemoryStore._MIGRATIONS`) and a
   migration test.
 - Match the style of the surrounding code; no sweeping reformat-only PRs.
+- Keep changes scoped to the SDK/runtime unless an issue explicitly asks for
+  something else.
+- Do not commit generated media, local output folders, secrets, provider keys,
+  or machine-specific configuration.
 
 ## Pull requests
 
-1. Fork, create a topic branch, make your change.
+1. Fork or branch from `main`, then make your change on that branch.
 2. Run `uv run pytest` and `uv build`.
 3. Open a PR with: what changed, why, and how you tested it. Link the issue it
    fixes if there is one.
@@ -62,5 +87,5 @@ For security issues, please do **not** open a public issue — see
 
 ## License
 
-By contributing you agree your contributions are licensed under the MIT
+By contributing you agree your contributions are licensed under the Apache-2.0
 license that covers this package.

@@ -4,9 +4,10 @@ This package implements the local-first MARK SDK. When working in this package, 
 
 ## Product Boundary
 
-- `mark` is local-first and must work without network, Docker, cloud accounts, or hosted APIs.
-- `mark-cloud` owns HTTP/cloud sync, auth, tenancy, and hosted control-plane behavior.
-- `mark-adapters` owns LangChain, MCP, LangGraph, and framework-specific integrations.
+- `mark` is local-first and must work without network, Docker, accounts, or remote APIs.
+- `mark.adapters` owns optional framework glue for LangChain, MCP, and similar integrations.
+- `mark.middlewares.sync.CloudSync` prepares local sync envelopes only; callers
+  must supply any remote client explicitly.
 - Do not turn `mark` into a presentation app or product UI.
 
 ## Agent Usage Pattern
@@ -44,14 +45,14 @@ Middleware and direct runtime examples should make MARK feel natural: the agent 
 
 - Keep local SDK dependencies minimal.
 - Add tests with every behavioral change.
-- Do not require LangChain, MCP, or cloud packages in the local SDK core.
+- Do not require LangChain, MCP, or remote-service packages in the local SDK core.
 - Optional examples may mention LangChain, but local tests must run without provider API keys.
 - Do not store secrets in examples or memory fixtures except fake redaction test values.
 - Package non-Python skill assets explicitly so installed users can load them through `importlib.resources`.
 
 ## Verification
 
-From `sdk/python/mark`, run:
+From the package root, run:
 
 ```bash
 uv run --extra dev pytest
