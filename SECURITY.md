@@ -70,7 +70,15 @@ Out of scope for this repository:
 - Gap healing (`auto_heal=True` on `MarkAgentMiddleware`) is off by default
   because it can reach the network.
 - The MCP server lets clients choose an agent namespace. Pass
-  `allowed_agent_ids` when clients are not fully trusted.
+  `allowed_agent_ids` when clients are not fully trusted; it applies to the
+  opt-in `mark_briefing` tool too. Briefing sessions are isolated per
+  (agent, session id), kept in a bounded LRU, and the
+  `mark://briefing/{session_id}` resource never creates a session.
+- `embedder="auto"` and `auto_embedder()` never download a model or contact
+  a server. Ollama and OpenAI-compatible embedders, `LLMFactExtractor`,
+  `OpenAIVisionDescriber`, and `MarkChat` contact only the endpoint you pass
+  them (or name in `MARK_EMBEDDER`). `MARK_EMBEDDER_API_KEY` is read from
+  the environment and never stored.
 
 ## Secrets And Memory
 
@@ -116,12 +124,15 @@ process exits.
 | Content integrity digests | Keyed HMAC, so they do not reveal plaintext |
 | Tags, metadata, session ids, source labels | Plaintext |
 | Fact subjects and attributes | Plaintext (they are lookup keys) |
+| Image paths, hashes, sizes, and subjects | Plaintext metadata (image bytes are never stored) |
 | Graph node labels, block labels, session events | Plaintext |
 | Embeddings | Plaintext; they can reveal the meaning of the content |
 
 MARK filters on the plaintext fields in SQL. Do not put secrets in them.
 Encrypted stores never build the plaintext keyword (FTS5) index, so recall
-uses vector search only.
+uses vector search only. Automatic fact extraction derives subjects and
+attributes from encrypted content and stores them in plaintext, like any
+other fact key; leave it off for content whose subject names are sensitive.
 
 A store remembers whether it is encrypted (a marker in its `schema_info`
 table; stores created by older versions are detected from their content the
@@ -129,8 +140,10 @@ first time they are opened). Opening an encrypted store without a provider
 raises `EncryptionRequiredError`, and a wrong key or passphrase raises
 `EncryptionKeyError`, instead of returning garbage or writing plaintext into
 it. Encryption cannot be switched on for a store that already holds plaintext
-memories (`PlaintextStoreError`); start a new store instead. All three
-subclass `mark.errors.StoreEncryptionError`.
+memories (`PlaintextStoreError`); start a new store instead. An empty
+plaintext store can be opened with a provider and becomes encrypted. All
+three subclass `mark.errors.StoreEncryptionError` (also a `RuntimeError`) and
+can be imported from `mark.errors` or `mark.security`.
 
 Keep keys and passphrases outside the repository. Use environment variables
 or your application's secret manager.
@@ -138,7 +151,8 @@ or your application's secret manager.
 ## The `mark` command and `mark serve`
 
 The CLI opens a local SQLite file and does not encrypt it (use the Python API
-for encrypted stores); it refuses to open an encrypted store. On POSIX
+for encrypted stores); it refuses to open an encrypted store and reports the
+error instead of crashing. On POSIX
 systems, a database file MARK creates is mode `0600` (its `-wal` and `-shm`
 files inherit that), and a `.mark/` (or other store) directory MARK creates
 is mode `0700`. Directories and database files that already exist keep their

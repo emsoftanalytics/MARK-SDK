@@ -4,52 +4,58 @@ This roadmap covers the open Python SDK: work that can be implemented,
 tested, documented, and shipped in the `mark-sdk` package. Plans change as we
 learn from real workloads; open a discussion if something here matters to you.
 
-## Current release: 0.2.0a8
+## Current release: 0.2.0a9
 
-- Local memory through `Mark.local()`, with memory blocks, sessions, and agent
-  namespaces in one SQLite file.
-- Hybrid recall: keyword (BM25) and vector search with rank fusion, and no LLM
-  calls on store or recall.
-- Time-aware recall for "now" and "original" questions, using `occurred_at` or
-  a leading date stamp.
-- Bi-temporal facts: `set`, `get`, `current`, `history`, `as_of`, `retract`,
-  corrections, and same-day sequences.
-- Gap reports that name subjects which are not in memory.
-- Batch store and recall (`store_many_sync`, `retrieve_many_sync`).
-- `ContextWatch` briefings, and LangChain middleware that injects them
-  automatically (`anticipate=True`).
-- LangChain tools, an MCP server, and the `mark` command line with
-  `mark serve`.
-- Local embedding providers: Ollama, OpenAI-compatible servers, FastEmbed,
-  Model2Vec, sentence-transformers, and the zero-dependency default.
-- Provenance blocks (seal, verify, quarantine), lifecycle maintenance, opt-in
-  middleware, and encryption of content and fact values at rest.
+Everything from 0.2.0a8 (local memory, hybrid recall, time-aware recall,
+bi-temporal facts, gap reports, batch operations, `ContextWatch`, LangChain
+middleware and tools, the MCP server, the `mark` command line, local
+embedders, provenance blocks, and encryption at rest), plus:
 
-## Next: 0.2.0a9
+- **Automatic fact extraction.** Built-in rule packs record facts from stored
+  text (`fact_extractor="patterns"` or `extract_facts=True`). A local LLM
+  extractor runs from a durable background queue. `mark ingest
+  --extract-facts` does the same from the command line.
+- **Subject timelines.** `memory.timeline(subject, attribute)` and
+  `mark timeline` list everything memory knows about a subject, oldest first.
+  `order="chronological"` and `mark recall --chronological` sort recall
+  results the same way.
+- **Proactive context beyond LangChain.** `observe_messages()` and `inject()`
+  bring briefings to any agent loop, MCP clients get an opt-in
+  `mark_briefing` tool and resource, and `ContextWatch.for_small_models()`
+  is a preset for small models.
+- **Token-budgeted context.** `ContextBudget` puts a hard token cap, filled by
+  priority, on briefings and on everything the middleware injects.
+- **Context replacement.** `MarkAgentMiddleware(history="mark")` and the
+  `MarkChat` reference loop keep only recent messages in the prompt and let
+  MARK supply the rest.
+- **Better embeddings.** `embedder="auto"` and spec strings, with fusion that
+  adapts to the embedder (hybrid hit@1 up 7 to 11 queries out of 60 for
+  semantic models). The deterministic hash embedder stays the default.
+- **Image memory.** `memory.images` remembers images by path and hash, finds
+  them by caption or CLIP similarity, and checks them against facts.
+- **Hardening.** Encrypted stores refuse to open without the right key, and
+  new store directories and files are private on POSIX.
 
-- **Automatic fact extraction.** Record facts from stored text, so agents do
-  not have to call `facts.set` themselves.
-- **Subject timelines.** One view of everything memory knows about a subject,
-  in event order.
-- **Proactive context beyond LangChain.** Briefings for MCP clients and for
-  plain agent loops.
-- **Stronger default embeddings.** Better semantic recall out of the box,
-  while keeping the core install light.
-- **Image memory.** Remember images for visual continuity across generations
-  and sessions.
-- **Token-budgeted context.** Fit injected memory to a token budget, and
-  replace stale context instead of only appending to it.
+## Next: 0.2.0a10
+
+- **Fast cold start and backup.** Faster first use of a large store, and
+  simple backup and restore.
+- **A simpler API.** Fewer entry points for common tasks.
+- **Windows and macOS CI, and fuzzing.** Test every release on all three
+  platforms, and fuzz the parsers and the store.
+- **The retention A/B benchmark as a regression suite.** Run it on every
+  release so recall quality cannot quietly regress.
+- **Fact extraction for multi-clause lines.** Lines that state several
+  changes at once, the main gap in the current rule packs.
+- **Alias resolution in timelines.** Gather a subject's events under all of
+  its names.
+- **Encryption support in the command line.**
 
 ## Later
 
-- **Cold start and backup.** Faster first use of a large store, and simple
-  backup and restore.
-- **A simpler API.** Fewer entry points for common tasks.
-- **Windows and macOS CI.** Test every release on all three platforms.
-
 Under consideration: sealing fact timelines into the block chain, an entity
-channel as a third retrieval signal, a background extraction queue, an
-optional local reranker, and a reproducible long-memory evaluation harness.
+channel as a third retrieval signal, an optional local reranker, and a
+reproducible long-memory evaluation harness.
 
 ## Good areas for contributors
 

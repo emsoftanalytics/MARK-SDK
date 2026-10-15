@@ -27,7 +27,7 @@ Every breaking change is listed under "Breaking changes" in the changelog.
 
 - `0.1.x`: local memory, context, policies, skills, agent wrapper, examples.
 - `0.2.0aN`: alpha checkpoints for the local runtime: hybrid retrieval, facts,
-  briefings, the CLI. The current release is `0.2.0a8`; `0.2.0a9` is in
+  briefings, the CLI. The current release is `0.2.0a9`; `0.2.0a10` is in
   development.
 - `0.2.x`: stable release line for SQLite memory, hybrid retrieval, facts,
   and the plugin boundary.

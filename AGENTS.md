@@ -26,10 +26,16 @@ lookup step:
 3. **Act** with the remembered context.
 4. **Reflect** on what changed.
 5. **Remember** verified facts, decisions, and procedures for future agents.
-   Record values that change over time as facts (`memory.facts.set`).
+   Record values that change over time as facts (`memory.facts.set`), or
+   enable automatic extraction (`fact_extractor="patterns"`,
+   `extract_facts=True`, `mark ingest --extract-facts`) so stated changes
+   become facts.
 
 When memory reports a subject as not in memory, say so instead of guessing.
-When a briefing corrects a value, use the current value.
+When a briefing corrects a value, use the current value. For "how did X
+change" or "what happened to X" questions, read the subject's timeline
+(`memory.timeline(subject, attribute)` or `mark timeline`) instead of a top-k
+recall.
 
 When demonstrating MARK, show the same task without MARK and with MARK.
 
@@ -38,11 +44,12 @@ When demonstrating MARK, show the same task without MARK and with MARK.
 | Mode | Entry point | Use when |
 | --- | --- | --- |
 | Direct runtime | `Mark.local()`, `mark.memory`, `mark.runtime.memory(agent_id)`, `mark.wrap_agent(...)` | Application code owns the agent loop. |
-| Briefings | `ContextWatch(memory)`: `observe(...)`, then `briefing().text` before each model call | A plain loop should get memory without issuing searches. |
-| Middleware | `MarkAgentMiddleware` (LangChain, `anticipate=True` by default); `mark.middlewares` for runtime operations | Memory should be injected and recorded automatically. |
+| Briefings | `ContextWatch(memory, budget_tokens=...)`: `observe(...)` or `observe_messages(messages)`, then `briefing().text` or `inject(messages, briefing)` before each model call | A plain loop should get memory without issuing searches. |
+| Context window | `MarkChat(memory, model=..., base_url=..., keep_last=..., budget_tokens=...)` | MARK should hold the conversation and the model see only recent messages plus a briefing. |
+| Middleware | `MarkAgentMiddleware` (LangChain, `anticipate=True` by default; `budget_tokens=`, `history="mark"`); `mark.middlewares` for runtime operations | Memory should be injected and recorded automatically. |
 | Tools | `create_mark_tools(...)`: `mark_retrieve`, `mark_write`, `mark_observe` | The model should decide when to read or write memory. |
-| MCP | `create_mark_mcp_server(...)`, same three tools over stdio | External MCP clients need memory. |
-| CLI | `mark ingest`, `store`, `recall`, `recall-many`, `fact set/get/history/retract`, `stats`, `serve` | Scripts, shells, and agents that run commands. |
+| MCP | `create_mark_mcp_server(...)`, same three tools over stdio; `briefing=True` adds `mark_briefing` | External MCP clients need memory. |
+| CLI | `mark ingest [--extract-facts]`, `store`, `recall [--chronological]`, `recall-many`, `timeline`, `fact set/get/history/retract`, `stats`, `serve` | Scripts, shells, and agents that run commands. |
 | Skill | `src/mark/middlewares/skills/mark-usage/SKILL.md` | An agent loads portable `SKILL.md` instructions. |
 
 `mark.memory`, the LangChain and MCP adapters, and the CLI all default to the

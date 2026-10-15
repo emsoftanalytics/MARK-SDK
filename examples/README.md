@@ -11,6 +11,9 @@ a temporary directory.
 | `04_facts_over_time.py` | Track values that change over time; ask what is true now. |
 | `05_context_watch.py` | Let MARK prepare a briefing before the agent asks, and correct outdated claims. |
 | `06_safe_sync.py` | Prepare memory for sync with secrets redacted (nothing is uploaded). |
+| `07_briefing_any_loop.py` | Put a MARK briefing into a plain OpenAI-style message list, with the small-model preset. |
+| `08_visual_continuity.py` | Remember generated frames and catch one that contradicts a character's facts. |
+| `09_context_replacement.py` | MARK as the context window: the model sees two messages plus a token-budgeted briefing. |
 | `getting_started_with_mark.ipynb` | A longer walkthrough: a coding agent with and without MARK (middleware, tools, MCP). |
 
 Run them all from the repository root:
@@ -21,8 +24,8 @@ python examples/run_live_examples.py
 
 ## Using a real model
 
-Examples 02 and 05 call any OpenAI-compatible server when `MARK_LLM_URL` is
-set, for example a local [Ollama](https://ollama.com):
+Examples 02, 05, 07, and 09 call any OpenAI-compatible server when
+`MARK_LLM_URL` is set, for example a local [Ollama](https://ollama.com):
 
 ```bash
 ollama pull llama3.2:3b
