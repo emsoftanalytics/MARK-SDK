@@ -129,3 +129,16 @@ def test_llm_replies_map_first_person_subjects_to_the_user() -> None:
     reply = '{"facts": [{"subject": "I", "attribute": "city", "value": "Porto"}, {"subject": "she", "attribute": "x", "value": "y"}]}'
     assert [(c.subject, c.attribute, c.value) for c in parse_fact_reply(reply, user_subject="me")] == [
         ("me", "city", "Porto")]
+
+
+@pytest.mark.parametrize(("text", "expected"), [
+    ("I'm vegan - no dairy either.", ("user", "diet", "vegan")),
+    ("My brother Femi is a pilot.", ("user", "brother", "Femi")),
+    ("My brother Femi is a pilot.", ("Femi", "occupation", "pilot")),
+    ("I moved from Lisbon to Porto.", ("user", "location", "Porto")),
+    ("I am 182 cm tall and weigh 78 kg.", ("user", "weight", "78 kg")),
+    ("My dentist is Dr. Silva at the Boavista clinic.", ("user", "dentist", "Dr. Silva")),
+    ("My monthly rent is 1,350 EUR, paid on the 1st.", ("user", "monthly rent", "1,350 EUR")),
+])
+def test_trailing_clauses_appositions_and_titles(text: str, expected: tuple[str, str, str]) -> None:
+    assert expected in triples(text)

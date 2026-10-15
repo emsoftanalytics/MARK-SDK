@@ -21,7 +21,8 @@ from mark.intelligence.fact_extraction.vocab import DIET_ALT, DIETS, OCCUPATION_
 # A person: the user placeholder or 1-3 capitalised words ("Dr. Bello", "Mei Lin").
 _NAME = r"(?-i:[A-Z][\w'’.-]*)(?:\s+(?-i:[A-Z][\w'’.-]*)){0,2}"
 PERSON = rf"(?P<subject>{USER_TOKEN}|{_NAME})"
-_NAME_VALUE = rf"(?P<value>(?:(?:Dr|Mr|Mrs|Ms|Prof)\.\s+)?{_NAME})(?=\s*$|\s+(?:now|and|who|since)\b)"
+_NAME_VALUE = (rf"(?P<value>(?:(?:Dr|Mr|Mrs|Ms|Prof)\.\s+)?{_NAME})"
+               r"(?=\s*$|\s*[,;(]|\s+(?:now|and|who|since|at|in|from|of)\b)")
 _DAY = r"\d{1,2}(?:st|nd|rd|th)?"
 _MONTH = (r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?"
           r"|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)")
@@ -55,7 +56,7 @@ PERSONAL_DETAIL = RulePack(
 DIET = RulePack(
     name="diet",
     patterns=(rf"^{{S}}\s+(?:is|has\s+been|became|went)\s+(?:now\s+|a\s+|fully\s+|strictly\s+)*"
-              rf"(?P<value>{DIET_ALT})(?:\s+now)?\s*$",),
+              rf"(?P<value>{DIET_ALT})(?:\s+now)?(?=\s*$|\s*[-–—,(;:]|\s+(?:and|but|since)\b)",),
     attribute="diet",
     value_case="lower",
     attribute_from_value=False,
@@ -185,7 +186,8 @@ _WEEKDAYS_MONTHS = (r"(?:monday|tuesday|wednesday|thursday|friday|saturday|sunda
 RELOCATION = RulePack(
     name="relocation",
     # People move to places; meetings move to days, which are excluded.
-    patterns=(rf"^{PERSON}\s+(?:has\s+|have\s+|just\s+|recently\s+|finally\s+)*(?:moved|relocated)\s+(?:back\s+)?to\s+"
+    patterns=(rf"^{PERSON}\s+(?:has\s+|have\s+|just\s+|recently\s+|finally\s+)*(?:moved|relocated)"
+              r"(?:\s+from\s+(?-i:[A-Z])[\w.' -]*?)?\s+(?:back\s+)?to\s+"
               rf"(?:the\s+)?(?!{_WEEKDAYS_MONTHS})(?P<value>(?-i:[A-Z])[\w.'-]*(?:\s+(?-i:[A-Z])[\w.'-]*){{0,2}})(?![\w-])",),
     attribute="location",
     attribute_from_value=False,

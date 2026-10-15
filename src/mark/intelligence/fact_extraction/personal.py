@@ -47,7 +47,7 @@ _IRREGULAR = {"am": "is", "be": "is", "have": "has", "do": "does", "go": "goes"}
 # "<user>'s sister Ines lives in Faro": a relation in apposition to a name.
 _APPOSITION = re.compile(
     rf"^(?P<owner>{USER_TOKEN}|(?-i:[A-Z])[\w.-]*)['’]s\s+(?P<relation>{RELATION_ALT})\s+"
-    r"(?P<name>(?-i:[A-Z])[\w'-]*(?:\s+(?-i:[A-Z])[\w'-]*){0,2})\s+(?P<rest>(?!(?:is|was|are)\b)(?-i:[a-z]).+)$")
+    r"(?P<name>(?-i:[A-Z])[\w'-]*(?:\s+(?-i:[A-Z])[\w'-]*){0,2})\s+(?P<rest>(?-i:[a-z]).+)$")
 _DIET_NEG = re.compile(
     r"^(?P<who>.+?)\s+(?:no\s+longer\s+eats?|does\s+not\s+eat|doesn['’]t\s+eat|(?:has\s+)?stopped\s+eating"
     r"|(?:has\s+)?quit\s+eating|(?:has\s+)?given\s+up|gave\s+up(?:\s+eating)?|never\s+eats?)\s+"
@@ -66,7 +66,7 @@ _PERSON_NAME = re.compile(r"^(?:(?:Dr|Mr|Mrs|Ms|Prof)\.\s+)?[A-Z][a-z'’-]+(?:\
 _USER_WORDS = re.compile(r"^(?:the\s+)?user$", re.IGNORECASE)
 # Base-form verbs that continue a first-person clause ("... and work at X"),
 # matching the continuation verbs in :mod:`.clauses`.
-_CONTINUATION_BASE = "work|live|own|lead|use|prefer|like|love|hate|enjoy|speak|drive"
+_CONTINUATION_BASE = "work|live|own|lead|use|prefer|like|love|hate|enjoy|speak|drive|weigh"
 _NOT_VERBS = frozenset("think guess believe suppose hope wish feel mean know want need wonder".split())
 
 

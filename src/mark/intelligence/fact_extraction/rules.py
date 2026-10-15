@@ -56,7 +56,8 @@ SUBJECT = rf"(?P<subject>{_TOKEN}(?:\s+{_TOKEN}){{0,3}}?)(?:'s)?"
 #: ("... to port 4444 on Monday", "... to Lisbon because ...").
 VALUE = (
     r"(?P<value>[^;()]+?)"
-    r"(?=\s*(?:[;()]|,(?:\s|$)|\.(?:\s|$)|$)"
+    # A full stop ends a value unless it closes a title ("Dr. Silva").
+    r"(?=\s*(?:[;()]|,(?:\s|$)|(?<!\bDr)(?<!\bMr)(?<!\bMrs)(?<!\bMs)(?<!\bProf)(?<!\bSt)\.(?:\s|$)|$)"
     r"|\s+(?:and|but|because|after|before|since|on|at|as\s+of|effective|following|due\s+to|until"
     r"|while|when|which|instead\s+of|from|for|with|via|so|then)\b"
     # "in" + a time ends a value ("relocated to Accra in June"); "in staging" does not.

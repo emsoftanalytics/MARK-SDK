@@ -22,6 +22,7 @@ import re
 from typing import Any, Iterator
 
 from mark.intelligence.fact_extraction.numbers import NUMBER_WORD, parse_number
+from mark.intelligence.fact_extraction.tables import table_records
 
 Triple = tuple[str, str, str]
 
@@ -108,6 +109,7 @@ def extract_records(text: str) -> tuple[list[Triple], str]:
             remaining = text[:span[0]] + text[span[1]:]
     lines = remaining.splitlines()
     used: set[int] = set()
+    triples.extend(table_records(lines, used, _header_subject, attribute_key))
     triples.extend(_line_records(lines, used))
     triples.extend(_steps(lines, used))
     return triples, "\n".join(line for i, line in enumerate(lines) if i not in used)
@@ -176,7 +178,7 @@ def _line_records(lines: list[str], used: set[int]) -> Iterator[Triple]:
             block.clear()
 
     for index, line in enumerate(lines):
-        if not line.strip():
+        if index in used or not line.strip():
             yield from flush()
             continue
         if (match := _HEADING.match(line)) is not None:

@@ -29,7 +29,7 @@ _DETAILS = (
     "|mobile|mobile number|address|home address|postcode|zip code|city|hometown|home town|country"
     "|nationality|language|native language|job|job title|occupation|profession|employer|company|team"
     "|role|title|salary|car|bike|username|handle|timezone|time zone|pronouns|religion|school|university"
-    "|degree|major|hobby|anniversary|wedding anniversary|favourite colour|favorite color"
+    "|degree|major|hobby|anniversary|wedding anniversary|rent|monthly rent|mortgage|favourite colour|favorite color"
     "|favourite food|favorite food|favourite city|favorite city|favourite book|favorite book"
     "|favourite movie|favorite movie|favourite band|favorite band|favourite sport|favorite sport"
     "|favourite drink|favorite drink|favourite team|favorite team|favourite season|favorite season"

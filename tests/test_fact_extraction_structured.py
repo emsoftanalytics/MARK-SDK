@@ -78,3 +78,11 @@ def test_number_words_and_ordinals() -> None:
     assert parse_number("4th") == 4 and parse_number("banana") is None
     assert normalise_step_refs("what is step four of the deploy?") == "what is step 4 of the deploy?"
     assert normalise_step_refs("the fourth step") == "the step 4"
+
+
+def test_markdown_tables_are_records() -> None:
+    assert triples("| service | port | owner |\n|---|---|---|\n| ledger | 7000 | Dana |") == [
+        ("ledger", "port", "7000"), ("ledger", "owner", "Dana")]
+    assert triples("Monthly budget:\n| item | amount |\n|---|---|\n| rent | 900 EUR |") == [
+        ("Monthly budget", "rent", "900 EUR")]
+    assert triples("| item | amount |\n|---|---|\n| rent | 900 EUR |") == []  # untitled key/value table
