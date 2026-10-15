@@ -82,6 +82,10 @@ class _Engine:
                                              correction=correction)
         return {"fact": _fact_json(fact)}
 
+    def cmd_fact_retract(self, agent: str, subject: str, attribute: str | None = None,
+                         value: str | None = None) -> dict[str, Any]:
+        return {"retracted": self._memory(agent).facts.retract(subject, attribute, value=value)}
+
     def cmd_fact_get(self, agent: str, subject: str, attribute: str | None = None) -> dict[str, Any]:
         return {"facts": [_fact_json(f) for f in self._memory(agent).facts.current(subject, attribute)]}
 

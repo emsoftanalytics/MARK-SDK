@@ -167,3 +167,18 @@ def test_v0_2_0a7_store_upgrades_in_place(tmp_path: Path) -> None:
         assert mem.facts.get("atlas-core", "port").value == "4444"
     finally:
         runtime.shutdown()
+
+
+def test_retract_removes_mistakes_but_keeps_audit(runtime) -> None:
+    facts = runtime.memory("f").facts
+    facts.set("atlas-core", "port", "6430", valid_from="2026-03-01")
+    facts.set("atlas-core", "port", "9999", valid_from="2026-03-10")  # mistake
+    facts.set("test_x", "foo", "bar")
+
+    assert facts.retract("atlas-core", "port", value="9999") == 1
+    assert facts.get("atlas-core", "port").value == "6430"
+    assert [f.value for f in facts.history("atlas-core", "port")] == ["6430"]
+    assert facts.retract("test_x") == 1 and facts.current("test_x") == []
+    assert facts.retract("nothing-here") == 0
+    raw = runtime.store._fetchall("SELECT COUNT(*) FROM facts WHERE retracted_at IS NOT NULL")
+    assert raw[0][0] == 2  # kept for audit

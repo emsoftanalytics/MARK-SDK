@@ -127,3 +127,10 @@ def test_mismatched_server_build_falls_back_in_process(tmp_path: Path, monkeypat
         assert cli.execute(db, "stats", {"agent": "x"})["memories"] == 0  # in-process
     finally:
         stop.set()
+
+
+def test_fact_retract_command(tmp_path: Path, capsys) -> None:
+    db = str(tmp_path / "r.db")
+    _run(capsys, "--db", db, "--no-server", "fact", "set", "test_x", "foo", "bar")
+    assert "retracted 1 fact(s)" in _run(capsys, "--db", db, "--no-server", "fact", "retract", "test_x")
+    assert "(no facts)" in _run(capsys, "--db", db, "--no-server", "fact", "get", "test_x")
