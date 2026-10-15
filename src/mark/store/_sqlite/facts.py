@@ -37,14 +37,20 @@ class FactMixin:
         valid_from: datetime,
         source_fragment_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        correction: bool = False,
     ) -> dict[str, Any]:
         """Record that ``subject.attribute`` had ``value`` from ``valid_from`` on.
 
         Facts are never overwritten. The timeline for (subject, attribute) is
         re-derived on every write, so out-of-order arrivals slot into history
-        instead of becoming "current". Re-asserting the same value at the same
-        time is a no-op; a different value at the same time retracts the old
-        row (kept for audit) and records the correction.
+        instead of becoming "current".
+
+        Several values at the same ``valid_from`` (e.g. two changes logged on
+        one day) form a sequence ordered by when they were recorded; the last
+        one is current and every step stays in history. Re-asserting the
+        latest value at that time is a no-op. ``correction=True`` instead
+        replaces the values recorded at that time: they are retracted (kept for
+        audit) and the new value is recorded.
         """
         subject_key, attribute_key = _fact_key(subject), _fact_key(attribute)
         if not subject_key or not attribute_key:
@@ -57,18 +63,19 @@ class FactMixin:
         # Read, dedupe/retract, insert and re-chain in one locked transaction
         # so concurrent writers cannot interleave and corrupt the timeline.
         with self._writing(structural=False) as conn:
-            rows = conn.execute(
-                "SELECT id, value, valid_from FROM facts WHERE agent_id = ? AND subject_key = ?"
-                " AND attribute_key = ? AND retracted_at IS NULL",
-                (agent_id, subject_key, attribute_key),
+            same_time = conn.execute(
+                "SELECT id, value FROM facts WHERE agent_id = ? AND subject_key = ?"
+                " AND attribute_key = ? AND valid_from = ? AND retracted_at IS NULL"
+                " ORDER BY recorded_at, rowid",
+                (agent_id, subject_key, attribute_key, valid_text),
             ).fetchall()
-            for row in rows:
-                # Same valid time: identical value is a no-op, a different
-                # value is a correction (old row retracted, kept for audit).
-                if str(row["valid_from"]) == valid_text:
-                    if self.encryption.decrypt_str(row["value"]) == value:
-                        return self._fact_by_id(conn, str(row["id"]))
+            if correction:
+                # Explicit correction: what was recorded for this time was wrong.
+                for row in same_time:
                     conn.execute("UPDATE facts SET retracted_at = ? WHERE id = ?", (now, row["id"]))
+            elif same_time and self.encryption.decrypt_str(same_time[-1]["value"]) == value:
+                # Re-asserting the latest value for this time (e.g. re-ingesting a log).
+                return self._fact_by_id(conn, str(same_time[-1]["id"]))
             fact_id = str(uuid.uuid4())
             conn.execute(
                 "INSERT INTO facts (id, agent_id, subject, subject_key, attribute, attribute_key, value,"
@@ -85,7 +92,7 @@ class FactMixin:
         """Every value (subject, attribute) has had, oldest first; repeats collapsed."""
         rows = self._fetchall(
             "SELECT * FROM facts WHERE agent_id = ? AND subject_key = ? AND attribute_key = ?"
-            " AND retracted_at IS NULL ORDER BY valid_from, recorded_at",
+            " AND retracted_at IS NULL ORDER BY valid_from, recorded_at, rowid",
             (agent_id, _fact_key(subject), _fact_key(attribute)),
         )
         history: list[dict[str, Any]] = []
@@ -140,7 +147,7 @@ class FactMixin:
         """
         rows = conn.execute(
             "SELECT id, valid_from FROM facts WHERE agent_id = ? AND subject_key = ? AND attribute_key = ?"
-            " AND retracted_at IS NULL ORDER BY valid_from, recorded_at",
+            " AND retracted_at IS NULL ORDER BY valid_from, recorded_at, rowid",
             (agent_id, subject_key, attribute_key),
         ).fetchall()
         updates = [

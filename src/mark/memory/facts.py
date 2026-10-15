@@ -65,12 +65,18 @@ class FactsView:
         valid_from: datetime | str | None = None,
         source_fragment_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        correction: bool = False,
     ) -> Fact:
-        """Record a value; ``valid_from`` defaults to now."""
+        """Record a value; ``valid_from`` defaults to now.
+
+        Several values with the same ``valid_from`` are kept as a sequence (the
+        last one is current). Pass ``correction=True`` to replace what was
+        recorded for that time instead.
+        """
         row = self._store.fact_set(
             self._agent_id, subject, attribute, str(value),
             valid_from=_when(valid_from) or datetime.now(timezone.utc),
-            source_fragment_id=source_fragment_id, metadata=metadata,
+            source_fragment_id=source_fragment_id, metadata=metadata, correction=correction,
         )
         return _fact(row)
 

@@ -58,8 +58,9 @@ class _Engine:
         return {"results": [_result_json(result, k) for result in results]}
 
     def cmd_fact_set(self, agent: str, subject: str, attribute: str, value: str,
-                     valid_from: str | None = None) -> dict[str, Any]:
-        fact = self._memory(agent).facts.set(subject, attribute, value, valid_from=valid_from)
+                     valid_from: str | None = None, correction: bool = False) -> dict[str, Any]:
+        fact = self._memory(agent).facts.set(subject, attribute, value, valid_from=valid_from,
+                                             correction=correction)
         return {"fact": _fact_json(fact)}
 
     def cmd_fact_get(self, agent: str, subject: str, attribute: str | None = None) -> dict[str, Any]:

@@ -109,6 +109,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("attribute")
     p.add_argument("value")
     p.add_argument("--valid-from")
+    p.add_argument("--correction", action="store_true",
+                   help="replace the value(s) recorded for this time instead of adding a step")
     p = fact.add_parser("get")
     p.add_argument("subject")
     p.add_argument("attribute", nargs="?")
@@ -176,7 +178,8 @@ def _request(args: argparse.Namespace, agent: str) -> tuple[str, dict[str, Any]]
         cmd = f"fact-{args.fact_cmd}"
         payload = {"agent": agent, "subject": args.subject}
         if args.fact_cmd == "set":
-            payload.update(attribute=args.attribute, value=args.value, valid_from=args.valid_from)
+            payload.update(attribute=args.attribute, value=args.value, valid_from=args.valid_from,
+                           correction=args.correction)
         else:
             payload["attribute"] = args.attribute
     else:
