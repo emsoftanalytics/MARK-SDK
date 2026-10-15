@@ -47,6 +47,7 @@ from mark.store._sqlite.encryption_guard import EncryptionGuardMixin
 from mark.store._sqlite.events import EventMixin
 from mark.store._sqlite.fact_jobs import FactJobMixin
 from mark.store._sqlite.facts import FactMixin
+from mark.store._sqlite.facts_multi import FactMultiMixin
 from mark.store._sqlite.fragment_reads import FragmentReadMixin
 from mark.store._sqlite.fragments import FragmentWriteMixin
 from mark.store._sqlite.graph import GraphMixin
@@ -68,6 +69,7 @@ class LocalMemoryStore(
     BlockMixin,
     GraphMixin,
     FactMixin,
+    FactMultiMixin,
     FactJobMixin,
     EventMixin,
     RowDecodingMixin,

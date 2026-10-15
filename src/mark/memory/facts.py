@@ -6,10 +6,16 @@ person's team) it can record it as a fact; later values supersede earlier ones
 by their ``valid_from`` time, never by the order they were written, and
 nothing is deleted.
 
-    mem.facts.set("atlas-core", "port", "4444", valid_from="2026-03-30")
-    mem.facts.current("atlas-core", "port")      # -> Fact(value="4444", ...)
+    mem.facts.set("atlas-core", "port", 4444, valid_from="2026-03-30")
+    mem.facts.get("atlas-core", "port")          # -> Fact(value=4444, ...)
     mem.facts.history("atlas-core", "port")      # oldest → newest
     mem.facts.as_of("atlas-core", "port", "2026-03-20")
+    mem.facts.add("Dr. Bello", "phone", "+234 1")  # several current values
+    mem.facts.scheduled()                        # values that start in the future
+
+Values keep their Python type (str, int, float, bool, None, list, dict);
+rows written before typed values existed read back as strings. A value whose
+``valid_from`` is in the future is *scheduled*: not current until then.
 
 Facts can also be extracted automatically from stored memories (see
 :mod:`mark.intelligence.fact_extraction`); slow extractors queue their work,
@@ -25,13 +31,15 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from mark.store._sqlite.fact_codec import value_text
+
 
 @dataclass(frozen=True)
 class Fact:
     """One value of (subject, attribute) and the interval it was valid for."""
     subject: str
     attribute: str
-    value: str
+    value: Any
     valid_from: datetime
     valid_to: datetime | None = None
     recorded_at: datetime | None = None
@@ -41,14 +49,20 @@ class Fact:
 
     @property
     def is_current(self) -> bool:
-        """True when no later value has been recorded."""
-        return self.valid_to is None
+        """True when the value holds now: started already and not ended."""
+        now = datetime.now(timezone.utc)
+        return self.valid_from <= now and (self.valid_to is None or self.valid_to > now)
+
+    @property
+    def text(self) -> str:
+        """The value as text (str as-is, numbers plainly, other types as JSON)."""
+        return value_text(self.value)
 
     def as_text(self) -> str:
         """One-line rendering, e.g. 'atlas-core port = 4444 (since 2026-03-30)'."""
         since = self.valid_from.date().isoformat()
         until = f" until {self.valid_to.date().isoformat()}" if self.valid_to else ""
-        return f"{self.subject} {self.attribute} = {self.value} (since {since}{until})"
+        return f"{self.subject} {self.attribute} = {self.text} (since {since}{until})"
 
 
 class FactsView:
@@ -73,27 +87,67 @@ class FactsView:
         metadata: dict[str, Any] | None = None,
         correction: bool = False,
     ) -> Fact:
-        """Record a value; ``valid_from`` defaults to now.
+        """Record the value of (subject, attribute); ``valid_from`` defaults to now.
 
-        Several values with the same ``valid_from`` are kept as a sequence (the
-        last one is current). Pass ``correction=True`` to replace what was
+        The value keeps its type (str, int, float, bool, None, list, dict;
+        other objects are stored as text). It replaces the previous value —
+        and any values added with :meth:`add` — from ``valid_from`` on; a
+        future ``valid_from`` schedules it (see :meth:`scheduled`). Several
+        values with the same ``valid_from`` are kept as a sequence (the last
+        one is current). Pass ``correction=True`` to replace what was
         recorded for that time instead.
         """
         row = self._store.fact_set(
-            self._agent_id, subject, attribute, str(value),
+            self._agent_id, subject, attribute, value,
             valid_from=_when(valid_from) or datetime.now(timezone.utc),
             source_fragment_id=source_fragment_id, metadata=metadata, correction=correction,
         )
         return _fact(row)
 
+    def add(
+        self,
+        subject: str,
+        attribute: str,
+        value: Any,
+        *,
+        valid_from: datetime | str | None = None,
+        source_fragment_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> Fact:
+        """Add one more current value (``set`` replaces; ``add`` accumulates).
+
+        For attributes with several values at once: phones, languages,
+        members. ``current(subject, attribute)`` returns all of them; a later
+        ``set`` replaces them all; :meth:`remove` ends one.
+        """
+        row = self._store.fact_add(
+            self._agent_id, subject, attribute, value,
+            valid_from=_when(valid_from) or datetime.now(timezone.utc),
+            source_fragment_id=source_fragment_id, metadata=metadata,
+        )
+        return _fact(row)
+
+    def remove(self, subject: str, attribute: str, value: Any, *, valid_to: datetime | str | None = None) -> int:
+        """End an added value (from :meth:`add`) at ``valid_to`` (default now); returns how many."""
+        return self._store.fact_remove(self._agent_id, subject, attribute, value,
+                                       valid_to=_when(valid_to) or datetime.now(timezone.utc))
+
     def current(self, subject: str | None = None, attribute: str | None = None) -> list[Fact]:
-        """Facts valid now, optionally filtered to one subject and/or attribute."""
+        """Facts valid now, optionally filtered to one subject and/or attribute.
+
+        Scheduled values (``valid_from`` in the future) are not included; see
+        :meth:`scheduled`. A multi-valued attribute yields one Fact per value.
+        """
         return [_fact(row) for row in self._store.fact_current(self._agent_id, subject, attribute)]
 
     def get(self, subject: str, attribute: str) -> Fact | None:
-        """The current value of (subject, attribute), or None."""
+        """The current value of (subject, attribute), or None (latest one if several)."""
         found = self.current(subject, attribute)
-        return found[0] if found else None
+        return found[-1] if found else None
+
+    def scheduled(self, subject: str | None = None, attribute: str | None = None) -> list[Fact]:
+        """Values recorded to take effect in the future, soonest first."""
+        return [_fact(row) for row in self._store.fact_scheduled(self._agent_id, subject, attribute)]
 
     def history(self, subject: str, attribute: str) -> list[Fact]:
         """Every distinct value (subject, attribute) has had, oldest first."""
@@ -109,9 +163,7 @@ class FactsView:
 
     def retract(self, subject: str, attribute: str | None = None, *, value: Any = None) -> int:
         """Retract facts recorded by mistake (kept for audit); returns how many."""
-        return self._store.fact_retract(
-            self._agent_id, subject, attribute, value=None if value is None else str(value),
-        )
+        return self._store.fact_retract(self._agent_id, subject, attribute, value=value)
 
     def extract_pending(self, *, limit: int | None = None, wait: float | bool = True) -> int:
         """Finish this agent's background extraction jobs now; returns how many finished.

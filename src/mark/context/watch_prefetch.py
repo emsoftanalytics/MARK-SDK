@@ -153,11 +153,11 @@ class _WatchPrefetchMixin:
             except Exception:
                 return
             for fact in current:
-                if fact.value.lower() in lowered:
+                if str(fact.value).lower() in lowered:  # values may be typed (int, ...)
                     self._corrections.pop(f"{key}|{fact.attribute}", None)
                     continue
                 history = facts_view.history(fact.subject, fact.attribute)
-                stale = [old for old in history[:-1] if _mentions_value(old.value, lowered, tokens)]
+                stale = [old for old in history[:-1] if _mentions_value(str(old.value), lowered, tokens)]
                 if stale:
                     self._corrections[f"{key}|{fact.attribute}"] = (
                         f"{fact.subject} {fact.attribute} is {fact.value} now "

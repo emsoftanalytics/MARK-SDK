@@ -30,9 +30,10 @@ def test_facts_current_history_and_out_of_order_writes(runtime) -> None:
     facts.set("atlas-core", "port", 4444, valid_from="2026-03-30")
     facts.set("Atlas Core", "Port", 9239, valid_from="2026-03-17")  # arrives late
 
-    assert facts.get("atlas-core", "port").value == "4444"
-    assert [f.value for f in facts.history("atlas-core", "port")] == ["6430", "9239", "4444"]
-    assert facts.as_of("atlas-core", "port", "2026-03-20").value == "9239"
+    # Values keep their type (0.2.0a10): ints in, ints out.
+    assert facts.get("atlas-core", "port").value == 4444
+    assert [f.value for f in facts.history("atlas-core", "port")] == [6430, 9239, 4444]
+    assert facts.as_of("atlas-core", "port", "2026-03-20").value == 9239
     assert facts.as_of("atlas-core", "port", "2026-02-01") is None
 
 
