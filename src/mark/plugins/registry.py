@@ -163,7 +163,14 @@ class PluginRegistry:
         for hook_name, hook in hooks.items():
             self._hook_index[hook_name] = (plugin.name, hook)
         if runtime is not None:
-            plugin.on_register(runtime)
+            try:
+                plugin.on_register(runtime)
+            except BaseException:
+                # Roll back so a failing plugin never stays half-registered.
+                self._plugins.pop(plugin.name, None)
+                for hook_name in hooks:
+                    self._hook_index.pop(hook_name, None)
+                raise
 
     def get(self, hook_name: str) -> Callable[..., Any] | None:
         """Look up an entry by key, or None when missing."""

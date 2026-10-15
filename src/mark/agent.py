@@ -1,10 +1,11 @@
 """Reusable MARK agent wrapper for memory, policies, skills, and middleware."""
 from __future__ import annotations
 
+import asyncio
 import inspect
 import time
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 from mark.context import ContextBundle
@@ -82,6 +83,12 @@ class MarkAgent:
         self._agent_id = agent_id
         self._default_max_context_chars = default_max_context_chars
         self._middleware = self._build_middleware_stack(runtime, middleware)
+        # True while ``self._middleware`` is the runtime-wide stack shared with
+        # every other agent; ``use()`` copies it before extending.
+        self._shares_runtime_stack = (
+            self._middleware is not None
+            and self._middleware is getattr(runtime, "middleware", None)
+        )
 
     async def run(
         self,
@@ -117,10 +124,17 @@ class MarkAgent:
         return await self._run_with_middleware(request)
 
     def use(self, *middleware: MarkMiddleware) -> "MarkAgent":
-        """Append agent-level middleware and return this agent for chaining."""
+        """Append agent-level middleware and return this agent for chaining.
+
+        Only this agent is affected: when the agent was built on the
+        runtime-wide middleware stack, that stack is copied first so other
+        agents (and the runtime's own memory operations) are left untouched.
+        """
         if self._middleware is None:
-            self._middleware = MiddlewareStack()
-            self._middleware.bind(self._runtime)
+            self._middleware = self._new_stack([], self._runtime)
+        elif self._shares_runtime_stack:
+            self._middleware = self._new_stack(self._middleware.list(), self._runtime)
+            self._shares_runtime_stack = False
         self._middleware.extend(middleware)
         return self
 
@@ -156,7 +170,8 @@ class MarkAgent:
         if should_retrieve is None:
             should_retrieve = PolicyAction.RETRIEVE in actions
         if should_retrieve:
-            context = self._memory.retrieve(
+            context = await asyncio.to_thread(
+                self._memory.retrieve,
                 request.prompt,
                 blocks=blocks or None,
                 top_k=request.top_k or decision.retrieve_top_k,
@@ -181,7 +196,9 @@ class MarkAgent:
         if should_store is None:
             should_store = decision.store_output or PolicyAction.STORE in actions
         if should_store and output:
-            stored_record_ids = self._store_output(request, output, events)
+            stored_record_ids = await asyncio.to_thread(
+                self._store_output, request, output, events
+            )
 
         duration_ms = round((time.perf_counter() - started) * 1000, 3)
         metadata = {
@@ -232,7 +249,13 @@ class MarkAgent:
         return "\n\n".join(parts)
 
     async def _call_llm(self, prompt: str) -> object:
-        result = self._llm(prompt)
+        if inspect.iscoroutinefunction(self._llm) or inspect.iscoroutinefunction(
+            getattr(self._llm, "__call__", None)
+        ):
+            return await self._llm(prompt)
+        # Synchronous LLM callables block (network / local inference); run them
+        # in a worker thread so the caller's event loop keeps running.
+        result = await asyncio.to_thread(self._llm, prompt)
         if inspect.isawaitable(result):
             return await result
         return result
@@ -342,7 +365,14 @@ class MarkAgent:
 
     def _build_request(self, prompt: str | AgentRun, **overrides: Any) -> AgentRun:
         if isinstance(prompt, AgentRun):
-            request = prompt
+            # Never mutate the caller's (possibly reused) AgentRun in place.
+            request = replace(
+                prompt,
+                blocks=list(prompt.blocks) if prompt.blocks is not None else None,
+                skills=list(prompt.skills) if prompt.skills is not None else None,
+                skill_inputs=dict(prompt.skill_inputs),
+                metadata=dict(prompt.metadata),
+            )
         else:
             request = AgentRun(
                 prompt=prompt,
@@ -380,10 +410,18 @@ class MarkAgent:
         if middleware is None:
             return None
 
-        items: list[MarkMiddleware] = []
-        if isinstance(runtime_stack, MiddlewareStack):
-            items.extend(runtime_stack.list())
-        items.extend(list(middleware))
-        stack = MiddlewareStack(items)
-        stack.bind(runtime or self)
+        # Runtime middleware is already bound to the runtime; bind only the
+        # agent-level additions so no middleware is bound twice.
+        inherited = runtime_stack.list() if isinstance(runtime_stack, MiddlewareStack) else []
+        stack = self._new_stack(inherited, runtime or self)
+        stack.extend(list(middleware))
+        return stack
+
+    @staticmethod
+    def _new_stack(inherited: list[MarkMiddleware], runtime: object) -> MiddlewareStack:
+        """Return a stack bound to *runtime* holding already-bound *inherited* items."""
+        stack = MiddlewareStack()
+        stack.bind(runtime)  # empty stack: records the runtime, binds nothing
+        for item in inherited:
+            stack._middleware.append(item)  # already bound; do not re-bind
         return stack
