@@ -120,3 +120,18 @@ def test_request_lines_beat_subject_records_under_a_tight_budget(memory) -> None
         brief = watch.briefing()
     assert "21 October" in brief.text
     assert brief.usage.sections["relevant"].included >= 1
+
+
+def test_small_talk_is_stored_but_not_briefed(memory) -> None:
+    from types import SimpleNamespace
+
+    from mark.context.watch_lines import small_talk
+
+    assert small_talk(SimpleNamespace(content="User said: Bye for now."))
+    assert not small_talk(SimpleNamespace(content="User said: Hi! I'm Marta and I live in Porto with my dog."))
+    _user(memory, "Ok, that's the plan for now.")
+    _user(memory, "The plan for now is 10 days in April.")
+    with ContextWatch(memory, background=False, budget_tokens=300) as watch:
+        watch.observe("What is the plan for now?", role="user")
+        text = watch.briefing().text
+    assert "10 days in April" in text and "Ok, that's the plan" not in text

@@ -18,8 +18,10 @@ import logging
 import re
 import time
 from concurrent.futures import Future
+from dataclasses import replace
 from typing import Any
 
+from mark.context.provenance import USER_TAG
 from mark.context.watch_lines import trusted
 from mark.context.watch_support import _TOKEN_RE, _Anchor, _label_for, _mentions_value
 
@@ -40,6 +42,40 @@ def _confirmed(result: Any, key: str) -> bool:
         return True
     return any(trusted(f) and _contains_anchor(_anchor_norm(f.content), key)
                for f in result.fragments)
+
+
+#: Untrusted results (assistant replies, bare questions) in one top-k that
+#: trigger a second, user-statements-only retrieval for that query.
+_CROWDED = 3
+
+
+def _with_user_lane(memory: Any, batch: list[str], results: list[Any]) -> list[Any]:
+    """Top up crowded results with user statements (tag ``mark:user``).
+
+    Retrieval ranks by relevance, not provenance: long assistant replies
+    repeat the user's words and fill the top-k, pushing the user's own
+    statement out (a10 small-model replay: "I moved from Porto to Braga"
+    missing behind five replies). For each query whose results hold
+    ``_CROWDED`` or more untrusted records, user statements are retrieved
+    separately and appended after the trusted results of the first pass.
+    """
+    crowded = [i for i, r in enumerate(results)
+               if sum(not trusted(f) for f in r.fragments) >= _CROWDED]
+    if not crowded:
+        return results
+    try:
+        extra = memory.retrieve_many_sync([batch[i] for i in crowded], tags=[USER_TAG])
+    except Exception as exc:   # the first pass is still a valid answer
+        logger.warning("user-statement retrieval failed: %s", exc)
+        return results
+    merged = list(results)
+    for index, lane in zip(crowded, extra):
+        first = merged[index]
+        ids = {f.id for f in first.fragments}
+        pairs = list(zip(first.fragments, first.scores)) + [
+            (f, s) for f, s in zip(lane.fragments, lane.scores) if f.id not in ids]
+        merged[index] = replace(first, fragments=[f for f, _ in pairs], scores=[s for _, s in pairs])
+    return merged
 
 
 class _WatchPrefetchMixin:
@@ -117,7 +153,7 @@ class _WatchPrefetchMixin:
         batch = list(queries) + ([task] if task else [])
         if not batch:
             return
-        results = self._memory.retrieve_many_sync(batch)
+        results = _with_user_lane(self._memory, batch, self._memory.retrieve_many_sync(batch))
         from mark.intelligence.query_understanding import _anchor_norm
 
         links: list[str] = []

@@ -9,8 +9,8 @@ are the values those runs chose (see the a10 context report).
 preset     models                 budget   shape
 =========  =====================  =======  ================================
 default    7B+ / hosted           400*     every section, no assistant lines
-small      ~1-3B (llama3.2:3b)    300      dense: 4 request lines, no
-                                           assistant lines, compact skill
+small      ~1-3B (llama3.2:1b-3b) 200      dense: 4 request lines, no
+                                           assistant lines
 tiny       <=1B (qwen3:0.6b)      160      facts and the best 3 lines only
 =========  =====================  =======  ================================
 
@@ -29,7 +29,7 @@ from typing import Any
 PRESETS: dict[str, dict[str, Any]] = {
     "default": {},
     "small": {"budget_chars": 1000, "max_anchors": 3, "per_anchor": 1, "line_chars": 160,
-              "budget_tokens": 300, "relevant_lines": 4, "assistant_lines": 0,
+              "budget_tokens": 200, "relevant_lines": 4, "assistant_lines": 0,
               "follow_links": 1},
     "tiny": {"budget_chars": 600, "max_anchors": 2, "per_anchor": 1, "line_chars": 120,
              "budget_tokens": 160, "relevant_lines": 3, "assistant_lines": 0,

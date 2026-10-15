@@ -31,6 +31,9 @@ USER, ASSISTANT, TOOL = "user", "assistant", "tool"
 ASSISTANT_TAG = "mark:assistant"
 #: Tag on stored user messages that only ask something (no new information).
 QUESTION_TAG = "mark:question"
+#: Tag on stored user statements: the "trusted lane" a briefing can retrieve
+#: on its own when assistant replies and questions crowd the top results.
+USER_TAG = "mark:user"
 #: Tag set by the security workstream on instruction-like memories.
 UNTRUSTED_TAG = "mark:untrusted"
 #: Store options for assistant replies: low importance and confidence keep
@@ -82,9 +85,9 @@ def is_question(text: str) -> bool:
 
 def user_options(text: str, tags: list[str] | None = None) -> dict[str, Any]:
     """``store_sync`` keyword arguments for one user message."""
-    extra = [QUESTION_TAG] if is_question(text) else []
-    return {"source": USER, "tags": [*(tags or ["conversation"]), *extra],
-            **({"importance": 0.3} if extra else {})}
+    question = is_question(text)
+    return {"source": USER, "tags": [*(tags or ["conversation"]), QUESTION_TAG if question else USER_TAG],
+            **({"importance": 0.3} if question else {})}
 
 
 def assistant_options(tags: list[str] | None = None) -> dict[str, Any]:

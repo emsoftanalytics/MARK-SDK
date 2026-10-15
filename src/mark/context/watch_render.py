@@ -17,7 +17,8 @@ briefing has to explain itself)::
     </mark_briefing>
 
 Every fact is listed once (no repeated block under a linked subject), and
-notes are de-duplicated and filtered by provenance (``watch_lines``).
+notes are de-duplicated and filtered by provenance; greetings and sign-offs
+are skipped (``watch_lines``).
 
 Which lines survive a budget is decided by section priority
 (``mark.context.budget``): corrections > unknown > relevant (what the
@@ -47,6 +48,7 @@ from mark.context.watch_lines import (
     fact_key,
     fact_line,
     is_echo,
+    small_talk,
     trusted,
     words,
 )
@@ -114,7 +116,8 @@ def briefing_items(snapshot: dict[str, Any], *, per_anchor: int | None,
 
     def note(section: str, fragment: Any, header: str = RELATED_HEADER) -> BudgetItem | None:
         text = f"- {_one_line(fragment.content, line_chars)}"
-        if fragment.id in seen or is_echo(fragment, task_words) or not dedupe.fresh(text):
+        if fragment.id in seen or is_echo(fragment, task_words) or small_talk(fragment) \
+                or not dedupe.fresh(text):
             return None
         seen.add(fragment.id)
         return BudgetItem(section, text, header, fragment.id)

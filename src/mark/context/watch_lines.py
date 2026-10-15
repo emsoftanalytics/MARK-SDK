@@ -25,6 +25,12 @@ _WORD = re.compile(r"\w+")
 _ROLE_PREFIX = re.compile(r"^\s*(user said|user|assistant replied|assistant said)\s*:\s*", re.IGNORECASE)
 #: Word-set overlap above which two lines count as the same line.
 _NEAR_DUPLICATE = 0.85
+#: Greetings and sign-offs ("Bye for now.", "Ok, that's the plan for now."):
+#: stored, so nothing is lost, but never worth a briefing line.
+_SMALL_TALK = re.compile(
+    r"^(hi|hello|hey|thanks|thank you|ok|okay|bye|goodbye|good night|talk later|see you|"
+    r"cheers|that'?s (it|all))\b", re.IGNORECASE)
+_SMALL_TALK_WORDS = 8
 
 
 def fact_line(fact: Any) -> str:
@@ -57,6 +63,12 @@ def is_echo(fragment: Any, task_words: frozenset[str]) -> bool:
 def trusted(fragment: Any) -> bool:
     """A record that may be shown as a note: not the model's words, not a bare question."""
     return not is_assistant(fragment) and not is_question_record(fragment)
+
+
+def small_talk(fragment: Any) -> bool:
+    """A short greeting or sign-off with no information in it."""
+    text = strip_role(getattr(fragment, "content", "") or "").strip()
+    return len(text.split()) <= _SMALL_TALK_WORDS and bool(_SMALL_TALK.match(text))
 
 
 class Deduper:

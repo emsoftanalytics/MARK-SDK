@@ -168,7 +168,7 @@ class _WatchMessagesMixin:
     def for_small_models(cls, memory: Any, **overrides: Any) -> Any:
         """A watch tuned for small local models (~1-3B) with short context windows.
 
-        The "small" preset: a 300-token priority-filled budget, the best four
+        The "small" preset: a 200-token priority-filled budget, the best four
         lines retrieved for the current request first, one record per
         subject, 160-character lines, one linked subject, and no earlier
         assistant replies (small models repeat them as facts). Corrections
