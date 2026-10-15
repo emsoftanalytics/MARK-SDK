@@ -50,6 +50,8 @@ def test_lock_of_a_killed_holder_is_free_immediately(tmp_path: Path) -> None:
         _release_lock(_acquire_lock(db))
     finally:
         holder.kill()
+        holder.wait(10)
+        holder.stdout.close()
 
 
 def _start(db: Path) -> threading.Thread:
