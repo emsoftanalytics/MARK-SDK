@@ -120,6 +120,14 @@ class _IndexSyncMixin:
         stored = get_meta(key)
         if stored is not None and _same_embedding_space(stored, fingerprint):
             return
+        if fingerprint.endswith(":None") and stored is not None:
+            # A different model whose dimension is still unknown (HTTP/ONNX
+            # providers learn it on first call): probe once so the switch is
+            # detected now, instead of mixing old vectors into the new space.
+            self._embedder.embed("embedding dimension probe")
+            fingerprint = getattr(self._embedder, "fingerprint", fingerprint)
+            if _same_embedding_space(stored, fingerprint):
+                return
         if fingerprint.endswith(":None"):
             # Dimension not known until the first embed call: never persist a
             # partial fingerprint (it would force a re-embed on every restart).
