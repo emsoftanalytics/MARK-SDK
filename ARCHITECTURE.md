@@ -263,7 +263,8 @@ FactExtractionService.submit
 - **Queue.** `fact_jobs` has one row per (fragment, extractor). Failed jobs are
   retried up to `max_attempts`. A job whose lease expired (the process died)
   is claimed again, and jobs left at shutdown run on the next start.
-  `memory.facts.extract_pending()` drains the queue in the calling thread.
+  `memory.facts.extract_pending()` drains the queue in the calling thread and,
+  by default, waits (up to the lease) for jobs the worker already claimed.
 - **Idempotence.** `fact_extractions` records a hash of (text, occurrence,
   subject, attribute, value, valid_from), so re-ingesting a log never
   appends duplicate values. Extracted facts carry `source_fragment_id` and

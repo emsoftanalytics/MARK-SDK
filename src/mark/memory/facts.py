@@ -113,17 +113,21 @@ class FactsView:
             self._agent_id, subject, attribute, value=None if value is None else str(value),
         )
 
-    def extract_pending(self, *, limit: int | None = None) -> int:
-        """Run queued background extraction jobs for this agent now; returns how many.
+    def extract_pending(self, *, limit: int | None = None, wait: float | bool = True) -> int:
+        """Finish this agent's background extraction jobs now; returns how many finished.
 
-        Background extractors normally drain the queue on a worker thread;
-        this processes it synchronously (tests, scripts, CLI). Returns 0 when
-        no background extractor is configured.
+        Queued jobs are processed in the calling thread. Jobs the background
+        worker has already claimed are not re-run; with ``wait`` (default
+        True: up to the job lease, 300 s by default; a float: that many
+        seconds; False: no waiting) the call blocks until they are done, so
+        their facts are readable when it returns. The count includes jobs the
+        worker finished while waiting. Returns 0 when no background extractor
+        is configured (inline extractors have no queue).
         """
         service = self._extraction
         if service is None or not getattr(service, "background", False):
             return 0
-        return service.run_pending(agent_id=self._agent_id, limit=limit)
+        return service.drain(agent_id=self._agent_id, limit=limit, wait=wait)
 
     def subjects(self) -> list[str]:
         """Normalised subjects that have facts."""

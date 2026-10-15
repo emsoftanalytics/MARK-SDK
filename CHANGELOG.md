@@ -20,7 +20,9 @@ This project follows semantic versioning for public package releases.
   Built-in rule packs (`PatternFactExtractor`, `RulePack`, `BUILTIN_PACKS`)
   run inline and accept custom packs; `LLMFactExtractor` uses a local
   OpenAI-compatible model from a durable background queue, and
-  `memory.facts.extract_pending()` drains that queue on demand. Any object
+  `memory.facts.extract_pending(wait=True)` drains that queue on demand and
+  waits for jobs the worker is still running, so their facts are readable
+  when it returns (`wait=False` or a timeout in seconds). Any object
   implementing the `FactExtractor` protocol can be used. On the retention
   benchmark's large profile, the generic packs reached precision 1.0 on every
   target attribute, with recall 1.0 for owner, port, region, database, team,

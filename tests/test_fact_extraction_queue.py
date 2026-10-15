@@ -10,6 +10,8 @@ by ``memory.facts.extract_pending()``.
 from __future__ import annotations
 
 import sqlite3
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -188,3 +190,47 @@ def test_v4_database_migrates_to_v5_with_the_queue_tables(tmp_path: Path) -> Non
     assert store.schema_version() == 5 == LocalMemoryStore.CURRENT_SCHEMA_VERSION
     assert store.fact_job_counts() == {"pending": 0, "running": 0, "done": 0, "failed": 0}
     store.close()
+
+
+class GatedPatterns(SlowPatterns):
+    """Background extractor that blocks inside extract() until released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def extract(self, text: str, *, occurred_at=None):
+        self.started.set()
+        self.release.wait(10)
+        return super().extract(text, occurred_at=occurred_at)
+
+
+def _held_by_worker(tmp_path: Path):
+    extractor = GatedPatterns()
+    runtime = MarkRuntime.local(store_path=tmp_path / "held.db", embedder=HashEmbeddingProvider(dim=32),
+                                fact_extractor=extractor)
+    memory = runtime.memory("a")
+    memory.store_sync("[2026-03-10] held-svc moved to port 7.")
+    assert extractor.started.wait(10)  # the worker thread now holds the job
+    return runtime, memory, extractor
+
+
+def test_extract_pending_waits_for_jobs_the_worker_holds(tmp_path: Path) -> None:
+    runtime, memory, extractor = _held_by_worker(tmp_path)
+    threading.Timer(0.2, extractor.release.set).start()
+    assert memory.facts.extract_pending() == 1  # default: block until the held job finishes
+    assert memory.facts.get("held-svc", "port").value == "7"
+    runtime.shutdown()
+
+
+def test_extract_pending_without_waiting_or_with_a_short_timeout(tmp_path: Path) -> None:
+    runtime, memory, extractor = _held_by_worker(tmp_path)
+    assert memory.facts.extract_pending(wait=False) == 0  # the job is the worker's, not ours
+    started = time.monotonic()
+    assert memory.facts.extract_pending(wait=0.1) == 0  # timed out while still running
+    assert time.monotonic() - started < 5
+    threading.Timer(0.2, extractor.release.set).start()
+    assert memory.facts.extract_pending(wait=5.0) == 1
+    assert memory.facts.get("held-svc", "port").value == "7"
+    runtime.shutdown()
