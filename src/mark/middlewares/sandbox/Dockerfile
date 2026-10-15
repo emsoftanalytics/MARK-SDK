@@ -7,4 +7,5 @@ RUN mkdir -p /sandbox/workspace \
     && chown -R sandbox:sandbox /sandbox
 
 USER sandbox
-CMD ["python", "/sandbox/code.py"]
+# Code is streamed over stdin by DockerSandbox (`docker run -i ... python -`).
+CMD ["python", "-"]
