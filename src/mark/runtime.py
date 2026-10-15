@@ -17,10 +17,14 @@
 #       plugins = mark.runtime.plugins
 #
 # MarkRuntime is the engine. Mark is the brand and the developer API.
-"""Mark: the public local entrypoint wiring runtime, memory, skills, and agents."""
+"""Mark: the public local entrypoint wiring runtime, memory, skills, and agents.
+
+``MarkConfig`` and the late-binding ``configure_*`` hooks live in
+:mod:`mark.runtime_config`; both are available from this module.
+"""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass  # noqa: F401  (kept for backward compatibility)
 from pathlib import Path
 from typing import Any, Callable, TYPE_CHECKING
 
@@ -30,6 +34,7 @@ from mark.memory.simple import SimpleMemory
 from mark.policies import PolicyRegistry
 from mark.middlewares.base import MarkMiddleware
 from mark.middlewares.skills import SkillRegistry
+from mark.runtime_config import MarkConfig, MarkConfigureMixin
 
 if TYPE_CHECKING:
     from mark.middlewares.media_continuity.world_bible import WorldBibleMemory
@@ -37,14 +42,7 @@ if TYPE_CHECKING:
     from mark.middlewares import MarkMiddleware
 
 
-@dataclass(frozen=True)
-class MarkConfig:
-    """Configuration for a local Mark runtime."""
-    project_path: Path
-    store_path:   Path
-
-
-class Mark:
+class Mark(MarkConfigureMixin):
     """
     Primary local MARK runtime entrypoint.
 
@@ -231,48 +229,6 @@ class Mark:
             metadata    = metadata,
             memory_type = memory_type,
         )
-
-    def configure_query_expander(self, expander: object) -> None:
-        """Replace the active query expander at runtime (late-binding)."""
-        if hasattr(self._runtime_engine, "configure_query_expander"):
-            self._runtime_engine.configure_query_expander(expander)
-
-    def session_log(self, agent_id: str, session_id: str | None = None) -> object:
-        """Return a SessionActivityLog scoped to agent_id (and optionally session_id)."""
-        if hasattr(self._runtime_engine, "session_log"):
-            return self._runtime_engine.session_log(agent_id, session_id)
-        raise AttributeError("session_log not available on this runtime")
-
-    def configure_compressor(self, compressor: object) -> None:
-        """Replace the active contextual compressor at runtime (late-binding).
-
-        Example::
-
-            mark = Mark.local(project_path=".")
-            mark.configure_compressor(LLMContextualCompressor(llm=my_llm))
-            result = mark.memory.retrieve("What must stay consistent for Elena?",
-                                          compress=True)
-        """
-        if hasattr(self._runtime_engine, "configure_compressor"):
-            self._runtime_engine.configure_compressor(compressor)
-
-    def configure_llm(self, llm: object) -> None:
-        """Bind an LLM provider to enable local entity extraction in observe().
-
-        Can be called at any point after Mark.local() — the LLM will be used
-        on the next observe() call. Existing fragments are not re-processed.
-
-        Example::
-
-            mark = Mark.local(project_path=".")
-            mark.configure_llm(MyOpenAIAdapter())
-            result = mark.memory.observe("Elena enters the North Warehouse.")
-        """
-        if hasattr(self._runtime_engine, "configure_llm"):
-            self._runtime_engine.configure_llm(llm)
-        # Propagate to the SimpleMemory's MarkMemory so it picks up the new LLM
-        if hasattr(self.memory, "_mark_memory") and hasattr(self.memory._mark_memory, "_llm"):
-            self.memory._mark_memory._llm = llm  # type: ignore[assignment]
 
     def wrap_agent(
         self,
