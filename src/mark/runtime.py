@@ -103,6 +103,9 @@ class Mark(MarkDataMixin, MarkConfigureMixin):
         middleware:      list["MarkMiddleware"] | None = None,
         fact_extractor:  object | None = None,
         fact_job_lease:  float = 300.0,
+        max_memory_bytes: int | None = 1_000_000,
+        redact:          object = True,
+        injection:       str = "tag",
     ) -> "Mark":
         """
         Create a local Mark instance backed by SQLite.
@@ -131,6 +134,12 @@ class Mark(MarkDataMixin, MarkConfigureMixin):
                              FactExtractor (e.g. LLMFactExtractor, queued).
             fact_job_lease:  Seconds a queued extraction job may run before
                              another worker may take it over (default 300).
+            max_memory_bytes: Largest single memory (default 1 MB; None = no
+                             limit). Use store_document() for long text.
+            redact:          Secret redaction on every write: True (default),
+                             False, a RedactionPolicy or a WritePolicy.
+            injection:       Prompt-injection screening: "tag" (default),
+                             "quarantine" or "off".
 
         The .mark/ directory is created under project_path if it does not
         exist (mode 0700 on POSIX). SQLite database is at .mark/memory.db
@@ -155,6 +164,9 @@ class Mark(MarkDataMixin, MarkConfigureMixin):
             middleware           = middleware,
             fact_extractor       = fact_extractor,
             fact_job_lease       = fact_job_lease,
+            max_memory_bytes     = max_memory_bytes,
+            redact               = redact,
+            injection            = injection,
         )
 
         # One-time migration: if a legacy memory.json exists, import it into SQLite

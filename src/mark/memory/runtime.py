@@ -53,11 +53,17 @@ class MarkRuntime(MaintenanceMixin):
         fact_extractor: object = None,
         fact_job_lease: float = 300.0,
         max_memory_bytes: int | None = DEFAULT_MAX_MEMORY_BYTES,
+        redact: object = True,
+        injection: str = "tag",
     ) -> None:
         self.store = store
         self._closed = False
         # Largest single memory (UTF-8 bytes) a write accepts; None = no limit.
         self.max_memory_bytes = max_memory_bytes
+        # Secret redaction + prompt-injection screening applied to every write.
+        from mark.security import resolve_write_policy
+
+        self.write_policy = resolve_write_policy(redact, injection)  # type: ignore[arg-type]
         self.embedder = embedder
         self.plugins = plugins
         # Explicit None check: an empty VectorIndex has len() == 0, so
@@ -116,6 +122,8 @@ class MarkRuntime(MaintenanceMixin):
         fact_extractor: object = None,
         fact_job_lease: float = 300.0,
         max_memory_bytes: int | None = DEFAULT_MAX_MEMORY_BYTES,
+        redact: object = True,
+        injection: str = "tag",
     ) -> "MarkRuntime":
         """Construct a local instance.
 
@@ -126,6 +134,8 @@ class MarkRuntime(MaintenanceMixin):
         over (jobs of a crashed process on this host are reclaimed at once).
         ``max_memory_bytes``: largest single memory a write accepts (default
         1 MB; None = no limit); longer text belongs in ``store_document``.
+        ``redact``: True (default secret redaction), False, a RedactionPolicy or
+        a WritePolicy. ``injection``: "tag" (default), "quarantine" or "off".
         """
         registry = PluginRegistry()
         runtime = cls(
@@ -143,6 +153,8 @@ class MarkRuntime(MaintenanceMixin):
             fact_extractor=fact_extractor,
             fact_job_lease=fact_job_lease,
             max_memory_bytes=max_memory_bytes,
+            redact=redact,
+            injection=injection,
         )
         for plugin in plugins or []:
             registry.register(plugin, runtime=runtime)

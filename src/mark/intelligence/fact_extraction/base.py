@@ -99,7 +99,8 @@ _EDGE_PUNCT = " \t\"'`“”‘’*_.,;:!?()[]{}"
 
 # Placeholders left by redaction ("[EMAIL]", "[REDACTED]"): a fact must never
 # record a placeholder as if it were the real value.
-_REDACTED = re.compile(r"\[(?:REDACTED[A-Z_]*|EMAIL|PHONE|CC|SSN)\]")
+# Any redaction placeholder ("[SECRET:stripe_key]", "[EMAIL]", ...) is never a fact value.
+from mark.security.redaction import PLACEHOLDER_RE as _REDACTED  # noqa: E402
 
 
 def is_redacted(text: str) -> bool:
