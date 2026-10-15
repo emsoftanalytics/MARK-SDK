@@ -236,6 +236,9 @@ class _RunState:
     thoughts: str | None = None
     tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     prewarm: asyncio.Task[Any] | None = None
+    # Queries whose prewarm retrieval timed out (or is still running): skipped
+    # once so a step never waits two full timeouts, retried on the next step.
+    timed_out: set[str] = field(default_factory=set)
 
 
 # ---------------------------------------------------------------------------
@@ -724,6 +727,9 @@ class MarkAgentMiddleware(_AgentMiddlewareBase):  # type: ignore[misc]
         if cache and query in run.recall_cache:
             run.recall_cache.move_to_end(query)
             return run.recall_cache[query]
+        if query in run.timed_out:
+            run.timed_out.discard(query)
+            return ""
 
         text, ids = "", []
         result = await self._timed_backend("retrieve", query)
@@ -883,6 +889,8 @@ class MarkAgentMiddleware(_AgentMiddlewareBase):  # type: ignore[misc]
                 run.prewarm = None
                 if not prewarm.done() and prewarm.get_loop() is asyncio.get_running_loop():
                     await asyncio.wait({prewarm}, timeout=self._retrieval_timeout_s or None)
+                if human_query not in run.recall_cache:
+                    run.timed_out.add(human_query)
 
             tool_query, tool_hash = self._latest_tool_trigger(state)
 

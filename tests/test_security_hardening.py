@@ -803,3 +803,37 @@ def test_routing_logger_is_bounded() -> None:
         logger.log(None, f"h{i}", "FAST")
     assert [e["query_hash"] for e in logger.recent(10)] == ["h7", "h8", "h9"]
     assert [e["query_hash"] for e in logger.recent(1)] == ["h9"]
+
+
+@pytest.mark.parametrize("address", [
+    "64:ff9b::7f00:1",        # NAT64 → 127.0.0.1
+    "64:ff9b::a9fe:a9fe",     # NAT64 → 169.254.169.254 (cloud metadata)
+    "64:ff9b:1::a00:1",       # local-use NAT64 → 10.0.0.1
+    "2002:7f00:1::1",         # 6to4 → 127.0.0.1
+    "::ffff:10.0.0.1",        # IPv4-mapped private
+])
+def test_ssrf_blocks_ipv6_translations_of_internal_ipv4(address: str) -> None:
+    import ipaddress
+
+    from mark.middlewares.skills.web_search import _is_internal_address
+
+    assert _is_internal_address(ipaddress.ip_address(address))
+
+
+@pytest.mark.parametrize("address", ["8.8.8.8", "2606:4700:4700::1111"])
+def test_ssrf_allows_public_addresses(address: str) -> None:
+    import ipaddress
+
+    from mark.middlewares.skills.web_search import _is_internal_address
+
+    assert not _is_internal_address(ipaddress.ip_address(address))
+
+
+def test_authorization_mapping_values_are_redacted() -> None:
+    from mark.security.redaction import is_sensitive_key, redact_sync_value as redact_value
+
+    assert is_sensitive_key("Authorization") and is_sensitive_key("x-auth-token")
+    assert not is_sensitive_key("author") and not is_sensitive_key("authors")
+    redacted = redact_value({"headers": {"Authorization": "hunter2-opaque-session"}, "author": "Ada"})
+    assert "hunter2" not in str(redacted)
+    assert redacted["author"] == "Ada"

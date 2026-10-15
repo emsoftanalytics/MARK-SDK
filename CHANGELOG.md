@@ -35,6 +35,12 @@ distractor memories (0.2.0a6: 8/14 with 30 memories).
   fingerprints" below).
 - After a run, `MarkAgentMiddleware` clears `mark_context` from graph state.
 
+### Known limitations
+
+- Encryption at rest covers fragment content only; tags, metadata, session
+  ids, graph labels, and embeddings stay plaintext so they can be filtered in
+  SQL. See SECURITY.md.
+
 ### Added
 
 - Hybrid retrieval: SQLite FTS5 BM25 lexical channel plus vector channel,
@@ -135,6 +141,10 @@ Security and integrity
   temp file), timeouts kill the container, and `--pids-limit`, `--user`, and
   `--init` are set.
 - `MiddlewareStack.run` skipped after-hooks when an operation raised.
+- `SimpleMemory.retrieve(blocks=[...])` filtered after the top-k cut, so a
+  block's memories disappeared behind other blocks; block membership is now a
+  pre-filter.
+- `Authorization` mapping keys were not treated as sensitive by redaction.
 - Unescaped memory content in XML contexts could forge context boundaries.
 - Maintenance (dedup, consolidation, pruning, block moves) no longer mutates
   sealed blocks, and the pruner keeps quarantined evidence. Decay is

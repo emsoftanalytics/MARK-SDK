@@ -13,9 +13,10 @@ from typing import Any, Callable
 REDACTED = "[REDACTED]"
 
 # Key names whose values are always secret, in free text (key=value) and in
-# mapping keys. ``auth(?!or)`` keeps "author" readable.
+# mapping keys. ``auth(?!ors?\b)`` keeps "author"/"authors" readable while
+# still matching "auth", "authorization", "auth_token", ...
 SENSITIVE_KEY_RE = re.compile(
-    r"(?i)(pass(?:word)?|passwd|secret|token|api[\s_-]?key|auth(?!or)|cookie|credential|private[_-]?key)"
+    r"(?i)(pass(?:word)?|passwd|secret|token|api[\s_-]?key|auth(?!ors?\b)|cookie|credential|private[_-]?key)"
 )
 # Key names that contain a sensitive word but are routine counters/settings.
 _BENIGN_KEY_RE = re.compile(
@@ -85,7 +86,7 @@ def _redact_assignment(match: "re.Match[str]") -> str:
 # (or "https://...") never consumes a later secret assignment.
 ASSIGNMENT_PATTERN = re.compile(
     r"(?i)(?<![\w.\-])("                                       # key
-    r"[\w.\-]*?(?:pass(?:word)?|passwd|secret|token|api[ \t_-]?key|auth(?!or)|cookie|"
+    r"[\w.\-]*?(?:pass(?:word)?|passwd|secret|token|api[ \t_-]?key|auth(?!ors?\b)|cookie|"
     r"credential|private[_-]?key)[\w.\-]*)"
     r"([\"']?[ \t]*[:=](?!//)[ \t]*)"            # separator (optional closing quote of key)
     r"(\"[^\"\n]*\"|'[^'\n]*'|[^\s,;&\"'<>]+)"  # value

@@ -321,3 +321,17 @@ def test_unknown_dimension_fingerprint_does_not_force_reembedding(tmp_path: Path
 
     assert result.fragments
     assert LazyDimEmbedder.calls == 1  # the query only; stored vectors reused
+
+
+def test_simple_memory_block_filter_is_a_prefilter(tmp_path: Path) -> None:
+    from mark import Mark
+
+    with Mark.local(tmp_path) as mark:
+        crowd = mark.memory.block("a")
+        for i in range(40):
+            crowd.write(f"Release checklist item {i} for the deploy pipeline.", importance=0.9)
+        target = mark.memory.block("b").write("Release checklist owner is Priya.", importance=0.3)
+
+        bundle = mark.memory.retrieve("release checklist", blocks=["b"])
+
+        assert [m.id for m in bundle.memories] == [target.id]

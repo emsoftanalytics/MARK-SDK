@@ -604,3 +604,29 @@ def test_thinking_failure_is_logged(caplog: Any) -> None:
     assert update["mark_context"] == ""
     assert "thinking down" in caplog.text
     assert any(e["kind"] == "thinking" and e["ok"] is False for e in mw.diagnostics)
+
+
+def test_prewarm_timeout_is_not_paid_twice() -> None:
+    memory = _BlockingMemory(1.0)
+    calls: list[str] = []
+    original = memory.retrieve_sync
+
+    def counting(query: str, **options: Any) -> Any:
+        calls.append(query)
+        return original(query, **options)
+
+    memory.retrieve_sync = counting  # type: ignore[method-assign]
+    mark = SimpleNamespace(runtime=SimpleNamespace(memory=lambda agent_id: memory))
+    mw = MarkAgentMiddleware(LocalMarkBackend(mark), include_skill=False, retrieval_timeout_ms=150)
+
+    async def drive() -> tuple[float, dict]:
+        state: dict = {"messages": [HumanMessage(content="slow prewarmed query")]}
+        state.update(await mw.abefore_agent(state, runtime=None) or {})
+        started = time.perf_counter()
+        update = await mw.abefore_model(state, runtime=None)
+        return time.perf_counter() - started, update
+
+    elapsed, update = asyncio.run(drive())
+    assert update["mark_context"] == ""
+    assert elapsed < 0.28  # one timeout budget, not two
+    assert calls.count("slow prewarmed query") == 1

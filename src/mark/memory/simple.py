@@ -177,26 +177,35 @@ class SimpleMemory:
         compress        — apply contextual compressor (requires compressor configured)
         expand          — apply query expansion for improved recall
         """
-        result    = self._mark_memory.retrieve_sync(
-            query,
-            session_id=session_id,
-            session_prefix=session_prefix,
-            tags=tags,
-            tier=tier,
-            escalate_on_gap=escalate_on_gap,
-            heal_gaps=heal_gaps,
-            compress=compress,
-            expand=expand,
-        )
-        fragments = list(result.fragments)
-        scores    = list(result.scores)
+        def _retrieve(tag_filter: list[str] | None) -> Any:
+            return self._mark_memory.retrieve_sync(
+                query,
+                session_id=session_id,
+                session_prefix=session_prefix,
+                tags=tag_filter,
+                tier=tier,
+                escalate_on_gap=escalate_on_gap,
+                heal_gaps=heal_gaps,
+                compress=compress,
+                expand=expand,
+            )
 
-        # Filter to requested blocks if specified
         if blocks:
-            allowed_tags = {f"block:{b}" for b in blocks}
-            pairs = [(f, s) for f, s in zip(fragments, scores)
-                     if any(t in allowed_tags for t in f.tags)]
-            fragments, scores = (list(x) for x in zip(*pairs)) if pairs else ([], [])
+            # Block membership is a pre-filter (one scoped retrieval per block,
+            # merged by score) so other blocks can't take every top-k slot.
+            best: dict[str, tuple[Any, float]] = {}
+            for block in dict.fromkeys(blocks):
+                scoped = _retrieve([*(tags or []), f"block:{block}"])
+                for fragment, score in zip(scoped.fragments, scoped.scores):
+                    if fragment.id not in best or score > best[fragment.id][1]:
+                        best[fragment.id] = (fragment, score)
+            ranked = sorted(best.values(), key=lambda pair: pair[1], reverse=True)
+            fragments = [fragment for fragment, _ in ranked]
+            scores    = [score for _, score in ranked]
+        else:
+            result    = _retrieve(tags)
+            fragments = list(result.fragments)
+            scores    = list(result.scores)
 
         fragments = fragments[:top_k]
         scores    = scores[:top_k]

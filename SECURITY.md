@@ -57,7 +57,11 @@ Out of scope for this repository:
 - Core `mark-sdk` makes no network calls during normal local memory use.
 - Optional web lookup requires explicit use of the web skill or web extra.
 - Fetchable URLs are restricted to public `http` and `https` hosts; local files,
-  loopback, private, link-local, and internal hostnames are rejected.
+  loopback, private, link-local, CGNAT, reserved, and internal hostnames are
+  rejected, including IPv6 translations (IPv4-mapped, NAT64, 6to4, Teredo) of
+  internal IPv4 addresses. Connections are pinned to the validated IP, and every
+  redirect is re-validated. The default web skill also requires a `web`
+  permission grant.
 - Sync middleware prepares local redacted envelopes. Upload only happens when
   the caller supplies a client object.
 - Sandbox middleware is blocked by default unless the caller wires an execution
@@ -79,6 +83,21 @@ The default local store uses `NoOpEncryptionProvider`, which does not encrypt
 memory at rest. Install `mark-sdk[crypto]` and configure
 `FernetEncryptionProvider` when your application needs encrypted local memory
 content.
+
+`FernetEncryptionProvider` requires an explicit `key` or `passphrase`; pass
+`ephemeral=True` only for throwaway data (the key is lost when the process
+exits).
+
+What encryption at rest covers:
+
+- **Encrypted:** fragment content. Integrity digests of content are keyed
+  HMACs, so they don't reveal plaintext.
+- **Not encrypted:** tags, metadata, session ids, source labels, graph node
+  labels, embeddings, and session events. MARK filters and updates these in
+  SQL. Do not put secrets in them. Embeddings can leak the semantics of the
+  content they were computed from.
+- **Not indexed:** encrypted stores never build the plaintext FTS5 lexical
+  index; retrieval uses the vector channel only.
 
 Keep encryption keys outside the repository. Prefer environment variables or
 your application's secret-management system.

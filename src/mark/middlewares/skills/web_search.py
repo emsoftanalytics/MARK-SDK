@@ -63,10 +63,36 @@ def _is_internal_address(address: ipaddress._BaseAddress) -> bool:
     CGNAT (100.64.0.0/10), reserved, documentation, and unspecified ranges;
     multicast is checked explicitly. IPv4-mapped IPv6 addresses are unwrapped.
     """
-    mapped = getattr(address, "ipv4_mapped", None)
-    if mapped is not None:
-        address = mapped
-    return (not address.is_global) or address.is_multicast
+    for embedded in _embedded_ipv4(address):
+        if _is_internal_address(embedded):
+            return True
+    return (not address.is_global) or address.is_multicast or address.is_reserved
+
+
+_NAT64_NETWORKS = (
+    ipaddress.ip_network("64:ff9b::/96"),    # RFC 6052 well-known prefix
+    ipaddress.ip_network("64:ff9b:1::/48"),  # RFC 8215 local-use prefix
+)
+
+
+def _embedded_ipv4(address: ipaddress._BaseAddress) -> list[ipaddress.IPv4Address]:
+    """IPv4 addresses an IPv6 address tunnels to (mapped, NAT64, 6to4, Teredo).
+
+    Python reports several of these translation ranges as globally routable,
+    so the embedded IPv4 destination must be checked as well.
+    """
+    if not isinstance(address, ipaddress.IPv6Address):
+        return []
+    found: list[ipaddress.IPv4Address] = []
+    if address.ipv4_mapped is not None:
+        found.append(address.ipv4_mapped)
+    if any(address in network for network in _NAT64_NETWORKS):
+        found.append(ipaddress.IPv4Address(int(address) & 0xFFFFFFFF))
+    if address.sixtofour is not None:
+        found.append(address.sixtofour)
+    if address.teredo is not None:
+        found.extend(address.teredo)
+    return found
 
 
 def _pin_url(url: str) -> tuple[_PinnedTarget | None, str | None]:
