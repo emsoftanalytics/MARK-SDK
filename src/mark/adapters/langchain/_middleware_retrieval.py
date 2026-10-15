@@ -178,14 +178,19 @@ class _RetrievalMixin:
         result = await self._timed_backend("retrieve", query)
         if result is not None and result.ok:
             text, ids = self._render(result.value)
+            used = result.value
             if self._auto_heal and self._needs_heal(result.value, bool(text)):
                 healed = await self._timed_backend("heal_gap", query)
                 if healed is not None and healed.ok:
                     healed_text, healed_ids = self._render(healed.value)
                     if healed_text:
-                        text, ids = healed_text, healed_ids
+                        text, ids, used = healed_text, healed_ids, healed.value
                         self._record("heal", chars=len(healed_text))
 
+        if getattr(self, "_budget", None) is not None and result is not None and result.ok:
+            run.recall_items[query] = self._retrieval_items(used) if text else []
+            while len(run.recall_items) > _MAX_RECALL_CACHE:
+                run.recall_items.pop(next(iter(run.recall_items)))
         text = self._truncate_context(text) if text else ""
         for fragment_id in ids:
             run.fragment_ids[fragment_id] = None
@@ -212,6 +217,7 @@ class _RetrievalMixin:
 
         Returns empty string when no relevant memory is found.
         """
+        run.step_queries = [q for q in (human_query, ai_query, tool_query) if q]
         tasks: list[Any] = [self._recall(human_query, run, cache=True)]
         if ai_query:
             tasks.append(self._recall(ai_query, run, cache=False))

@@ -143,6 +143,7 @@ def _watch_factory(backend: Any, preset: str) -> Callable[[str], Any]:
 def _briefing_sync(
     sessions: BriefingSessions, agent_id: str, session_id: str,
     text: str, role: str, messages: list[dict[str, Any]] | None, wait: float,
+    budget_tokens: int | None = None,
 ) -> str:
     """Observe the new input and render the session's briefing (blocking; run off-loop)."""
     watch = sessions.get(agent_id, session_id)
@@ -153,7 +154,7 @@ def _briefing_sync(
     text = text.strip()[-_MAX_TEXT:]
     if text and sessions.is_new_text(agent_id, session_id, f"{role}\x00{text}"):
         watch.observe(text, role=role)
-    brief = watch.briefing(wait=wait)
+    brief = watch.briefing(wait=wait, budget_tokens=budget_tokens)
     return brief.text or "<mark_briefing>\nNothing relevant in memory yet.\n</mark_briefing>"
 
 
@@ -179,6 +180,7 @@ def register_briefing(
         messages: list[dict[str, Any]] | None = None,
         agent_id: str = "",
         wait: float = 0.5,
+        budget_tokens: int = 0,
     ) -> str:
         """Get MARK's briefing for this conversation: put it in your context before answering.
 
@@ -187,6 +189,8 @@ def register_briefing(
         ``session_id`` per conversation. Returns current facts about the
         subjects being discussed, corrections of outdated values and the
         subjects memory knows nothing about (say so rather than guessing).
+        ``budget_tokens`` > 0 caps the briefing at that many tokens (estimated
+        as characters / 4), keeping corrections and unknowns first.
         """
         resolved, denied = resolve_agent(agent_id)
         if denied:
@@ -198,6 +202,7 @@ def register_briefing(
             return await run_off_loop(
                 _briefing_sync, sessions, resolved, session, text or "", role, messages,
                 min(max(float(wait), 0.0), _MAX_WAIT_S),
+                int(budget_tokens) if budget_tokens and int(budget_tokens) > 0 else None,
             )
         except Exception as exc:  # anticipation is best-effort, never fatal for the client
             logger.warning("mark_briefing failed: %s", exc)

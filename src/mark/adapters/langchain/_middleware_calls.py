@@ -82,6 +82,7 @@ class _CallWrappersMixin:
         the original request when there is nothing to add (or on any error).
         """
         try:
+            request = self._windowed_request(request)   # history="mark" only
             context = self._context_for_request(request)
             system_message = getattr(request, "system_message", None)
             system_text = self._system_text(system_message)
@@ -99,7 +100,8 @@ class _CallWrappersMixin:
                     skill = self._score_skill(system_text + skill_block)
                     self._record("skill", skill_hash=skill_hash, **skill)
                     self._last_skill_hash = skill_hash
-                context = self._truncate_context(context)
+                if self._budget is None:   # a budgeted context is already capped
+                    context = self._truncate_context(context)
                 context_hash = self._hash(context)
                 block = self._memory_block(context)
                 # Inject on every model request; skip only if this exact block
@@ -126,8 +128,10 @@ class _CallWrappersMixin:
         """Sync: inject MARK context into the system message, then call the model.
 
         Appends a ``[MARK project memory]`` block to ``request.system_message``
-        via ``request.override()``.  Pure read + transform — no backend calls.
+        via ``request.override()``.  No backend calls, except that with
+        ``history="mark"`` messages not yet stored are written before being dropped.
         """
+        self._archive_request_sync(request)
         prepared = self._prepare_model_request(request)
         try:
             return handler(prepared)
@@ -141,6 +145,7 @@ class _CallWrappersMixin:
         handler: Callable[[Any], Any],
     ) -> Any:
         """Async: inject MARK context into the system message, then call the model."""
+        await self._aarchive_request(request)
         prepared = self._prepare_model_request(request)
         try:
             return await handler(prepared)

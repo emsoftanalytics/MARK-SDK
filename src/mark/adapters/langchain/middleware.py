@@ -73,6 +73,7 @@ from typing import Any
 
 from mark.adapters.backend import MarkBackend
 from mark.adapters.langchain._middleware_calls import _CallWrappersMixin
+from mark.adapters.langchain._middleware_context import _ContextControlMixin
 from mark.adapters.langchain._middleware_hooks import _LifecycleHooksMixin
 
 # Re-exported: this module is the public/historical import path for the
@@ -118,6 +119,7 @@ from mark.adapters.langchain._middleware_support import (
 # ``type(mw).<hook>`` with ``AgentMiddleware.<hook>``, which follows the MRO.
 class MarkAgentMiddleware(  # type: ignore[misc]
     _AnticipationMixin,
+    _ContextControlMixin,
     _LifecycleHooksMixin,
     _CallWrappersMixin,
     _RetrievalMixin,
@@ -207,6 +209,10 @@ class MarkAgentMiddleware(  # type: ignore[misc]
         thinking_model: "Any | None" = None,
         thinking_budget_tokens: int = 2000,
         anticipate: bool = True,
+        budget_tokens: "int | Any | None" = None,
+        token_counter: "Any | None" = None,
+        history: str = "full",
+        keep_last: int = 6,
     ) -> None:
         """
         Args:
@@ -227,6 +233,15 @@ class MarkAgentMiddleware(  # type: ignore[misc]
                 its briefing (facts about subjects in play, corrections of
                 outdated values the agent states, "not in memory" notices).
                 Needs a backend with ``memory_for``; default ``True``.
+            budget_tokens: Hard token cap (int or ``ContextBudget``) on all
+                MARK context injected per model call — briefing, retrieved
+                memories and thinking plan under ONE priority-filled cap
+                (``mark.context.budget``). Replaces ``max_context_chars``.
+            token_counter: ``str -> int`` for the budget (default ceil(chars/4)).
+            history: ``"full"`` (default) sends the whole conversation;
+                ``"mark"`` keeps system + the last ``keep_last`` messages and
+                lets MARK stand in for the rest (stored before dropping).
+            keep_last: Messages kept in ``history="mark"`` (default 6).
         """
         if not _LANGCHAIN_AVAILABLE:
             raise ImportError(
@@ -247,6 +262,7 @@ class MarkAgentMiddleware(  # type: ignore[misc]
         self._skill_text: str | None = None  # lazy-loaded packaged skill
         self._thinking_budget = thinking_budget_tokens
         self._anticipate = anticipate
+        self._init_context_controls(history, keep_last, budget_tokens, token_counter)
 
         # Per-run state, keyed by the ``mark_run_id`` stored in graph state.
         self._runs: OrderedDict[str, _RunState] = OrderedDict()

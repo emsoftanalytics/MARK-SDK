@@ -40,6 +40,8 @@ class Briefing:
     memory_ids: list[str] = field(default_factory=list)
     pending: int = 0            # prefetches still running (briefing may be incomplete)
     latency_ms: float = 0.0
+    usage: Any = None           # BudgetUsage when a token budget was applied, else None
+    items: tuple = ()           # all candidate BudgetItems (budgeted briefings only)
 
     def __bool__(self) -> bool:
         return bool(self.text)

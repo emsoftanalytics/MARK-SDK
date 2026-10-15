@@ -154,10 +154,15 @@ class _WatchMessagesMixin:
         Differences from the defaults: ``budget_chars`` 700 (vs 1800),
         ``max_anchors`` 3 (vs 6), ``per_anchor`` 1 record per subject (vs 3),
         ``line_chars`` 120 per bullet (vs 240) and ``follow_links`` 1 (vs 3).
-        Corrections and "Not in memory" notices are kept: they matter most
-        for models that would otherwise guess. Any keyword overrides a value.
+        It also sets ``budget_tokens=175`` (about 700 characters with the
+        default 4-chars-per-token estimate, so the same size as the character
+        budget) to get priority fill: corrections and "Not in memory" notices
+        are kept first, since they matter most for models that would
+        otherwise guess. Any keyword overrides a value (``budget_tokens=None``
+        restores the plain character budget).
         """
-        settings = {"budget_chars": 700, "max_anchors": 3, "per_anchor": 1, "line_chars": 120}
+        settings = {"budget_chars": 700, "max_anchors": 3, "per_anchor": 1, "line_chars": 120,
+                    "budget_tokens": 175}
         follow_links = overrides.pop("follow_links", 1)
         settings.update(overrides)
         watch = cls(memory, **settings)
@@ -206,16 +211,22 @@ class _WatchMessagesMixin:
         return self.observe(text, role="user")  # "user" and unknown roles
 
 
-def inject(messages: Sequence[Any], briefing: Any) -> list[Any]:
+def inject(messages: Sequence[Any], briefing: Any, *, budget_tokens: Any = None,
+           token_counter: Any = None) -> list[Any]:
     """A new message list with *briefing* placed in the system message.
 
-    *briefing* is a :class:`Briefing` or its text. Any earlier
+    *briefing* is a :class:`Briefing` or its text. ``budget_tokens`` (an int
+    or a ContextBudget) caps the injected block: a budgeted Briefing is
+    re-fitted by section priority, other text keeps whole lines from the top
+    until the cap (see :mod:`mark.context.budget`). Any earlier
     ``<mark_briefing>`` block in the system message is replaced, so calling
     this before every model call never accumulates briefings. Without a
     system message, one is inserted at the front. An empty briefing still
     removes a stale block. The input list and its messages are not mutated.
     """
     text = (getattr(briefing, "text", briefing) or "").strip()
+    if budget_tokens is not None:
+        text = _fit_text(briefing, text, budget_tokens, token_counter)
     out = list(messages or [])
     for index, message in enumerate(out):
         if _get(message, "role") != "system":
@@ -234,3 +245,20 @@ def inject(messages: Sequence[Any], briefing: Any) -> list[Any]:
     if text:
         out.insert(0, {"role": "system", "content": text})
     return out
+
+
+def _fit_text(briefing: Any, text: str, budget_tokens: Any, token_counter: Any) -> str:
+    """*text* under a token budget (used by :func:`inject`)."""
+    from mark.context.budget import BudgetItem, as_budget, render_lines
+    from mark.context.watch_render import CLOSE, OPEN, render_briefing
+
+    budget = as_budget(budget_tokens, token_counter)
+    items = getattr(briefing, "items", None)
+    if items:
+        return budget.fit(items, render_briefing).text
+    # Plain text: whole lines, earlier lines first (all the same priority). A
+    # <mark_briefing> wrapper is kept intact around whatever lines fit.
+    wrapped = text.startswith(OPEN) and text.endswith(CLOSE)
+    body = text[len(OPEN):-len(CLOSE)].strip() if wrapped else text
+    lines = [BudgetItem("records", line) for line in body.splitlines() if line.strip()]
+    return budget.fit(lines, render_briefing if wrapped else render_lines).text
