@@ -2,13 +2,17 @@
 
 Two interchangeable scoring backends are provided:
 
-- ``numpy`` (used automatically when numpy is importable): one float32 matrix
-  per agent partition, built lazily and scored with a single mat-vec product
-  plus ``np.argpartition`` for top-k selection;
+- ``numpy``: one float32 matrix per agent partition, built lazily and scored
+  with a single mat-vec product plus ``np.argpartition`` for top-k selection;
 - ``python``: dependency-free scoring with ``heapq.nlargest``.
 
 Both backends return the same hits in the same order (ties are broken by
 insertion order); scores agree to float32 precision.
+
+``backend="auto"`` (the default) starts in pure Python and switches to numpy
+once the index holds ``AUTO_NUMPY_THRESHOLD`` vectors, if numpy is installed.
+Importing numpy costs 0.2–0.7 s, far more than scoring a few thousand vectors
+in Python, so short-lived processes with small stores never pay for it.
 """
 from __future__ import annotations
 
@@ -27,6 +31,9 @@ _FORMAT = "mark.vector-index"
 _FORMAT_VERSION = 2
 
 _sumprod = getattr(math, "sumprod", None)  # Python 3.12+
+
+#: Vector count at which ``backend="auto"`` switches to numpy (when installed).
+AUTO_NUMPY_THRESHOLD = 2048
 
 
 class DimensionMismatchError(ValueError):
@@ -182,10 +189,12 @@ class VectorIndex:
     def __init__(self, *, backend: str = "auto") -> None:
         if backend not in {"auto", "numpy", "python"}:
             raise ValueError("backend must be 'auto', 'numpy', or 'python'")
-        np = None if backend == "python" else _load_numpy()
+        np = _load_numpy() if backend == "numpy" else None
         if backend == "numpy" and np is None:
             raise ImportError("VectorIndex(backend='numpy') requires numpy: install `mark-sdk[fast]`.")
         self._np = np
+        # "auto" decides lazily: numpy only once the index is large enough.
+        self._auto = backend == "auto"
         self._lock = threading.RLock()
         self._partitions: dict[str | None, _PythonPartition | _NumpyPartition] = {}
         self._owner: dict[str, str | None] = {}
@@ -231,6 +240,8 @@ class VectorIndex:
             partition.add(fragment_id, vector)
             self._owner[fragment_id] = agent_id
             self._content[fragment_id] = content
+            if self._auto and len(self._owner) >= AUTO_NUMPY_THRESHOLD:
+                self._promote_to_numpy()
 
     def remove(self, fragment_id: str) -> None:
         """Drop a fragment from the index (no-op when absent)."""
@@ -310,12 +321,13 @@ class VectorIndex:
             else:
                 partitions = list(self._partitions.values())
             snapshots = [(partition, partition.snapshot()) for partition in partitions]
+            np = self._np
         query = _normalize(query_embedding)
-        if self._np is not None:
-            query = self._np.asarray(query, dtype=self._np.float32)
+        np_query = np.asarray(query, dtype=np.float32) if np is not None else None
         hits: list[tuple[float, int, int, str]] = []
         for order, (partition, snapshot) in enumerate(snapshots):
-            for score, position, fragment_id in partition.top(snapshot, query, top_k, include_ids):
+            partition_query = np_query if isinstance(partition, _NumpyPartition) else query
+            for score, position, fragment_id in partition.top(snapshot, partition_query, top_k, include_ids):
                 hits.append((score, order, position, fragment_id))
         hits.sort(key=lambda item: (-item[0], item[1], item[2]))
         content = self._content
@@ -382,6 +394,20 @@ class VectorIndex:
         # An empty index is still a real index: never let `index or VectorIndex()`
         # silently replace a shared (empty) index with a private one.
         return True
+
+    def _promote_to_numpy(self) -> None:
+        """Switch every partition to the numpy backend (caller holds the lock)."""
+        self._auto = False  # decide once, whether or not numpy is available
+        np = _load_numpy()
+        if np is None or self._dim is None:
+            return
+        self._np = np
+        for owner, partition in list(self._partitions.items()):
+            if isinstance(partition, _PythonPartition):
+                promoted = _NumpyPartition(np, self._dim)
+                for fragment_id, vector in partition.vectors.items():
+                    promoted.add(fragment_id, vector)
+                self._partitions[owner] = promoted
 
     def _new_partition(self) -> _PythonPartition | _NumpyPartition:
         if self._np is None:

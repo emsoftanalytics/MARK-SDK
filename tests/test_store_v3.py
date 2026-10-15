@@ -213,7 +213,7 @@ def test_pre_versioned_db_with_blocks_and_edges_but_no_fragments_migrates(tmp_pa
             """
         )
     store = LocalMemoryStore(db)
-    assert store.schema_version() == LocalMemoryStore.CURRENT_SCHEMA_VERSION == 3
+    assert store.schema_version() == LocalMemoryStore.CURRENT_SCHEMA_VERSION
     assert store.get_block("b1").status == BlockStatus.OPEN
     assert store.edges_in_block("b1") == []  # previously: no such column: block_id
     store.close()
@@ -236,7 +236,7 @@ def test_v2_db_migrates_to_v3_in_place_and_keeps_legacy_embeddings(tmp_path: Pat
              "2025-01-01T00:00:00+00:00", None, '["keys"]', None, "{}", json.dumps([0.6, 0.8]), "[]"),
         )
     store = LocalMemoryStore(db)
-    assert store.schema_version() == 3
+    assert store.schema_version() == LocalMemoryStore.CURRENT_SCHEMA_VERSION
     cols = {row[1] for row in store._conn().execute("PRAGMA table_info(fragments)")}
     assert "embedding_blob" in cols
     assert store.get("legacy").embedding == pytest.approx([0.6, 0.8])
@@ -258,7 +258,7 @@ def test_meta_helpers(store: LocalMemoryStore) -> None:
     store.set_meta("embedder", "mark.hash-v2:256")
     store.set_meta("embedder", "mark.hash-v2:512")
     assert store.get_meta("embedder") == "mark.hash-v2:512"
-    assert store.schema_version() == 3
+    assert store.schema_version() == LocalMemoryStore.CURRENT_SCHEMA_VERSION
 
 
 # ── embeddings ───────────────────────────────────────────────────────────────

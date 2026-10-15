@@ -6,6 +6,7 @@ import functools
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from mark.embeddings import EmbeddingProvider
@@ -133,8 +134,15 @@ class MarkMemory:
         session_id: str | None = None,
         ttl_seconds: int | None = None,
         metadata: dict[str, Any] | None = None,
+        occurred_at: "datetime | str | None" = None,
     ) -> str:
-        """Synchronous variant of store()."""
+        """Synchronous variant of store().
+
+        occurred_at  when the remembered event happened (datetime or ISO
+                     string); stored as ``metadata["occurred_at"]`` and used by
+                     temporal ("current"/"original") retrieval ordering.
+        """
+        metadata = _with_occurred_at(metadata, occurred_at)
         if self._middleware is not None and self._runtime is not None:
             return self._middleware.run(
                 "store",
@@ -166,6 +174,100 @@ class MarkMemory:
             ttl_seconds=ttl_seconds,
             metadata=metadata,
         )
+
+    @property
+    def facts(self) -> "FactsView":
+        """Bi-temporal facts for this agent: current values with full history."""
+        from mark.memory.facts import FactsView
+
+        return FactsView(self._store, self.agent_id)
+
+    def store_many_sync(
+        self,
+        contents: list[str],
+        *,
+        importance: float = 0.5,
+        scope: MemoryScope = MemoryScope.AGENT,
+        tags: list[str] | None = None,
+        source: str | None = None,
+        state: MemoryState = MemoryState.UNVERIFIED,
+        confidence: float = 1.0,
+        session_id: str | None = None,
+        ttl_seconds: int | None = None,
+        metadata: dict[str, Any] | None = None,
+        occurred_at: "list[datetime | str | None] | None" = None,
+    ) -> list[str]:
+        """Store many memories; returns their ids in input order.
+
+        Without registered middleware, embeddings are computed in one batch and
+        rows are written in one transaction. With middleware, every item goes
+        through the full middleware path (governance, redaction, ...) exactly
+        like store_sync, because batching must never skip those checks.
+        """
+        if occurred_at is not None and len(occurred_at) != len(contents):
+            raise ValueError("occurred_at must have one entry per content item")
+        when = occurred_at or [None] * len(contents)
+        options = dict(
+            importance=importance, scope=scope, tags=tags, source=source, state=state,
+            confidence=confidence, session_id=session_id, ttl_seconds=ttl_seconds,
+        )
+        if self._middleware is not None and self._middleware.list():
+            return [
+                self.store_sync(content, metadata=metadata, occurred_at=at, **options)
+                for content, at in zip(contents, when)
+            ]
+        accepted: list[MemoryFragment] = []
+        rejected: list[MemoryFragment] = []
+        order: list[MemoryFragment] = []
+        for content, at in zip(contents, when):
+            fragment, ok = self._guarded_fragment(
+                content, metadata=_with_occurred_at(metadata, at), **options,
+            )
+            (accepted if ok else rejected).append(fragment)
+            order.append(fragment)
+        if rejected:
+            self._store.store_many(rejected) if hasattr(self._store, "store_many") else [
+                self._store.store(fragment) for fragment in rejected
+            ]
+        if accepted:
+            self._pipeline.index_fragments(accepted)
+        return [fragment.id for fragment in order]
+
+    def retrieve_many_sync(
+        self,
+        queries: list[str],
+        policy: RetrievalPolicy = RetrievalPolicy.BALANCED,
+        *,
+        session_id: str | None = None,
+        session_prefix: str | None = None,
+        tags: list[str] | None = None,
+        tier: MemoryTier | None = None,
+        scope: MemoryScope | None = None,
+        block_id: str | None = None,
+        block_ids: list[str] | None = None,
+        compress: bool = False,
+        expand: bool = False,
+    ) -> list[RetrievalResult]:
+        """Answer several queries in one pass (results in query order).
+
+        Shares scope filtering and index sync across the batch. With
+        registered middleware each query runs through retrieve_sync instead.
+        """
+        filters = dict(
+            session_id=session_id, session_prefix=session_prefix, tags=tags, tier=tier,
+            scope=scope, block_id=block_id, block_ids=block_ids,
+        )
+        if self._middleware is not None and self._middleware.list():
+            return [
+                self.retrieve_sync(query, policy, compress=compress, expand=expand, **filters)
+                for query in queries
+            ]
+        path = ["session" if (session_id or session_prefix) else "agent_namespace"]
+        results = self._pipeline.retrieve_many(
+            queries, self.agent_id, policy,
+            session_filter=SessionFilter(**filters), compress=compress, expand=expand,
+        )
+        return [replace(result, escalation_path=path) for result in results]
 
     def _store_sync_impl(
         self,
@@ -1119,3 +1221,19 @@ class MarkMemory:
             content=gate_result.content,
         )
         return fragment, False
+
+
+def _with_occurred_at(metadata: dict[str, Any] | None, occurred_at: Any) -> dict[str, Any] | None:
+    """Return metadata with ``occurred_at`` normalised to an ISO-8601 string."""
+    if occurred_at is None:
+        return metadata
+    if isinstance(occurred_at, datetime):
+        stamp = occurred_at if occurred_at.tzinfo else occurred_at.replace(tzinfo=timezone.utc)
+        value = stamp.isoformat()
+    else:
+        value = str(occurred_at).strip()
+        try:
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(f"occurred_at must be ISO-8601, got {occurred_at!r}") from exc
+    return {**(metadata or {}), "occurred_at": value}

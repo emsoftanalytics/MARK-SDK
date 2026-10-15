@@ -53,6 +53,13 @@ _FRAGMENT_COLUMNS = (
     "embedding", "contradiction_ids", "embedding_blob",
 )
 
+_UPSERT_FRAGMENT_SQL = (
+    f"INSERT INTO fragments ({', '.join(_FRAGMENT_COLUMNS)}) VALUES ("
+    + ", ".join(f":{name}" for name in _FRAGMENT_COLUMNS)
+    + ") ON CONFLICT(id) DO UPDATE SET "
+    + ", ".join(f"{name} = excluded.{name}" for name in _FRAGMENT_COLUMNS if name != "id")
+)
+
 _FTS_TABLE = "fragments_fts"
 _FTS_META_KEY = "fts_backfilled"
 
@@ -69,7 +76,7 @@ class LocalMemoryStore:
         reads included — is serialised by the same re-entrant lock.
     """
 
-    CURRENT_SCHEMA_VERSION = 3
+    CURRENT_SCHEMA_VERSION = 4
 
     # Column additions per schema version: (table, column, declaration).
     # Applied by inspecting PRAGMA table_info, never by trusting the stamped
@@ -120,6 +127,28 @@ class LocalMemoryStore:
         # 3: indexes are created from _INDEXES after migrations; FTS backfill
         #    is driven by the fts_backfilled meta key.
         3: [],
+        # 4: bi-temporal facts (subject, attribute) -> value with validity intervals.
+        4: [
+            """
+            CREATE TABLE IF NOT EXISTS facts (
+                id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                subject_key TEXT NOT NULL,
+                attribute TEXT NOT NULL,
+                attribute_key TEXT NOT NULL,
+                value BLOB NOT NULL,
+                valid_from TEXT NOT NULL,
+                valid_to TEXT,
+                recorded_at TEXT NOT NULL,
+                retracted_at TEXT,
+                source_fragment_id TEXT,
+                metadata TEXT DEFAULT '{}'
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_fact_key ON facts(agent_id, subject_key, attribute_key, valid_from)",
+            "CREATE INDEX IF NOT EXISTS idx_fact_current ON facts(agent_id, valid_to, retracted_at)",
+        ],
     }
 
     _DDL_SCHEMA_INFO = """
@@ -367,6 +396,27 @@ class LocalMemoryStore:
 
         Raises ValueError when the id already belongs to a different agent.
         """
+        return self.store_many([fragment])[0]
+
+    def store_many(self, fragments: Iterable[MemoryFragment]) -> list[str]:
+        """Insert or update many fragments in one transaction (all or nothing).
+
+        Same semantics as store() per fragment. Raises ValueError (and writes
+        nothing) when any id already belongs to a different agent.
+        """
+        unretrievable: list[str] = []
+        ids: list[str] = []
+        with self._writing() as conn:
+            for fragment in fragments:
+                fragment_id, became_unretrievable = self._store_row(conn, fragment)
+                ids.append(fragment_id)
+                if became_unretrievable:
+                    unretrievable.append(fragment_id)
+        if unretrievable:
+            self._emit("unretrievable", unretrievable)
+        return ids
+
+    def _store_row(self, conn: sqlite3.Connection, fragment: MemoryFragment) -> tuple[str, bool]:
         fragment = ContentHasher.attach(fragment, self.encryption)
         encrypted_content = self.encryption.encrypt_str(fragment.content)
         params = {
@@ -392,35 +442,24 @@ class LocalMemoryStore:
             "contradiction_ids": json.dumps(fragment.contradiction_ids),
             "embedding_blob": _pack_embedding(fragment.embedding),
         }
-        columns = ", ".join(_FRAGMENT_COLUMNS)
-        values = ", ".join(f":{name}" for name in _FRAGMENT_COLUMNS)
-        updates = ", ".join(f"{name} = excluded.{name}" for name in _FRAGMENT_COLUMNS if name != "id")
-        became_unretrievable = False
-        with self._writing() as conn:
-            existing = conn.execute(
-                "SELECT rowid, agent_id, state FROM fragments WHERE id = ?", (fragment.id,)
-            ).fetchone()
-            if existing is not None and str(existing["agent_id"]) != fragment.agent_id:
-                raise ValueError(
-                    f"Fragment id {fragment.id!r} already belongs to another agent; "
-                    "refusing to overwrite it."
-                )
-            cursor = conn.execute(
-                f"INSERT INTO fragments ({columns}) VALUES ({values})"
-                f" ON CONFLICT(id) DO UPDATE SET {updates}",
-                params,
+        existing = conn.execute(
+            "SELECT rowid, agent_id, state FROM fragments WHERE id = ?", (fragment.id,)
+        ).fetchone()
+        if existing is not None and str(existing["agent_id"]) != fragment.agent_id:
+            raise ValueError(
+                f"Fragment id {fragment.id!r} already belongs to another agent; "
+                "refusing to overwrite it."
             )
-            rowid = int(existing["rowid"]) if existing is not None else int(cursor.lastrowid or 0)
-            if existing is not None:
-                became_unretrievable = (
-                    str(existing["state"]) in _RETRIEVABLE_VALUES
-                    and fragment.state.value not in _RETRIEVABLE_VALUES
-                )
-            if self._fts_enabled:
-                self._fts_upsert(conn, rowid, fragment.id, fragment.agent_id, fragment.content, fragment.tags)
-        if became_unretrievable:
-            self._emit("unretrievable", [fragment.id])
-        return fragment.id
+        cursor = conn.execute(_UPSERT_FRAGMENT_SQL, params)
+        rowid = int(existing["rowid"]) if existing is not None else int(cursor.lastrowid or 0)
+        became_unretrievable = (
+            existing is not None
+            and str(existing["state"]) in _RETRIEVABLE_VALUES
+            and fragment.state.value not in _RETRIEVABLE_VALUES
+        )
+        if self._fts_enabled:
+            self._fts_upsert(conn, rowid, fragment.id, fragment.agent_id, fragment.content, fragment.tags)
+        return fragment.id, became_unretrievable
 
     def get(self, fragment_id: str) -> MemoryFragment | None:
         """Fetch a fragment by id, or None.
@@ -601,27 +640,42 @@ class LocalMemoryStore:
             f" WHERE {_FTS_TABLE} MATCH ? AND agent_id = ?"
         )
         params: list[object] = [match, agent_id]
-        python_filter: set[str] | None = None
-        fetch = limit
         if include_ids is not None:
-            if len(include_ids) <= _SQL_CHUNK:
-                placeholders = ",".join("?" for _ in include_ids)
-                sql += f" AND fragment_id IN ({placeholders})"
-                params.extend(include_ids)
-            else:
-                python_filter = include_ids
-                fetch = limit * 4
+            # One JSON parameter filters exactly at any size. Post-filtering a
+            # truncated hit list would silently drop in-scope matches whenever
+            # many out-of-scope documents rank higher.
+            sql += " AND fragment_id IN (SELECT value FROM json_each(?))"
+            params.append(json.dumps(sorted(include_ids)))
         sql += f" ORDER BY bm25({_FTS_TABLE}) LIMIT ?"
-        params.append(fetch)
+        params.append(limit)
         try:
             rows = self._fetchall(sql, params)
         except sqlite3.OperationalError:
             logger.debug("FTS query rejected: %r", match, exc_info=True)
             return []
-        results = [(str(row[0]), float(row[1])) for row in rows]
-        if python_filter is not None:
-            results = [item for item in results if item[0] in python_filter]
-        return results[:limit]
+        return [(str(row[0]), float(row[1])) for row in rows]
+
+    def phrase_exists(self, agent_id: str, phrase: str) -> bool | None:
+        """Whether *phrase* (as consecutive tokens) occurs in any of the agent's memories.
+
+        Returns None when it cannot be answered (FTS5 unavailable, encrypted
+        store, or no usable tokens), so callers can fall back to other evidence.
+        """
+        if not self._fts_enabled:
+            return None
+        tokens = re.findall(r"\w+", phrase.lower())
+        if not tokens:
+            return None
+        match = '"' + " ".join(token.replace('"', '""') for token in tokens) + '"'
+        try:
+            row = self._fetchone(
+                f"SELECT 1 FROM {_FTS_TABLE} WHERE {_FTS_TABLE} MATCH ? AND agent_id = ? LIMIT 1",
+                (match, agent_id),
+            )
+        except sqlite3.OperationalError:
+            logger.debug("FTS phrase query rejected: %r", match, exc_info=True)
+            return None
+        return row is not None
 
     def list_sessions(self, agent_id: str) -> list[str]:
         """Return distinct session_ids for agent_id, ordered by most recent activity."""
@@ -1207,6 +1261,137 @@ class LocalMemoryStore:
             for sql in self._MIGRATIONS.get(v, []):
                 conn.execute(sql)
 
+    # ── facts (bi-temporal) ───────────────────────────────────────────────────
+
+    def fact_set(
+        self,
+        agent_id: str,
+        subject: str,
+        attribute: str,
+        value: str,
+        *,
+        valid_from: datetime,
+        source_fragment_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Record that ``subject.attribute`` had ``value`` from ``valid_from`` on.
+
+        Facts are never overwritten. The timeline for (subject, attribute) is
+        re-derived on every write, so out-of-order arrivals slot into history
+        instead of becoming "current". Re-asserting the same value at the same
+        time is a no-op; a different value at the same time retracts the old
+        row (kept for audit) and records the correction.
+        """
+        subject_key, attribute_key = _fact_key(subject), _fact_key(attribute)
+        if not subject_key or not attribute_key:
+            raise ValueError("fact subject and attribute must contain letters or digits")
+        if valid_from.tzinfo is None:
+            valid_from = valid_from.replace(tzinfo=timezone.utc)
+        valid_text = valid_from.astimezone(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
+        value = str(value)
+        with self._writing(structural=False) as conn:
+            rows = conn.execute(
+                "SELECT id, value, valid_from FROM facts WHERE agent_id = ? AND subject_key = ?"
+                " AND attribute_key = ? AND retracted_at IS NULL",
+                (agent_id, subject_key, attribute_key),
+            ).fetchall()
+            for row in rows:
+                if str(row["valid_from"]) == valid_text:
+                    if self.encryption.decrypt_str(row["value"]) == value:
+                        return self._fact_by_id(conn, str(row["id"]))
+                    conn.execute("UPDATE facts SET retracted_at = ? WHERE id = ?", (now, row["id"]))
+            fact_id = str(uuid.uuid4())
+            conn.execute(
+                "INSERT INTO facts (id, agent_id, subject, subject_key, attribute, attribute_key, value,"
+                " valid_from, valid_to, recorded_at, retracted_at, source_fragment_id, metadata)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?)",
+                (fact_id, agent_id, subject.strip(), subject_key, attribute.strip(), attribute_key,
+                 self.encryption.encrypt_str(value), valid_text, now, source_fragment_id,
+                 json.dumps(metadata or {})),
+            )
+            self._rechain_facts(conn, agent_id, subject_key, attribute_key)
+            return self._fact_by_id(conn, fact_id)
+
+    def fact_history(self, agent_id: str, subject: str, attribute: str) -> list[dict[str, Any]]:
+        """Every value (subject, attribute) has had, oldest first; repeats collapsed."""
+        rows = self._fetchall(
+            "SELECT * FROM facts WHERE agent_id = ? AND subject_key = ? AND attribute_key = ?"
+            " AND retracted_at IS NULL ORDER BY valid_from, recorded_at",
+            (agent_id, _fact_key(subject), _fact_key(attribute)),
+        )
+        history: list[dict[str, Any]] = []
+        for row in rows:
+            fact = self._row_to_fact(row)
+            if history and history[-1]["value"] == fact["value"]:
+                history[-1]["valid_to"] = fact["valid_to"]
+                continue
+            history.append(fact)
+        return history
+
+    def fact_current(
+        self, agent_id: str, subject: str | None = None, attribute: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Facts valid now (no later value recorded), optionally for one subject/attribute."""
+        sql = "SELECT * FROM facts WHERE agent_id = ? AND valid_to IS NULL AND retracted_at IS NULL"
+        params: list[object] = [agent_id]
+        if subject is not None:
+            sql += " AND subject_key = ?"
+            params.append(_fact_key(subject))
+        if attribute is not None:
+            sql += " AND attribute_key = ?"
+            params.append(_fact_key(attribute))
+        sql += " ORDER BY subject_key, attribute_key"
+        return [self._row_to_fact(row) for row in self._fetchall(sql, params)]
+
+    def fact_as_of(self, agent_id: str, subject: str, attribute: str, when: datetime) -> dict[str, Any] | None:
+        """The value (subject, attribute) had at time ``when``, or None."""
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        stamp = when.astimezone(timezone.utc).isoformat()
+        row = self._fetchone(
+            "SELECT * FROM facts WHERE agent_id = ? AND subject_key = ? AND attribute_key = ?"
+            " AND retracted_at IS NULL AND valid_from <= ? AND (valid_to IS NULL OR valid_to > ?)"
+            " ORDER BY valid_from DESC LIMIT 1",
+            (agent_id, _fact_key(subject), _fact_key(attribute), stamp, stamp),
+        )
+        return None if row is None else self._row_to_fact(row)
+
+    def fact_subjects(self, agent_id: str) -> list[str]:
+        """Normalised subject keys that have at least one fact."""
+        rows = self._fetchall(
+            "SELECT DISTINCT subject_key FROM facts WHERE agent_id = ? AND retracted_at IS NULL", (agent_id,)
+        )
+        return [str(row[0]) for row in rows]
+
+    def _rechain_facts(self, conn: sqlite3.Connection, agent_id: str, subject_key: str, attribute_key: str) -> None:
+        rows = conn.execute(
+            "SELECT id, valid_from FROM facts WHERE agent_id = ? AND subject_key = ? AND attribute_key = ?"
+            " AND retracted_at IS NULL ORDER BY valid_from, recorded_at",
+            (agent_id, subject_key, attribute_key),
+        ).fetchall()
+        updates = [
+            (str(rows[i + 1]["valid_from"]) if i + 1 < len(rows) else None, str(row["id"]))
+            for i, row in enumerate(rows)
+        ]
+        conn.executemany("UPDATE facts SET valid_to = ? WHERE id = ?", updates)
+
+    def _fact_by_id(self, conn: sqlite3.Connection, fact_id: str) -> dict[str, Any]:
+        return self._row_to_fact(conn.execute("SELECT * FROM facts WHERE id = ?", (fact_id,)).fetchone())
+
+    def _row_to_fact(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": str(row["id"]),
+            "subject": str(row["subject"]),
+            "attribute": str(row["attribute"]),
+            "value": self.encryption.decrypt_str(row["value"]),
+            "valid_from": _parse_dt(row["valid_from"]),
+            "valid_to": _parse_optional_dt(row["valid_to"]),
+            "recorded_at": _parse_dt(row["recorded_at"]),
+            "source_fragment_id": _optional_str(row["source_fragment_id"]),
+            "metadata": json.loads(str(row["metadata"] or "{}")),
+        }
+
     def log_event(
         self,
         agent_id: str,
@@ -1595,3 +1780,8 @@ def _parse_optional_dt(value: object) -> datetime | None:
 
 def _optional_str(value: object) -> str | None:
     return None if value is None else str(value)
+
+
+def _fact_key(text: str) -> str:
+    """Normalise a fact subject/attribute: 'Atlas-Core' == 'atlas core' == 'atlas_core'."""
+    return " ".join(re.findall(r"\w+", str(text).lower().replace("_", " ")))

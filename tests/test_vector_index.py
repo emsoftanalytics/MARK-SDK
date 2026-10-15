@@ -210,3 +210,52 @@ def test_invalid_backend_and_empty_embedding() -> None:
         VectorIndex(backend="faiss")
     with pytest.raises(ValueError):
         VectorIndex().add("a", [])
+
+
+# ── auto backend: lazy numpy ──────────────────────────────────────────────────
+
+def test_auto_backend_stays_python_below_threshold() -> None:
+    import mark.index.vector as vector_module
+
+    index = VectorIndex()
+    for i in range(10):
+        index.add(f"f{i}", [float(i), 1.0, 0.0], agent_id="a")
+    assert index.backend == "python"
+    assert index.search([1.0, 1.0, 0.0], top_k=3, agent_id="a")
+    assert vector_module.AUTO_NUMPY_THRESHOLD > 10
+
+
+@pytest.mark.skipif(not HAS_NUMPY, reason="numpy not installed")
+def test_auto_backend_promotes_to_numpy_with_identical_results(monkeypatch: pytest.MonkeyPatch) -> None:
+    import random
+
+    import mark.index.vector as vector_module
+
+    monkeypatch.setattr(vector_module, "AUTO_NUMPY_THRESHOLD", 50)
+    rng = random.Random(3)
+    vectors = {f"f{i}": [rng.uniform(-1, 1) for _ in range(8)] for i in range(80)}
+    reference = VectorIndex(backend="python")
+    auto = VectorIndex()
+    for n, (fid, vec) in enumerate(vectors.items()):
+        reference.add(fid, vec, agent_id="a" if n % 2 else "b")
+        auto.add(fid, vec, agent_id="a" if n % 2 else "b")
+        if n == 30:
+            assert auto.backend == "python"
+    assert auto.backend == "numpy"
+    query = [rng.uniform(-1, 1) for _ in range(8)]
+    for agent in ("a", "b", None):
+        expected = [h.fragment_id for h in reference.search(query, top_k=10, agent_id=agent)]
+        assert [h.fragment_id for h in auto.search(query, top_k=10, agent_id=agent)] == expected
+
+
+def test_creating_a_runtime_does_not_import_numpy() -> None:
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; from mark.memory.runtime import MarkRuntime; "
+        "rt = MarkRuntime.local(); m = rt.memory('x'); m.store_sync('hello world'); "
+        "m.retrieve_sync('hello'); print('numpy' in sys.modules)"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "False"

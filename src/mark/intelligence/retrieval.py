@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import heapq
+from datetime import datetime, timezone
 import json as _json
 import logging
 import re
@@ -167,6 +168,9 @@ class RetrievalResult:
     was_compressed: bool = False
     relevance: list[float] = field(default_factory=list)
     channels: dict[str, int] = field(default_factory=dict)
+    temporal_intent: str = "none"
+    missing_anchors: list[str] = field(default_factory=list)
+    facts: list = field(default_factory=list)  # list[mark.memory.facts.Fact]
 
     @property
     def gap_detected(self) -> bool:
@@ -206,7 +210,9 @@ class RetrievalResult:
         # the <memory_context> boundary or forge sibling tags.
         compressed_flag = " compressed=true" if self.was_compressed else ""
         lines = [f"<memory_context query={_xml_quoteattr(self.query)}{compressed_flag}>"]
-        if not self.fragments:
+        for fact in self.facts:
+            lines.append(f"  [fact|{'current' if fact.is_current else 'historical'}] {_xml_escape(fact.as_text())}")
+        if not self.fragments and not self.facts:
             lines.append("  [No relevant memory found]")
         words = 0
         for fragment, score in zip(self.fragments, self.scores):
@@ -424,6 +430,24 @@ class RetrievalPipeline:
         self._index_add(indexed.id, embedding, indexed.content, indexed.agent_id)
         return indexed
 
+    def index_fragments(self, fragments: list[MemoryFragment], batch_size: int = 64) -> list[MemoryFragment]:
+        """Embed (in batches), persist (one transaction per batch), and index fragments."""
+        indexed_all: list[MemoryFragment] = []
+        store_many = getattr(self._store, "store_many", None)
+        for start in range(0, len(fragments), batch_size):
+            chunk = fragments[start:start + batch_size]
+            vectors = self._embedder.embed_batch([fragment.content for fragment in chunk])
+            indexed = [f.model_copy(update={"embedding": v}) for f, v in zip(chunk, vectors)]
+            if store_many is not None:
+                store_many(indexed)
+            else:
+                for fragment in indexed:
+                    self._store.store(fragment)
+            for fragment in indexed:
+                self._index_add(fragment.id, fragment.embedding, fragment.content, fragment.agent_id)
+            indexed_all.extend(indexed)
+        return indexed_all
+
     # ── Read path ─────────────────────────────────────────────────────────────
 
     def retrieve(
@@ -438,21 +462,67 @@ class RetrievalPipeline:
         reinforce: ReinforceMode | str | None = None,
     ) -> RetrievalResult:
         """Run the full pipeline: filter, lexical + vector search, fuse, expand, rerank."""
-        policy = RetrievalPolicy(policy)
-        analysis = self._analyzer.analyze(query)
-        spec = self._resolve_spec(policy, analysis)
-        reinforce_mode = self._reinforce if reinforce is None else ReinforceMode(reinforce)
+        return self.retrieve_many(
+            [query], agent_id, policy,
+            session_filter=session_filter, compress=compress, expand=expand, reinforce=reinforce,
+        )[0]
 
+    def retrieve_many(
+        self,
+        queries: list[str],
+        agent_id: str,
+        policy: RetrievalPolicy = RetrievalPolicy.BALANCED,
+        *,
+        session_filter: SessionFilter | None = None,
+        compress: bool = False,
+        expand: bool = False,
+        reinforce: ReinforceMode | str | None = None,
+    ) -> list[RetrievalResult]:
+        """Answer several queries in one pass; results are in query order.
+
+        Scope filtering and index synchronisation run once for the whole
+        batch, so N questions cost one setup plus N searches.
+        """
+        policy = RetrievalPolicy(policy)
+        reinforce_mode = self._reinforce if reinforce is None else ReinforceMode(reinforce)
         # Filters are applied in SQL before scoring so other agents, other
         # sessions, deleted or quarantined memories can never crowd the top-k.
         sf = session_filter or SessionFilter()
         allowed_ids = self._allowed_ids(agent_id, sf)
         if not allowed_ids:
-            return self._empty_result(query, policy, spec, analysis)
+            results = []
+            for query in queries:
+                analysis = self._analyzer.analyze(query)
+                results.append(self._empty_result(
+                    query, agent_id, policy, self._resolve_spec(policy, analysis), analysis,
+                ))
+            return results
         indexed_ids = self._sync_index(agent_id, allowed_ids)
         # Unfiltered whole-agent search: skip per-id filtering (one matvec, no
         # id-set intersection) when the index partition is exactly the allowed set.
         scope_ids = None if indexed_ids == allowed_ids else allowed_ids
+        return [
+            self._retrieve_one(
+                query, agent_id, policy, allowed_ids, scope_ids,
+                compress=compress, expand=expand, reinforce_mode=reinforce_mode,
+            )
+            for query in queries
+        ]
+
+    def _retrieve_one(
+        self,
+        query: str,
+        agent_id: str,
+        policy: RetrievalPolicy,
+        allowed_ids: set[str],
+        scope_ids: set[str] | None,
+        *,
+        compress: bool,
+        expand: bool,
+        reinforce_mode: ReinforceMode,
+    ) -> RetrievalResult:
+        analysis = self._analyzer.analyze(query)
+        spec = self._resolve_spec(policy, analysis)
 
         # When an LLM compressor is active and compression is requested, fetch a
         # larger candidate pool so the compressor has more to work with.
@@ -553,9 +623,13 @@ class RetrievalPipeline:
             scores.append(result.score)
             relevances.append(relevance.get(result.fragment_id, 0.0))
 
+        fragments, scores, relevances, intent = temporal_order(query, fragments, scores, relevances)
+
         self._reinforce_results(fragments, relevances, spec, reinforce_mode)
 
-        gap_report = self._gap_report(relevances, spec, analysis, query)
+        facts = self._matching_facts(query, agent_id, intent)
+        missing = self._missing_anchors(query, agent_id, fragments, facts)
+        gap_report = self._gap_report(relevances, spec, analysis, query, missing)
 
         # Optional contextual compression: filter/rewrite fragments before context injection.
         was_compressed = False
@@ -570,7 +644,7 @@ class RetrievalPipeline:
                 scores = [id_to_score.get(f.id, 0.0) for f in fragments]
                 relevances = [id_to_rel.get(f.id, 0.0) for f in fragments]
                 was_compressed = True
-                gap_report = self._gap_report(relevances, spec, analysis, query)
+                gap_report = self._gap_report(relevances, spec, analysis, query, missing)
 
         return RetrievalResult(
             query=query,
@@ -583,6 +657,9 @@ class RetrievalPipeline:
             was_compressed=was_compressed,
             relevance=relevances,
             channels=channels,
+            temporal_intent=intent.value,
+            missing_anchors=missing,
+            facts=facts,
         )
 
     # ── Internals ─────────────────────────────────────────────────────────────
@@ -600,25 +677,103 @@ class RetrievalPipeline:
         return replace(base, top_k=top_k)
 
     def _empty_result(
-        self, query: str, policy: RetrievalPolicy, spec: RetrievalPolicySpec, analysis: QueryAnalysis,
+        self,
+        query: str,
+        agent_id: str,
+        policy: RetrievalPolicy,
+        spec: RetrievalPolicySpec,
+        analysis: QueryAnalysis,
     ) -> RetrievalResult:
+        # No text memories in scope, but the agent may still hold facts.
+        intent = detect_temporal_intent(query)
+        facts = self._matching_facts(query, agent_id, intent)
+        missing = self._missing_anchors(query, agent_id, [], facts)
+        gap = (
+            GapReport() if facts and not missing
+            else self._gap_report([], spec, analysis, query, missing)
+        )
         return RetrievalResult(
             query=query,
             fragments=[],
             scores=[],
             policy_used=policy,
             spec_used=spec,
-            gap_report=self._gap_report([], spec, analysis, query),
+            gap_report=gap,
             analysis=analysis,
+            temporal_intent=intent.value,
+            missing_anchors=missing,
+            facts=facts,
         )
 
+    def _matching_facts(self, query: str, agent_id: str, intent: TemporalIntent) -> list:
+        """Facts about the query's anchors: current values, or first values for ORIGINAL queries.
+
+        When the query names attributes that facts exist for ("port"), only
+        those are returned; otherwise every attribute of the subject is.
+        """
+        current = getattr(self._store, "fact_current", None)
+        anchors = query_anchors(query)
+        if current is None or not anchors:
+            return []
+        from mark.memory.facts import _fact
+
+        terms = set(_content_terms(query))
+        found = []
+        for anchor in anchors:
+            rows = current(agent_id, anchor)
+            if not rows:
+                continue
+            named = [r for r in rows if set(_content_terms(r["attribute"])) & terms]
+            for row in named or rows:
+                if intent == TemporalIntent.ORIGINAL:
+                    history = self._store.fact_history(agent_id, row["subject"], row["attribute"])
+                    row = history[0] if history else row
+                found.append(_fact(row))
+        return found
+
+    def _missing_anchors(
+        self, query: str, agent_id: str, fragments: list[MemoryFragment], facts: list | None = None,
+    ) -> list[str]:
+        """Query anchors (names, ids) that appear nowhere in the agent's memory."""
+        anchors = query_anchors(query)
+        if not anchors:
+            return []
+        retrieved = [_anchor_norm(fragment.content) for fragment in fragments]
+        retrieved += [_anchor_norm(f"{fact.subject} {fact.value}") for fact in (facts or [])]
+        phrase_exists = getattr(self._store, "phrase_exists", None)
+        missing: list[str] = []
+        for anchor in anchors:
+            if any(_contains_anchor(content, anchor) for content in retrieved):
+                continue
+            # Present elsewhere in memory (just not in this top-k) is not a gap.
+            if phrase_exists is not None and phrase_exists(agent_id, anchor):
+                continue
+            missing.append(anchor)
+        return missing
+
     def _gap_report(
-        self, relevances: list[float], spec: RetrievalPolicySpec, analysis: QueryAnalysis, query: str,
+        self,
+        relevances: list[float],
+        spec: RetrievalPolicySpec,
+        analysis: QueryAnalysis,
+        query: str,
+        missing_anchors: list[str] | None = None,
     ) -> GapReport:
         # Gap detection uses calibrated query evidence, never blended priors:
         # importance or graph weight can't make an irrelevant hit look like coverage.
         top = max(relevances, default=0.0)
         report = GapReport.from_score(top, len(relevances), spec.min_confidence)
+        if missing_anchors and report.severity in {GapSeverity.NONE, GapSeverity.LOW, GapSeverity.MEDIUM}:
+            # Matching common words ("port", "billing") must not hide that the
+            # thing actually asked about ("titan-billing") was never seen.
+            report = GapReport(
+                severity=GapSeverity.HIGH,
+                reason="Not found in memory: " + ", ".join(repr(a) for a in missing_anchors) + ".",
+                suggested_action="web_search",
+                missing_coverage=round(len(missing_anchors) / max(1, len(query_anchors(query))), 3),
+                confidence=min(report.confidence, 0.25),
+                missing=list(missing_anchors),
+            )
         if report.should_search:
             keywords = getattr(analysis, "keywords", None)
             hint = " ".join(keywords[:5]) if keywords else query
@@ -884,36 +1039,220 @@ def _same_embedding_space(stored: str, current: str) -> bool:
 
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
 
+# Words that express *when* the caller cares about, not *what*: they drive
+# temporal ordering and must not count as content terms.
+_CURRENT_RE = re.compile(r"\b(now|current(?:ly)?|latest|most recent|today|nowadays|these days|as of (?:now|today))\b", re.I)
+_ORIGINAL_RE = re.compile(r"\b(original(?:ly)?|initial(?:ly)?|first|earliest|at first|before any)\b", re.I)
+_TEMPORAL_WORDS = {"now", "current", "currently", "latest", "recent", "today", "nowadays",
+                   "original", "originally", "initial", "initially", "first", "earliest"}
+
+# Distinctive anchors: compound identifiers (atlas-core, HAL-1234, eu-west-1,
+# v2.3.1), tokens with digits, and multi-word capitalised names.
+_COMPOUND_RE = re.compile(r"\b\w+(?:[-_.:/]\w+)+\b")
+_DIGIT_TOKEN_RE = re.compile(r"\b(?=\w*\d)\w{3,}\b")
+_NAME_RE = re.compile(r"\b([A-Z][\w'’]+(?:\s+[A-Z][\w'’]+)+)\b")
+_QUESTION_WORDS = {"Who", "What", "Which", "When", "Where", "Why", "How", "Is", "Are", "Does", "Do", "Did", "Per"}
+
+# Event time: only a date stamp at the very start of a memory counts
+# ("[2026-03-05] ...", "2026-03-05T10:00Z: ..."). Dates elsewhere in the text
+# ("drill scheduled for 2026-04-16") describe other events and are ignored.
+_LEADING_DATE_RE = re.compile(r"^\s*\[?(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?")
+
+
+class TemporalIntent(str, Enum):
+    """What point in time a query asks about."""
+    NONE = "none"
+    CURRENT = "current"
+    ORIGINAL = "original"
+
+
+def detect_temporal_intent(query: str) -> TemporalIntent:
+    """CURRENT for "now/current/latest" queries, ORIGINAL for "original/first", else NONE."""
+    if _ORIGINAL_RE.search(query):
+        return TemporalIntent.ORIGINAL
+    if _CURRENT_RE.search(query):
+        return TemporalIntent.CURRENT
+    return TemporalIntent.NONE
+
+
+def query_anchors(query: str) -> list[str]:
+    """Distinctive identifiers and names in a query, normalised to lowercase."""
+    anchors: list[str] = []
+    for match in _COMPOUND_RE.findall(query):
+        anchors.append(match)
+    for match in _DIGIT_TOKEN_RE.findall(query):
+        if not any(match in compound for compound in anchors):
+            anchors.append(match)
+    for match in _NAME_RE.findall(query):
+        words = match.split()
+        while words and words[0] in _QUESTION_WORDS:
+            words = words[1:]
+        if len(words) >= 2:
+            anchors.append(" ".join(words))
+    seen: list[str] = []
+    for anchor in anchors:
+        norm = _anchor_norm(anchor)
+        if norm and norm not in seen:
+            seen.append(norm)
+    return seen
+
+
+def _anchor_norm(text: str) -> str:
+    """Normalise identifiers so 'Atlas-Core', 'atlas core', 'atlas_core' compare equal."""
+    return " ".join(_TOKEN_RE.findall(text.lower().replace("’", "'")))
+
+
+def _contains_anchor(content_norm: str, anchor: str) -> bool:
+    return re.search(rf"(?<!\w){re.escape(anchor)}(?!\w)", content_norm) is not None
+
+
+def declared_event_time(fragment: MemoryFragment) -> datetime | None:
+    """The event time a memory declares, or None.
+
+    Explicit ``metadata["occurred_at"]`` wins; otherwise a date stamp at the
+    very start of the content.
+    """
+    raw = fragment.metadata.get("occurred_at") if fragment.metadata else None
+    if raw:
+        parsed = _parse_when(str(raw))
+        if parsed is not None:
+            return parsed
+    match = _LEADING_DATE_RE.match(fragment.content)
+    if match:
+        return _parse_when(match.group(1) + (f"T{match.group(2)}" if match.group(2) else ""))
+    return None
+
+
+def event_time(fragment: MemoryFragment) -> datetime:
+    """When the remembered event happened: declared time, else when it was stored."""
+    declared = declared_event_time(fragment)
+    if declared is not None:
+        return declared
+    stamp = fragment.created_at
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+
+
+def _parse_when(text: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(text.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _stem(token: str) -> str:
+    """Tiny suffix stemmer: listens/listened → listen, owns/owned/owner → own,
+    gates → gate, boxes → box, policies → policy, running → run.
+
+    Deliberately conservative (no prefix matching): identifiers and names such
+    as "titan" must never match "titanium". Query and content are stemmed the
+    same way, so an occasional over-merge only widens a match.
+    """
+    if len(token) < 4 or not token.isalpha():
+        return token
+    if token.endswith(("ies", "ied")) and len(token) > 4:
+        return token[:-3] + "y"
+    if token.endswith("es") and token[:-2].endswith(("s", "x", "z", "ch", "sh")):
+        return token[:-2]
+    if token.endswith("s") and not token.endswith(("ss", "us", "is")):
+        token = token[:-1]
+        if len(token) < 4:
+            return token
+    for suffix in ("ments", "ment", "ing", "ers", "er", "ed"):
+        if token.endswith(suffix) and len(token) - len(suffix) >= 3:
+            stem = token[: -len(suffix)]
+            if len(stem) >= 4 and stem[-1] == stem[-2] and stem[-1] not in "lsz":
+                stem = stem[:-1]  # running → runn → run
+            return stem
+    return token
+
 
 def _content_terms(text: str) -> list[str]:
-    """Salient query terms: lowercase word tokens without stopwords."""
+    """Salient query terms: lowercase stems without stopwords or temporal words."""
     terms: list[str] = []
     for token in _TOKEN_RE.findall(text.lower()):
         if token.endswith("'s"):
             token = token[:-2]
-        if token in _STOP_WORDS or (len(token) < 2 and not token.isdigit()):
+        if token in _STOP_WORDS or token in _TEMPORAL_WORDS or (len(token) < 2 and not token.isdigit()):
             continue
-        if token not in terms:
-            terms.append(token)
+        stem = _stem(token)
+        if stem not in terms:
+            terms.append(stem)
     return terms
 
 
-def _term_matches(term: str, tokens: set[str], prefixes: set[str]) -> bool:
-    if term in tokens:
-        return True
-    # Cheap stemming: shared 5-char prefix for longer words (deploy/deployment).
-    return len(term) >= 5 and term[:5] in prefixes
+def _content_stems(content: str) -> set[str]:
+    return {_stem(token) for token in _TOKEN_RE.findall(content.lower())}
+
+
+def _coverage(query_terms: list[str], content: str) -> float:
+    if not query_terms:
+        return 0.0
+    stems = _content_stems(content)
+    return sum(1 for term in query_terms if term in stems) / len(query_terms)
 
 
 def _relevance(query_terms: list[str], content: str, cosine: float) -> float:
     """Calibrated query evidence in [0, 1]: max of vector similarity and term coverage."""
-    coverage = 0.0
-    if query_terms:
-        tokens = set(_TOKEN_RE.findall(content.lower()))
-        prefixes = {t[:5] for t in tokens if len(t) >= 5}
-        matched = sum(1 for term in query_terms if _term_matches(term, tokens, prefixes))
-        coverage = matched / len(query_terms)
-    return max(0.0, min(1.0, max(cosine, coverage)))
+    return max(0.0, min(1.0, max(cosine, _coverage(query_terms, content))))
+
+
+def temporal_order(
+    query: str,
+    fragments: list[MemoryFragment],
+    scores: list[float],
+    relevances: list[float],
+) -> tuple[list[MemoryFragment], list[float], list[float], TemporalIntent]:
+    """Reorder results about the query's subject by event time.
+
+    For CURRENT queries the newest matching record comes first; for ORIGINAL
+    queries the oldest. Only fragments that mention every query anchor (e.g.
+    the service name) and cover the remaining query terms at least as well as
+    the best such fragment are reordered, so a newer record about a different
+    attribute never jumps ahead. Other results keep their rank. Scores are
+    re-assigned so they stay non-increasing.
+    """
+    intent = detect_temporal_intent(query)
+    anchors = query_anchors(query)
+    if intent == TemporalIntent.NONE or not anchors or len(fragments) < 2:
+        return fragments, scores, relevances, intent
+    anchor_words = {word for anchor in anchors for word in anchor.split()}
+    attribute_terms = [t for t in _content_terms(query) if t not in anchor_words]
+    subject: list[int] = []
+    coverage: dict[int, float] = {}
+    for i, fragment in enumerate(fragments):
+        content_norm = _anchor_norm(fragment.content)
+        if all(_contains_anchor(content_norm, anchor) for anchor in anchors):
+            subject.append(i)
+            coverage[i] = _coverage(attribute_terms, fragment.content) if attribute_terms else 1.0
+    if len(subject) < 2:
+        return fragments, scores, relevances, intent
+    # Attribute match is bucketed: "port" matches both "moved ... to port X"
+    # and "listens on port Y"; exact phrasing must not outrank recency.
+    best = max(coverage.values())
+    band = [i for i in subject if coverage[i] > 0 and coverage[i] >= best * 0.5] or subject
+    newest_first = intent == TemporalIntent.CURRENT
+    # Never compare two clocks: declared event times (e.g. a log's dates) and
+    # storage times can be years apart. Dated records are ordered by their
+    # declared time; undated ones keep relevance order after them. Only when
+    # nothing in the band is dated is storage time a consistent clock.
+    dated = [i for i in band if declared_event_time(fragments[i]) is not None]
+    undated = [i for i in band if declared_event_time(fragments[i]) is None]
+    if dated:
+        dated.sort(key=lambda i: declared_event_time(fragments[i]), reverse=newest_first)
+        band = dated + undated
+    else:
+        band.sort(key=lambda i: event_time(fragments[i]), reverse=newest_first)
+    band_set = set(band)
+    rest = [i for i in range(len(fragments)) if i not in band_set]
+    order = band + rest
+    top = max(scores) if scores else 0.0
+    new_scores = [round(max(0.0, top - 1e-4 * rank), 6) for rank in range(len(band))]
+    floor = new_scores[-1] if new_scores else top
+    for i in rest:
+        floor = min(floor, scores[i])
+        new_scores.append(floor)
+    return ([fragments[i] for i in order], new_scores, [relevances[i] for i in order], intent)
 
 
 def _dedupe_content(candidates: list[VectorSearchResult]) -> list[VectorSearchResult]:
