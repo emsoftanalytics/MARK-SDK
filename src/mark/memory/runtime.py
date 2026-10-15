@@ -42,7 +42,13 @@ class MarkRuntime:
         self.store = store
         self.embedder = embedder
         self.plugins = plugins
-        self.index = index or VectorIndex()
+        # Explicit None check: an empty VectorIndex has len() == 0, so
+        # `index or VectorIndex()` would silently swap in a private index.
+        self.index = index if index is not None else VectorIndex()
+        # Keep the vector index consistent with the store: deleted or
+        # no-longer-retrievable fragments must stop surfacing from search.
+        if hasattr(store, "add_listener"):
+            store.add_listener(self._on_store_event)
         self.executor = ThreadPoolExecutor(max_workers=workers)
         self._llm: LLMProvider | None = llm
         self._enable_activity_log = enable_activity_log
@@ -62,6 +68,11 @@ class MarkRuntime:
         )
         self.middleware = MiddlewareStack(middleware)
         self.middleware.bind(self)
+
+    def _on_store_event(self, event: str, fragment_id: str) -> None:
+        """Store listener: drop deleted/unretrievable fragments from the index."""
+        if event in {"delete", "unretrievable"}:
+            self.index.remove(fragment_id)
 
     @classmethod
     def local(
