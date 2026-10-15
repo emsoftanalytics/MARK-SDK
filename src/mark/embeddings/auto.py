@@ -3,9 +3,10 @@
 ``auto_embedder()`` walks an in-process candidate list and returns the first
 provider that can be built locally:
 
-1. Model2Vec (``potion`` static model) — if ``model2vec`` is importable and the
-   model is already in the Hugging Face cache (or a local directory). Downloads
-   happen only with ``allow_download=True``.
+1. Model2Vec (``potion`` static models) — if ``model2vec`` is importable and
+   the model is already in the Hugging Face cache: ``potion-retrieval-32M`` if
+   cached, else ``potion-base-8M``. Only the latter is ever downloaded, and only
+   with ``allow_download=True``.
 2. FastEmbed (ONNX) — if ``fastembed`` is importable and the model is cached
    (``local_files_only``), or downloads are allowed.
 3. :class:`HashEmbeddingProvider` — the zero-dependency lexical fallback.
@@ -48,6 +49,7 @@ logger = logging.getLogger("mark.embeddings")
 ENV_VAR = "MARK_EMBEDDER"
 API_KEY_ENV_VAR = "MARK_EMBEDDER_API_KEY"
 DEFAULT_MODEL2VEC_MODEL = "minishlab/potion-base-8M"
+RETRIEVAL_MODEL2VEC_MODEL = "minishlab/potion-retrieval-32M"
 DEFAULT_FASTEMBED_MODEL = "BAAI/bge-small-en-v1.5"
 DEFAULT_OLLAMA_MODEL = "nomic-embed-text"
 # Files a Model2Vec repo needs; all must be cached for an offline load.
@@ -121,8 +123,14 @@ def _try_fastembed(model: str, allow_download: bool) -> EmbeddingProvider | None
         return None
     from mark.embeddings.fastembed import FastEmbedProvider
 
-    kwargs: dict[str, object] = {} if allow_download else {"local_files_only": True}
-    provider = FastEmbedProvider(model, **kwargs)
+    if allow_download:
+        provider = FastEmbedProvider(model)
+    else:
+        try:
+            provider = FastEmbedProvider(model, local_files_only=True)
+        except Exception as exc:  # fastembed raises ValueError when the model is not cached
+            logger.info("fastembed installed but %s is not cached (%s); skipping", model, exc)
+            return None
     # Learn the dimension now so the fingerprint is complete before any store
     # compares it (a ``:None`` fingerprint cannot trigger re-embedding).
     provider.embed("dimension probe")
@@ -132,7 +140,11 @@ def _try_fastembed(model: str, allow_download: bool) -> EmbeddingProvider | None
 _LocalBuilder = Callable[[str, bool], "EmbeddingProvider | None"]
 
 # Order is the preference order of ``auto``. Tests patch this list.
+# potion-retrieval-32M (125 MB) scored best among Model2Vec models on the
+# paraphrase set but is used only when already cached; the default download
+# (allow_download=True) is the 30 MB potion-base-8M.
 _LOCAL_CANDIDATES: list[tuple[str, str, _LocalBuilder]] = [
+    ("model2vec", RETRIEVAL_MODEL2VEC_MODEL, lambda model, _download: _try_model2vec(model, False)),
     ("model2vec", DEFAULT_MODEL2VEC_MODEL, _try_model2vec),
     ("fastembed", DEFAULT_FASTEMBED_MODEL, _try_fastembed),
 ]

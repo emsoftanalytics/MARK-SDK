@@ -116,7 +116,7 @@ def test_model2vec_uncached_is_skipped_unless_download_allowed(monkeypatch: pyte
     assert auto_embedder(allow_download=True).fingerprint == f"fake:{auto.DEFAULT_MODEL2VEC_MODEL}:32"
     monkeypatch.setattr(auto, "_cached_model2vec_path", lambda model: "/cache/snap")
     auto_embedder()
-    assert built[-1] == (auto.DEFAULT_MODEL2VEC_MODEL, "/cache/snap")
+    assert built[-1] == (auto.RETRIEVAL_MODEL2VEC_MODEL, "/cache/snap")  # best cached model wins
 
 
 def test_fastembed_offline_load_and_dimension_probe(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -139,6 +139,32 @@ def test_fastembed_offline_load_and_dimension_probe(monkeypatch: pytest.MonkeyPa
     assert kwargs_seen == [{"local_files_only": True}]
     auto_embedder(allow_download=True)
     assert kwargs_seen[-1] == {}
+
+
+def test_cached_retrieval_model_preferred_but_never_downloaded(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Model2VecProvider(_Fake):
+        def __init__(self, model: str, *, local_path: str | None = None) -> None:
+            super().__init__(model)
+
+    monkeypatch.setattr(auto, "_installed", lambda module: module == "model2vec")
+    monkeypatch.setattr("mark.embeddings.model2vec.Model2VecProvider", Model2VecProvider)
+    monkeypatch.setattr(auto, "_cached_model2vec_path", lambda m: "/c" if m == auto.RETRIEVAL_MODEL2VEC_MODEL else None)
+    assert auto_embedder().fingerprint == f"fake:{auto.RETRIEVAL_MODEL2VEC_MODEL}:32"
+    monkeypatch.setattr(auto, "_cached_model2vec_path", lambda m: None)
+    # Download allowed: only the small default model is fetched.
+    assert auto_embedder(allow_download=True).fingerprint == f"fake:{auto.DEFAULT_MODEL2VEC_MODEL}:32"
+
+
+def test_fastembed_not_cached_is_skipped_quietly(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FastEmbedProvider(_Fake):
+        def __init__(self, model: str, **kwargs: object) -> None:
+            raise ValueError("Could not load model from any source.")
+
+    monkeypatch.setattr(auto, "_installed", lambda module: module == "fastembed")
+    monkeypatch.setattr("mark.embeddings.fastembed.FastEmbedProvider", FastEmbedProvider)
+    assert auto._try_fastembed(auto.DEFAULT_FASTEMBED_MODEL, False) is None
+    with pytest.raises(ValueError):
+        auto._try_fastembed(auto.DEFAULT_FASTEMBED_MODEL, True)
 
 
 def test_cached_model2vec_path_accepts_local_directory(tmp_path) -> None:
