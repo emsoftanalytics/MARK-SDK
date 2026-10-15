@@ -145,3 +145,13 @@ def test_encrypted_store_keeps_no_multilingual_index(tmp_path) -> None:
     assert "fragments_fts_ml" not in tables and "fragments_fts" not in tables
     assert store.lexical_search(AGENT, "上海仓库") == []
     store.close()
+
+
+def test_rewriting_content_replaces_the_multilingual_row(store) -> None:
+    db, ids = store
+    fragment = db.get(ids["zh"])
+    db.store(fragment.model_copy(update={"content": "The Shanghai warehouse moved."}))
+    assert _top(db, "上海仓库") is None
+    db.store(fragment.model_copy(update={"content": "北京仓库"}))
+    assert _top(db, "北京") == ids["zh"]
+    assert db._fetchall("SELECT count(*) FROM fragments_fts_ml WHERE fragment_id = ?", (ids["zh"],))[0][0] == 1

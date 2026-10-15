@@ -262,8 +262,7 @@ class SchemaDDL:
             tokenize = 'porter unicode61 remove_diacritics 2'
         )
     """
-    # Multilingual lexical channel (see fts_text): no stemmer; marks and symbols
-    # are token characters (the fallback serves SQLite without "categories").
+    # Multilingual channel (fts_text): no stemmer; marks/symbols are token chars.
     _DDL_FTS_ML = f"""
         CREATE VIRTUAL TABLE IF NOT EXISTS {_FTS_ML_TABLE} USING fts5(
             content, fragment_id UNINDEXED, agent_id UNINDEXED,
@@ -271,11 +270,12 @@ class SchemaDDL:
         )
     """
     _DDL_FTS_ML_FALLBACK = _DDL_FTS_ML.replace(" categories 'L* N* Co M* S*'", "")
-    # Deletes need no plaintext, so a trigger mirrors them.
+    # Deletes and content rewrites need no plaintext: triggers mirror them.
     _DDL_FTS_ML_TRIGGER = f"""
         CREATE TRIGGER IF NOT EXISTS {_FTS_ML_TABLE}_delete AFTER DELETE ON fragments
         BEGIN DELETE FROM {_FTS_ML_TABLE} WHERE rowid = old.rowid; END
     """
+    _DDL_FTS_ML_UPDATE_TRIGGER = _DDL_FTS_ML_TRIGGER.replace("_delete AFTER DELETE ON", "_update AFTER UPDATE OF content ON")
     _INDEXES = [
         "CREATE INDEX IF NOT EXISTS idx_frag_agent   ON fragments(agent_id)",
         "CREATE INDEX IF NOT EXISTS idx_frag_state   ON fragments(state)",

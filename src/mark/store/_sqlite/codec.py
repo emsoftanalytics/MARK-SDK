@@ -69,7 +69,10 @@ def _pack_embedding(embedding: list[float] | None) -> bytes | None:
     """Encode an embedding as float32 little-endian bytes (no numpy needed)."""
     if embedding is None:
         return None
-    packed = array("f", (float(value) for value in embedding))
+    try:
+        packed = array("f", embedding)  # C-level conversion: ~10x faster per vector
+    except TypeError:  # elements array() does not accept directly
+        packed = array("f", (float(value) for value in embedding))
     if sys.byteorder != "little":  # pragma: no cover - big-endian hosts only
         packed.byteswap()
     return packed.tobytes()
