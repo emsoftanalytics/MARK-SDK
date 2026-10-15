@@ -1,65 +1,80 @@
 # MARK Python SDK Agent Guide
 
-This package implements the local-first MARK SDK. When working in this package, treat MARK as the agent cognitive runtime: local memory, context assembly, policies, skills, and agent wrapping.
+This repository is the local-first MARK SDK: agent memory, recall, facts,
+briefings, and the integrations that put them in an agent loop. Read
+[ARCHITECTURE.md](ARCHITECTURE.md) for the module map and data flows, and
+[CONTRIBUTING.md](CONTRIBUTING.md) for the house rules.
 
-## Product Boundary
+## Product boundary
 
-- `mark` is local-first and must work without network, Docker, accounts, or remote APIs.
-- `mark.adapters` owns optional framework glue for LangChain, MCP, and similar integrations.
-- `mark.middlewares.sync.CloudSync` prepares local sync envelopes only; callers
-  must supply any remote client explicitly.
+- `mark` must work without network, Docker, accounts, or remote APIs.
+- `mark.adapters` holds optional glue for LangChain, MCP, and LangGraph. It
+  uses public APIs only.
+- `mark.middlewares.sync.CloudSync` prepares redacted envelopes locally;
+  callers supply any remote client.
+- Hosted features are not part of this package (MARK Cloud — coming soon). Do
+  not describe or implement them here.
 - Do not turn `mark` into a presentation app or product UI.
 
-## Agent Usage Pattern
+## Agent usage pattern
 
-When demonstrating MARK usage, show the same task without MARK and with MARK.
+When MARK is active, treat it as persistent working memory, not an optional
+lookup step:
 
-When MARK is active, treat it as persistent working memory, not an optional lookup step. The intended loop is:
+1. **Recall** before planning: retrieve, or read the injected briefing.
+2. **Ground** memory against current evidence (files, tool output, the user).
+3. **Act** with the remembered context.
+4. **Reflect** on what changed.
+5. **Remember** verified facts, decisions, and procedures for future agents.
+   Record values that change over time as facts (`memory.facts.set`).
 
-- recall from MARK before planning,
-- ground memory against current evidence,
-- act with remembered context,
-- reflect on durable outcomes,
-- remember verified facts, decisions, and procedures for future agents.
+When memory reports a subject as not in memory, say so instead of guessing.
+When a briefing corrects a value, use the current value.
 
-Use MARK to improve:
+When demonstrating MARK, show the same task without MARK and with MARK.
 
-- recall: stored project facts are retrieved,
-- planning: steps are grounded in project context,
-- reasoning: decisions cite known constraints,
-- continuity: durable outcomes are written back.
+## SDK integration modes
 
-## SDK Integration Modes
+| Mode | Entry point | Use when |
+| --- | --- | --- |
+| Direct runtime | `Mark.local()`, `mark.memory`, `mark.runtime.memory(agent_id)`, `mark.wrap_agent(...)` | Application code owns the agent loop. |
+| Briefings | `ContextWatch(memory)`: `observe(...)`, then `briefing().text` before each model call | A plain loop should get memory without issuing searches. |
+| Middleware | `MarkAgentMiddleware` (LangChain, `anticipate=True` by default); `mark.middlewares` for runtime operations | Memory should be injected and recorded automatically. |
+| Tools | `create_mark_tools(...)`: `mark_retrieve`, `mark_write`, `mark_observe` | The model should decide when to read or write memory. |
+| MCP | `create_mark_mcp_server(...)`, same three tools over stdio | External MCP clients need memory. |
+| CLI | `mark ingest`, `store`, `recall`, `recall-many`, `fact set/get/history/retract`, `stats`, `serve` | Scripts, shells, and agents that run commands. |
+| Skill | `src/mark/middlewares/skills/mark-usage/SKILL.md` | An agent loads portable `SKILL.md` instructions. |
 
-Agents should be able to use MARK as:
+`mark.memory`, the LangChain and MCP adapters, and the CLI all default to the
+agent namespace `"__mark__"`, so memory written through one is visible to the
+others. Prefer middleware or briefings for
+automatic context, and the direct runtime when the application controls each
+step.
 
-- direct runtime: `Mark.local()` and `mark.wrap_agent(...)`,
-- tool: callable retrieval/write functions,
-- skill middleware: `src/mark/middlewares/skills/mark-usage/SKILL.md`,
-- MCP: protocol server exposing retrieve/write/list operations,
-- middleware: context retrieval before model/tool execution and memory writeback after accepted outcomes.
+## Development rules
 
-Middleware and direct runtime examples should make MARK feel natural: the agent should receive context before it reasons and save durable outcomes after the task is accepted.
-
-## Development Rules
-
-- Keep local SDK dependencies minimal.
-- Add tests with every behavioral change.
-- Do not require LangChain, MCP, or remote-service packages in the local SDK core.
-- Optional examples may mention LangChain, but local tests must run without provider API keys.
-- Do not store secrets in examples or memory fixtures except fake redaction test values.
-- Package non-Python skill assets explicitly so installed users can load them through `importlib.resources`.
+- Keep core dependencies minimal; use optional extras for anything heavy.
+- Every behaviour change needs a test. Tests run offline.
+- Python files stay at or below 300 lines, with a module docstring.
+- Every module must import on its own (`tests/test_cold_imports.py`).
+- Do not require LangChain, MCP, or remote-service packages in the core.
+- Do not store secrets in examples or fixtures, except fake values used by
+  redaction tests.
+- Ship non-Python skill assets as package data so installed users can load
+  them through `importlib.resources`.
+- Changelog entries describe user-facing features and fixes only, in plain,
+  professional language.
 
 ## Verification
 
-From the package root, run:
+From the repository root:
 
 ```bash
 uv run --extra dev pytest
 uv build
 ```
 
-Before committing, verify the package contains the MARK usage skill:
+Check that the package ships the MARK usage skill:
 
 ```bash
 uv run python -B -c "from importlib.resources import files; print(files('mark.middlewares.skills').joinpath('mark-usage/SKILL.md').read_text().splitlines()[1])"
