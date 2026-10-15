@@ -125,11 +125,23 @@ _LAZY_EXPORTS = {
 }
 
 
+# Subpackages reachable as attributes (``import mark; mark.memory.MarkMemory``),
+# exactly as when they were imported eagerly.
+_SUBPACKAGES = {
+    "adapters", "agent", "cli", "context", "embeddings", "index", "intelligence", "memory",
+    "middlewares", "plasticity", "plugins", "policies", "rl", "runtime", "security", "store", "types",
+}
+
+
 def __getattr__(name: str):
-    if name not in _LAZY_EXPORTS:
-        raise AttributeError(f"module 'mark' has no attribute {name!r}")
     from importlib import import_module
 
+    if name in _SUBPACKAGES:
+        module = import_module(f"mark.{name}")
+        globals()[name] = module
+        return module
+    if name not in _LAZY_EXPORTS:
+        raise AttributeError(f"module 'mark' has no attribute {name!r}")
     module = import_module(_LAZY_EXPORTS[name])
     value = getattr(module, name)
     globals()[name] = value
@@ -255,4 +267,4 @@ __all__ = [
 
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(_LAZY_EXPORTS))
+    return sorted(set(globals()) | set(_LAZY_EXPORTS) | _SUBPACKAGES)

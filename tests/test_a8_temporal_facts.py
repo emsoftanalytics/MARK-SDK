@@ -63,14 +63,19 @@ def test_query_anchors() -> None:
     assert query_anchors("How is authentication implemented?") == []
 
 
-@pytest.mark.parametrize("word,stem", [
-    ("owned", "own"), ("owns", "own"), ("owner", "own"), ("listens", "listen"), ("ports", "port"),
-    ("gates", "gate"), ("boxes", "box"), ("policies", "policy"), ("running", "run"),
-    ("status", "status"), ("analysis", "analysis"), ("class", "class"),
-    ("titan", "titan"), ("titanium", "titanium"),
+@pytest.mark.parametrize("left,right", [
+    ("owned", "owns"), ("owner", "own"), ("listens", "listen"), ("ports", "port"), ("gates", "gate"),
+    ("boxes", "box"), ("policies", "policy"), ("running", "run"), ("database", "databases"),
+    ("filter", "filtered"), ("order", "ordered"), ("register", "registered"), ("rate", "rating"),
+    ("cache", "caching"), ("speed", "speeding"),
 ])
-def test_stemmer(word: str, stem: str) -> None:
-    assert _stem(word) == stem
+def test_stemmer_merges_word_forms(left: str, right: str) -> None:
+    assert _stem(left) == _stem(right)
+
+
+@pytest.mark.parametrize("left,right", [("titan", "titanium"), ("status", "state"), ("class", "clas")])
+def test_stemmer_keeps_distinct_words_apart(left: str, right: str) -> None:
+    assert _stem(left) != _stem(right)
 
 
 # ── temporal ordering ─────────────────────────────────────────────────────────
@@ -110,15 +115,18 @@ def test_dates_inside_text_are_not_event_times(runtime) -> None:
 
 
 def test_two_clocks_are_never_compared(runtime) -> None:
-    """Undated notes (storage time = today) must not outrank dated log records."""
+    """Dated records are ordered by declared time; an undated record leads only
+    when it was stored after every dated record (a live update after a log import)."""
     mem = runtime.memory("t")
-    mem.store_sync("[2026-03-01] OWNERSHIP: mosaic-gate is now owned by Kavya.")
+    mem.store_sync("Note: mosaic-gate owner is Kavya.")  # undated, stored before the log
+    mem.store_sync("[2026-03-01] OWNERSHIP: mosaic-gate is now owned by Elif.")
     mem.store_sync("[2026-03-16] OWNERSHIP: mosaic-gate is now owned by Wanjiru.")
-    mem.store_sync("Summary note: mosaic-gate owner was Kavya at the start.")  # undated, stored last
 
-    result = mem.retrieve_sync("Who currently owns mosaic-gate?")
+    ranked = [f.content for f in mem.retrieve_sync("Who currently owns mosaic-gate?").fragments]
+    assert "Wanjiru" in ranked[0] and "Kavya" in ranked[2]
 
-    assert "Wanjiru" in result.fragments[0].content
+    mem.store_sync("Live update: mosaic-gate owner is now Zoe.")  # undated, stored last
+    assert "Zoe" in mem.retrieve_sync("Who currently owns mosaic-gate?").fragments[0].content
 
 
 def test_occurred_at_is_the_declared_event_time(runtime) -> None:

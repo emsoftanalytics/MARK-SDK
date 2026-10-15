@@ -27,6 +27,8 @@ loaded lazily, and never on the client path when a server answers.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -39,6 +41,7 @@ from typing import Any
 
 DEFAULT_AGENT = "__mark__"
 MAX_REQUEST_BYTES = 8 * 1024 * 1024
+INGEST_CHUNK_BYTES = 2 * 1024 * 1024  # client-side split so requests stay well under the cap
 _LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 
 
@@ -51,6 +54,15 @@ def _db_path(arg: str | None) -> Path:
 
 def _state_path(db: Path) -> Path:
     return db.with_name(db.name + ".server.json")
+
+
+def _lock_path(db: Path) -> Path:
+    return db.with_name(db.name + ".server.lock")
+
+
+def _proof(token: str, nonce: str) -> str:
+    """What a genuine server answers to a nonce: HMAC-SHA256(token, nonce)."""
+    return hmac.new(token.encode(), nonce.encode(), hashlib.sha256).hexdigest()
 
 
 # ── command implementations (run in-process or inside the server) ─────────────
@@ -151,9 +163,12 @@ def serve(db: Path, host: str = "127.0.0.1", port: int = 0, *, stop_event: Any =
     if host not in _LOOPBACK:
         raise SystemExit("mark serve only binds to loopback (127.0.0.1, ::1, localhost)")
     state = _state_path(db)
-    if _live_server(state) is not None:
-        raise SystemExit(f"a MARK server is already running for {db}")
-    engine = _Engine(db)
+    lock = _acquire_lock(db)  # one server per database, or SystemExit
+    try:
+        engine = _Engine(db)
+    except BaseException:
+        _release_lock(lock)
+        raise
     token = secrets.token_urlsafe(32)
 
     class Handler(BaseHTTPRequestHandler):
@@ -170,13 +185,27 @@ def serve(db: Path, host: str = "127.0.0.1", port: int = 0, *, stop_event: Any =
             self.end_headers()
             self.wfile.write(body)
 
+        def do_GET(self) -> None:  # noqa: N802 - http.server API
+            # Identity handshake: prove we hold the token without revealing it.
+            nonce = self.path.partition("nonce=")[2][:128]
+            if not self.path.startswith("/hello") or not nonce:
+                self._reply(404, {"error": "not found"})
+                return
+            self._reply(200, {"proof": _proof(token, nonce)})
+
         def do_POST(self) -> None:  # noqa: N802 - http.server API
-            if not secrets.compare_digest(self.headers.get("Authorization", ""), f"Bearer {token}"):
+            supplied = self.headers.get("Authorization", "").encode("utf-8", "replace")
+            if not hmac.compare_digest(supplied, f"Bearer {token}".encode()):
+                self.close_connection = True
                 self._reply(401, {"error": "unauthorized"})
                 return
-            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                length = -1
             if length <= 0 or length > MAX_REQUEST_BYTES:
-                self._reply(413, {"error": "request too large or empty"})
+                self.close_connection = True  # don't read (or wait for) an oversized body
+                self._reply(413, {"error": f"request body must be 1..{MAX_REQUEST_BYTES} bytes"})
                 return
             try:
                 request = json.loads(self.rfile.read(length))
@@ -184,7 +213,10 @@ def serve(db: Path, host: str = "127.0.0.1", port: int = 0, *, stop_event: Any =
             except Exception as exc:  # report, keep serving
                 self._reply(400, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
 
-    server = ThreadingHTTPServer((host, port), Handler)
+    server_class = ThreadingHTTPServer
+    if ":" in host:  # IPv6 loopback
+        server_class = type("MarkHTTPServerV6", (ThreadingHTTPServer,), {"address_family": socket.AF_INET6})
+    server = server_class((host, port), Handler)
     server.daemon_threads = True
     _write_state(state, {"host": host, "port": server.server_address[1], "token": token, "pid": os.getpid(),
                          "db": str(db)})
@@ -208,10 +240,57 @@ def serve(db: Path, host: str = "127.0.0.1", port: int = 0, *, stop_event: Any =
     finally:
         server.server_close()
         engine.close()
+        # Remove the state file only if it is still ours (never another server's).
         try:
-            state.unlink()
-        except FileNotFoundError:
+            if json.loads(state.read_text()).get("token") == token:
+                state.unlink()
+        except (OSError, ValueError):
             pass
+        _release_lock(lock)
+
+
+def _acquire_lock(db: Path) -> Path:
+    """Create the per-database server lock, clearing it if its owner is gone."""
+    lock = _lock_path(db)
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        try:
+            fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            try:
+                owner = int(lock.read_text().strip() or 0)
+            except (OSError, ValueError):
+                owner = 0
+            if owner and _pid_alive(owner):
+                raise SystemExit(f"a MARK server (pid {owner}) is already running for {db}")
+            lock.unlink(missing_ok=True)  # stale lock from a crashed server
+            continue
+        with os.fdopen(fd, "w") as handle:
+            handle.write(str(os.getpid()))
+        return lock
+    raise SystemExit(f"could not acquire the server lock for {db}")
+
+
+def _release_lock(lock: Path) -> None:
+    try:
+        if lock.read_text().strip() == str(os.getpid()):
+            lock.unlink()
+    except OSError:
+        pass
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid == os.getpid():
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, owned by someone else
+    except (OSError, ValueError):  # platforms without signal-0 probing
+        return True
+    return True
 
 
 def _write_state(path: Path, data: dict[str, Any]) -> None:
@@ -224,19 +303,36 @@ def _write_state(path: Path, data: dict[str, Any]) -> None:
 
 
 def _live_server(state: Path) -> dict[str, Any] | None:
-    """Server details when a server for this database answers; stale files are ignored."""
+    """Server details when a genuine server for this database answers.
+
+    The server must prove it holds the token (HMAC of a fresh nonce) before
+    any request carrying the token is sent, so a stale state file can never
+    leak the token or memory content to another process on the same port.
+    """
     try:
         data = json.loads(state.read_text())
-        with socket.create_connection((data["host"], int(data["port"])), timeout=0.3):
+        nonce = secrets.token_hex(16)
+        url = f"{_base_url(data)}/hello?nonce={nonce}"
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(url, timeout=1.0) as response:
+            proof = json.loads(response.read()).get("proof", "")
+        if hmac.compare_digest(str(proof), _proof(data["token"], nonce)):
             return data
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        pass
+    return None
+
+
+def _base_url(server: dict[str, Any]) -> str:
+    host = server["host"]
+    host = f"[{host}]" if ":" in host else host
+    return f"http://{host}:{int(server['port'])}"
 
 
 def _call_server(server: dict[str, Any], cmd: str, args: dict[str, Any]) -> dict[str, Any]:
     request = urllib.request.Request(
-        f"http://{server['host']}:{server['port']}/",
-        data=json.dumps({"cmd": cmd, "args": args}).encode(),
+        f"{_base_url(server)}/",
+        data=json.dumps({"cmd": cmd, "args": args}, ensure_ascii=False).encode("utf-8"),
         headers={"Authorization": f"Bearer {server['token']}", "Content-Type": "application/json"},
         method="POST",
     )
@@ -255,12 +351,29 @@ def execute(db: Path, cmd: str, args: dict[str, Any], *, use_server: bool = True
     """Run a command via a live server for *db*, else in-process."""
     server = _live_server(_state_path(db)) if use_server else None
     if server is not None:
+        if cmd == "ingest":
+            return _ingest_in_chunks(server, args)
         return _call_server(server, cmd, args)
     engine = _Engine(db)
     try:
         return engine.run(cmd, args)
     finally:
         engine.close()
+
+
+def _ingest_in_chunks(server: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    """Send large ingests as several requests, each well under the size cap."""
+    stored, chunk, size = 0, [], 0
+    for line in args["lines"]:
+        line_size = len(line.encode("utf-8")) + 8
+        if chunk and size + line_size > INGEST_CHUNK_BYTES:
+            stored += _call_server(server, "ingest", {**args, "lines": chunk})["stored"]
+            chunk, size = [], 0
+        chunk.append(line)
+        size += line_size
+    if chunk:
+        stored += _call_server(server, "ingest", {**args, "lines": chunk})["stored"]
+    return {"stored": stored}
 
 
 # ── output ────────────────────────────────────────────────────────────────────
@@ -325,8 +438,14 @@ def _read_queries(source: str) -> list[str]:
     text = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
     stripped = text.strip()
     if stripped.startswith("["):
-        loaded = json.loads(stripped)
-        return [str(item["question"] if isinstance(item, dict) else item) for item in loaded]
+        queries = []
+        for item in json.loads(stripped):
+            if isinstance(item, dict):
+                if "question" not in item:
+                    raise ValueError("each JSON query object needs a 'question' field")
+                item = item["question"]
+            queries.append(str(item))
+        return queries
     return [line.strip() for line in text.splitlines() if line.strip()]
 
 
@@ -338,6 +457,22 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     agent = args.agent
+    try:
+        cmd, payload = _request(args, agent)
+    except (OSError, ValueError) as exc:
+        print(f"mark: {exc}", file=sys.stderr)
+        return 1
+    try:
+        result = execute(db, cmd, payload, use_server=not args.no_server)
+    except (RuntimeError, ValueError, OSError, KeyError, TypeError) as exc:
+        print(f"mark: {exc}", file=sys.stderr)
+        return 1
+    _print_result(args, cmd, result)
+    return 0
+
+
+def _request(args: argparse.Namespace, agent: str) -> tuple[str, dict[str, Any]]:
+    """Translate parsed arguments into an engine command and payload."""
     if args.cmd == "ingest":
         lines = Path(args.file).read_text(encoding="utf-8").splitlines()
         cmd, payload = "ingest", {"agent": agent, "lines": lines, "session": args.session, "tags": args.tags}
@@ -357,13 +492,10 @@ def main(argv: list[str] | None = None) -> int:
             payload["attribute"] = args.attribute
     else:
         cmd, payload = "stats", {"agent": agent}
+    return cmd, payload
 
-    try:
-        result = execute(db, cmd, payload, use_server=not args.no_server)
-    except (RuntimeError, ValueError, OSError) as exc:
-        print(f"mark: {exc}", file=sys.stderr)
-        return 1
 
+def _print_result(args: argparse.Namespace, cmd: str, result: dict[str, Any]) -> None:
     if getattr(args, "json", False):
         print(json.dumps(result, indent=2))
     elif cmd == "recall":
@@ -384,7 +516,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"stored {result['id']}")
     else:
         print(f"{result['memories']} memories, {result['facts']} current facts")
-    return 0
 
 
 if __name__ == "__main__":  # pragma: no cover

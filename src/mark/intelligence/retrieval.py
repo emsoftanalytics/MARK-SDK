@@ -712,22 +712,30 @@ class RetrievalPipeline:
         those are returned; otherwise every attribute of the subject is.
         """
         current = getattr(self._store, "fact_current", None)
-        anchors = query_anchors(query)
-        if current is None or not anchors:
+        if current is None:
             return []
         from mark.memory.facts import _fact
 
+        # Subjects: the query's anchors plus any known fact subject named in
+        # it, so plain single-word subjects ("Alice") are found too.
+        subjects = list(query_anchors(query))
+        subjects_of = getattr(self._store, "fact_subjects", None)
+        if subjects_of is not None:
+            normalised = _anchor_norm(query)
+            for subject in subjects_of(agent_id):
+                if subject not in subjects and _contains_anchor(normalised, _anchor_norm(subject)):
+                    subjects.append(subject)
         terms = set(_content_terms(query))
         found = []
-        for anchor in anchors:
-            rows = current(agent_id, anchor)
-            if not rows:
-                continue
+        for subject in subjects:
+            rows = current(agent_id, subject)
             named = [r for r in rows if set(_content_terms(r["attribute"])) & terms]
             for row in named or rows:
                 if intent == TemporalIntent.ORIGINAL:
+                    # Show where it started and where it is now.
                     history = self._store.fact_history(agent_id, row["subject"], row["attribute"])
-                    row = history[0] if history else row
+                    if history and history[0]["id"] != row["id"]:
+                        found.append(_fact(history[0]))
                 found.append(_fact(row))
         return found
 
@@ -1043,6 +1051,14 @@ _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
 # temporal ordering and must not count as content terms.
 _CURRENT_RE = re.compile(r"\b(now|current(?:ly)?|latest|most recent|today|nowadays|these days|as of (?:now|today))\b", re.I)
 _ORIGINAL_RE = re.compile(r"\b(original(?:ly)?|initial(?:ly)?|first|earliest|at first|before any)\b", re.I)
+# Phrases that contain a temporal word without asking about time:
+# "first name", "first to respond", "max current of the PSU".
+_FALSE_TEMPORAL_RE = re.compile(
+    r"\b(?:first|last)\s+(?:names?|times?|steps?|place|line|page|item|of\s+all|to)\b"
+    r"|\bcurrent\s+(?:draw|rating|limit|density|flow|source|sensor|consumption|of\s+\d)"
+    r"|\bmax(?:imum)?\s+current\b",
+    re.I,
+)
 _TEMPORAL_WORDS = {"now", "current", "currently", "latest", "recent", "today", "nowadays",
                    "original", "originally", "initial", "initially", "first", "earliest"}
 
@@ -1054,7 +1070,16 @@ _NUMBER_WITH_UNIT_RE = re.compile(r"\d+(?:s|st|nd|rd|th|ms|us|ns|k|kb|mb|gb|tb|m
 # Title-case words only ("Mei Lin", "Liam O'Connor"); ALL-CAPS log labels such
 # as "TICKET HAL" are not names.
 _NAME_RE = re.compile(r"\b([A-Z][a-z][\w'’]*(?:\s+[A-Z][a-z'’][\w'’]*)+)\b")
-_QUESTION_WORDS = {"Who", "What", "Which", "When", "Where", "Why", "How", "Is", "Are", "Does", "Do", "Did", "Per"}
+# Leading words of a title-cased run that are not part of a name
+# ("Has Alice Smith moved?", "Tell Me About billing", "The Platform Team").
+_NAME_LEAD_WORDS = {
+    "who", "what", "which", "when", "where", "why", "how", "is", "are", "was", "were", "does", "do",
+    "did", "has", "have", "had", "can", "could", "should", "would", "will", "shall", "may", "might",
+    "must", "tell", "show", "give", "list", "find", "check", "please", "the", "a", "an", "in", "on",
+    "at", "for", "from", "to", "of", "my", "our", "your", "their", "his", "her", "its", "me", "us",
+    "about", "and", "or", "but", "so", "then", "if", "per", "also", "dr", "mr", "mrs", "ms",
+}
+_POSSESSIVE_RE = re.compile(r"(?<=\w)['’]s\b")
 
 # Event time: only a date stamp at the very start of a memory counts
 # ("[2026-03-05] ...", "2026-03-05T10:00Z: ..."). Dates elsewhere in the text
@@ -1070,19 +1095,26 @@ class TemporalIntent(str, Enum):
 
 
 def detect_temporal_intent(query: str) -> TemporalIntent:
-    """CURRENT for "now/current/latest" queries, ORIGINAL for "original/first", else NONE."""
-    if _ORIGINAL_RE.search(query):
-        return TemporalIntent.ORIGINAL
-    if _CURRENT_RE.search(query):
+    """CURRENT for "now/current/latest" queries, ORIGINAL for "original/first", else NONE.
+
+    When a query mentions both ("was the original port changed? what is it
+    now?") the present-tense ask wins: it is what the caller acts on.
+    """
+    cleaned = _FALSE_TEMPORAL_RE.sub(" ", query)
+    if _CURRENT_RE.search(cleaned):
         return TemporalIntent.CURRENT
+    if _ORIGINAL_RE.search(cleaned):
+        return TemporalIntent.ORIGINAL
     return TemporalIntent.NONE
 
 
 def query_anchors(query: str) -> list[str]:
     """Distinctive identifiers and names in a query, normalised to lowercase."""
+    query = _POSSESSIVE_RE.sub("", query)
     anchors: list[str] = []
     for match in _COMPOUND_RE.findall(query):
-        anchors.append(match)
+        if _is_identifier(match):
+            anchors.append(match)
     for match in _DIGIT_TOKEN_RE.findall(query):
         if _NUMBER_WITH_UNIT_RE.fullmatch(match):
             continue  # "502s", "10ms", "3rd", "5k" are quantities, not identifiers
@@ -1090,8 +1122,10 @@ def query_anchors(query: str) -> list[str]:
             anchors.append(match)
     for match in _NAME_RE.findall(query):
         words = match.split()
-        while words and words[0] in _QUESTION_WORDS:
+        while words and words[0].lower().rstrip(".") in _NAME_LEAD_WORDS:
             words = words[1:]
+        while words and words[-1].lower() in _NAME_LEAD_WORDS:
+            words = words[:-1]
         if len(words) >= 2:
             anchors.append(" ".join(words))
     seen: list[str] = []
@@ -1102,9 +1136,17 @@ def query_anchors(query: str) -> list[str]:
     return seen
 
 
+def _is_identifier(compound: str) -> bool:
+    """Keep 'atlas-core', 'HAL-1234', 'eu-west-1'; drop 'and/or', 'e.g', 'i.e'."""
+    if any(ch.isdigit() for ch in compound):
+        return True
+    parts = [p.lower() for p in re.split(r"[-_.:/]+", compound) if p]
+    return all(len(p) >= 2 for p in parts) and any(p not in _STOP_WORDS for p in parts)
+
+
 def _anchor_norm(text: str) -> str:
     """Normalise identifiers so 'Atlas-Core', 'atlas core', 'atlas_core' compare equal."""
-    return " ".join(_TOKEN_RE.findall(text.lower().replace("’", "'")))
+    return " ".join(_TOKEN_RE.findall(text.lower().replace("’", "'").replace("_", " ")))
 
 
 def _contains_anchor(content_norm: str, anchor: str) -> bool:
@@ -1146,23 +1188,35 @@ def _parse_when(text: str) -> datetime | None:
 
 
 def _stem(token: str) -> str:
-    """Tiny suffix stemmer: listens/listened → listen, owns/owned/owner → own,
-    gates → gate, boxes → box, policies → policy, running → run.
+    """Tiny suffix stemmer applied to a fixpoint, then final-e removal.
 
-    Deliberately conservative (no prefix matching): identifiers and names such
-    as "titan" must never match "titanium". Query and content are stemmed the
-    same way, so an occasional over-merge only widens a match.
+    owns/owned/owner → own, filter/filtered → filt, rate/rating → rat,
+    database/databases → databas, boxes → box, policies → policy.
+    Deliberately conservative (no prefix matching): "titan" never matches
+    "titanium". Query and content are stemmed identically, so an occasional
+    over-merge only widens a match.
     """
     if len(token) < 4 or not token.isalpha():
         return token
+    previous = None
+    for _ in range(3):
+        if token == previous:
+            break
+        previous, token = token, _stem_once(token)
+    if len(token) >= 4 and token.endswith("e"):
+        token = token[:-1]
+    return token
+
+
+def _stem_once(token: str) -> str:
+    if len(token) < 4:
+        return token
     if token.endswith(("ies", "ied")) and len(token) > 4:
         return token[:-3] + "y"
-    if token.endswith("es") and token[:-2].endswith(("s", "x", "z", "ch", "sh")):
+    if token.endswith("es") and token[:-2].endswith(("ss", "x", "z", "ch", "sh")):
         return token[:-2]
     if token.endswith("s") and not token.endswith(("ss", "us", "is")):
-        token = token[:-1]
-        if len(token) < 4:
-            return token
+        return token[:-1]
     for suffix in ("ments", "ment", "ing", "ers", "er", "ed"):
         if token.endswith(suffix) and len(token) - len(suffix) >= 3:
             stem = token[: -len(suffix)]
@@ -1202,6 +1256,35 @@ def _relevance(query_terms: list[str], content: str, cosine: float) -> float:
     return max(0.0, min(1.0, max(cosine, _coverage(query_terms, content))))
 
 
+def _order_band(fragments: list[MemoryFragment], band: list[int], *, newest_first: bool) -> list[int]:
+    """Order records about one subject/attribute by when they happened.
+
+    Declared event times (occurred_at / leading date stamps) and storage
+    times are different clocks and are never compared directly. Dated
+    records are ordered by their declared time. An undated record goes
+    first for "current" queries only when it was *stored* after every dated
+    record (a live update after an imported log); otherwise undated records
+    follow the dated ones in relevance order.
+    """
+    dated = [i for i in band if declared_event_time(fragments[i]) is not None]
+    undated = [i for i in band if declared_event_time(fragments[i]) is None]
+    if not dated:
+        return sorted(band, key=lambda i: event_time(fragments[i]), reverse=newest_first)
+    dated.sort(key=lambda i: declared_event_time(fragments[i]), reverse=newest_first)
+    if not newest_first or not undated:
+        return dated + undated
+    last_dated_store = max(_stored_at(fragments[i]) for i in dated)
+    later = sorted((i for i in undated if _stored_at(fragments[i]) > last_dated_store),
+                   key=lambda i: _stored_at(fragments[i]), reverse=True)
+    earlier = [i for i in undated if i not in later]
+    return later + dated + earlier
+
+
+def _stored_at(fragment: MemoryFragment) -> datetime:
+    stamp = fragment.created_at
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+
+
 def temporal_order(
     query: str,
     fragments: list[MemoryFragment],
@@ -1224,36 +1307,37 @@ def temporal_order(
     anchor_words = {word for anchor in anchors for word in anchor.split()}
     attribute_terms = [t for t in _content_terms(query) if t not in anchor_words]
     subject: list[int] = []
-    coverage: dict[int, float] = {}
+    stems: dict[int, set[str]] = {}
     for i, fragment in enumerate(fragments):
         content_norm = _anchor_norm(fragment.content)
         if all(_contains_anchor(content_norm, anchor) for anchor in anchors):
             subject.append(i)
-            coverage[i] = _coverage(attribute_terms, fragment.content) if attribute_terms else 1.0
+            stems[i] = _content_stems(fragment.content)
     if len(subject) < 2:
         return fragments, scores, relevances, intent
-    # Attribute match is bucketed: "port" matches both "moved ... to port X"
-    # and "listens on port Y"; exact phrasing must not outrank recency.
-    best = max(coverage.values())
-    band = [i for i in subject if coverage[i] > 0 and coverage[i] >= best * 0.5] or subject
-    newest_first = intent == TemporalIntent.CURRENT
-    # Never compare two clocks: declared event times (e.g. a log's dates) and
-    # storage times can be years apart. Dated records are ordered by their
-    # declared time; undated ones keep relevance order after them. Only when
-    # nothing in the band is dated is storage time a consistent clock.
-    dated = [i for i in band if declared_event_time(fragments[i]) is not None]
-    undated = [i for i in band if declared_event_time(fragments[i]) is None]
-    if dated:
-        dated.sort(key=lambda i: declared_event_time(fragments[i]), reverse=newest_first)
-        band = dated + undated
+    # The band is the subject's records about the *asked* attribute: those
+    # containing every attribute term that most of the subject's records
+    # share. Incidental words ("listen" in "which port does X listen on")
+    # don't split the band, and a record about another attribute ("deploy
+    # failed") can't join it. No common term → no reordering at all.
+    if attribute_terms:
+        common = [t for t in attribute_terms if sum(t in stems[i] for i in subject) * 2 > len(subject)]
+        if not common:
+            return fragments, scores, relevances, intent
+        band = [i for i in subject if all(t in stems[i] for t in common)]
     else:
-        band.sort(key=lambda i: event_time(fragments[i]), reverse=newest_first)
+        band = list(subject)
+    if len(band) < 2:
+        return fragments, scores, relevances, intent
+    band = _order_band(fragments, band, newest_first=intent == TemporalIntent.CURRENT)
     band_set = set(band)
     rest = [i for i in range(len(fragments)) if i not in band_set]
     order = band + rest
-    top = max(scores) if scores else 0.0
-    new_scores = [round(max(0.0, top - 1e-4 * rank), 6) for rank in range(len(band))]
-    floor = new_scores[-1] if new_scores else top
+    # Scores are permuted, never invented: the band takes its own scores in
+    # descending order, and nothing after it may score higher (monotonic).
+    band_scores = sorted((scores[i] for i in band), reverse=True)
+    new_scores = list(band_scores)
+    floor = band_scores[-1]
     for i in rest:
         floor = min(floor, scores[i])
         new_scores.append(floor)

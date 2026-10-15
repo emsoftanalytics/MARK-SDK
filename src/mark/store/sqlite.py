@@ -667,10 +667,16 @@ class LocalMemoryStore:
         if not tokens:
             return None
         match = '"' + " ".join(token.replace('"', '""') for token in tokens) + '"'
+        # Only retrievable, unexpired memories count: a quarantined injection
+        # attempt or an expired note must not make an unknown subject look known.
+        states = ",".join("?" for _ in _RETRIEVABLE_VALUES)
         try:
             row = self._fetchone(
-                f"SELECT 1 FROM {_FTS_TABLE} WHERE {_FTS_TABLE} MATCH ? AND agent_id = ? LIMIT 1",
-                (match, agent_id),
+                f"SELECT 1 FROM {_FTS_TABLE} JOIN fragments f ON f.id = {_FTS_TABLE}.fragment_id"
+                f" WHERE {_FTS_TABLE} MATCH ? AND {_FTS_TABLE}.agent_id = ?"
+                f" AND f.state IN ({states}){_TTL_LIVE_SQL.replace('created_at', 'f.created_at').replace('ttl_seconds', 'f.ttl_seconds')}"
+                " LIMIT 1",
+                (match, agent_id, *sorted(_RETRIEVABLE_VALUES)),
             )
         except sqlite3.OperationalError:
             logger.debug("FTS phrase query rejected: %r", match, exc_info=True)
@@ -1451,6 +1457,10 @@ class LocalMemoryStore:
 
     def _init_schema(self) -> None:
         with self._writing() as conn:
+            # Take the write lock before reading the schema stamp: two processes
+            # creating the same new database must not both run migrations.
+            if not conn.in_transaction:
+                conn.execute("BEGIN IMMEDIATE")
             for ddl in [self._DDL_SCHEMA_INFO, self._DDL_BLOCKS, self._DDL_FRAGMENTS,
                         self._DDL_DOCUMENTS, self._DDL_NODES, self._DDL_EDGES,
                         self._DDL_SESSION_EVENTS, self._DDL_BLOCK_NODES, self._DDL_BLOCK_LINKS]:
@@ -1462,7 +1472,7 @@ class LocalMemoryStore:
             self._run_migrations(conn, stored)
             if row is None:
                 conn.execute(
-                    "INSERT INTO schema_info VALUES ('schema_version', ?)",
+                    "INSERT OR IGNORE INTO schema_info VALUES ('schema_version', ?)",
                     (str(self.CURRENT_SCHEMA_VERSION),),
                 )
             elif stored < self.CURRENT_SCHEMA_VERSION:
@@ -1783,5 +1793,11 @@ def _optional_str(value: object) -> str | None:
 
 
 def _fact_key(text: str) -> str:
-    """Normalise a fact subject/attribute: 'Atlas-Core' == 'atlas core' == 'atlas_core'."""
-    return " ".join(re.findall(r"\w+", str(text).lower().replace("_", " ")))
+    """Normalise a fact subject/attribute key.
+
+    Case, whitespace, hyphens and underscores are folded ('Atlas-Core' ==
+    'atlas core' == 'atlas_core'); every other symbol is kept, so 'C++',
+    'C#' and 'C' remain distinct subjects.
+    """
+    folded = re.sub(r"[\s_\-]+", " ", str(text).lower().replace("’", "'"))
+    return folded.strip(" \"'()[]{}").rstrip(" .,;:!?")
