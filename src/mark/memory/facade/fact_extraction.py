@@ -35,6 +35,9 @@ _DEFAULT_PATTERNS: Any = None
 class FactExtractionMixin(MemoryCore):
     """Resolve the fact extractor for a write and run it on the stored fragments."""
 
+    #: Facts written inline by the most recent write on this memory object.
+    last_extracted: int = 0
+
     def _fact_service(self, extract_facts: bool | None) -> "FactExtractionService | None":
         """The service to use for one write, or None when extraction is off."""
         if extract_facts is False:
@@ -50,15 +53,21 @@ class FactExtractionMixin(MemoryCore):
         # Inline extractor: no worker thread is started, so this is cheap.
         return FactExtractionService(self._store, _DEFAULT_PATTERNS, start_worker=False)
 
-    def _extract_stored(self, fragment_ids: list[str], extract_facts: bool | None) -> None:
-        """Extract facts from just-written fragments (by id, as stored); never raises."""
-        if not fragment_ids:
-            return
-        try:
-            service = self._fact_service(extract_facts)
-            if service is None:
-                return
-            stored = self._store.get_many(fragment_ids)
-            service.submit(self.agent_id, [stored.get(fid) for fid in fragment_ids])
-        except Exception:  # noqa: BLE001 - extraction must never fail a write
-            logger.warning("fact extraction after write failed", exc_info=True)
+    def _extract_stored(self, fragment_ids: list[str], extract_facts: bool | None) -> int:
+        """Extract facts from just-written fragments (by id, as stored); never raises.
+
+        Returns how many facts were written inline (0 when extraction is off
+        or queued for the background worker) and keeps it on
+        ``last_extracted`` so callers that only get ids back can report it.
+        """
+        count = 0
+        if fragment_ids:
+            try:
+                service = self._fact_service(extract_facts)
+                if service is not None:
+                    stored = self._store.get_many(fragment_ids)
+                    count = service.submit(self.agent_id, [stored.get(fid) for fid in fragment_ids])
+            except Exception:  # noqa: BLE001 - extraction must never fail a write
+                logger.warning("fact extraction after write failed", exc_info=True)
+        self.last_extracted = count
+        return count
