@@ -94,7 +94,8 @@ def _ingest_in_chunks(server: dict[str, Any], args: dict[str, Any]) -> dict[str,
         # Counts add up; other fields (e.g. current "facts") come from the last chunk.
         nonlocal result
         part = _call_server(server, "ingest", {**args, "lines": chunk})
-        result = {**part, "stored": result["stored"] + part["stored"]}
+        result = {**part, "stored": result["stored"] + part["stored"],
+                  **({"extracted": result.get("extracted", 0) + part["extracted"]} if "extracted" in part else {})}
 
     for line in args["lines"]:
         line_size = len(line.encode("utf-8")) + 8  # + JSON quoting/separator slack
