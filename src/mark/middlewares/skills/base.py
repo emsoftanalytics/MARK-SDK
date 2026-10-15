@@ -18,230 +18,29 @@
 #
 # Built-in Apache-2.0 skills: EchoSkill, MarkMemorySkill, WebSearchSkill
 # MARK Core skills (MSAL): AdvancedWebSearchSkill, ConsolidationSkill
-"""Skill contracts: manifests, results, base classes, and the registry."""
+"""Skill registry, plus re-exports of the skill contracts.
+
+:class:`SkillRegistry` owns registration, entry-point discovery, SKILL.md
+directory loading (which never shadows protected skills) and permission-gated
+dispatch. The contracts live in :mod:`.contracts` and :mod:`.markdown_skill`;
+they are re-exported here because this module is their historical import path.
+"""
 from __future__ import annotations
 
-import asyncio
-import concurrent.futures
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from pathlib import Path
 import logging
-from typing import Any, Dict, List, Optional, Set, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
+
+from mark.middlewares.skills.contracts import (
+    Skill,
+    SkillContext,
+    SkillInput,
+    SkillManifest,
+    SkillResult,
+)
+from mark.middlewares.skills.markdown_skill import MarkdownSkill, _parse_frontmatter
 
 logger = logging.getLogger(__name__)
-
-# Legacy type aliases kept for backward compat
-SkillInput   = Dict[str, Any]
-SkillContext = Dict[str, Any]
-
-
-# ── Frontmatter parser ────────────────────────────────────────────────────────
-
-def _parse_frontmatter(text: str) -> Tuple[Dict[str, Any], str]:
-    if not text.startswith("---"):
-        return {}, text
-    end = text.find("\n---", 3)
-    if end == -1:
-        return {}, text
-    front = text[3:end].strip()
-    body  = text[end + 4:].strip()
-    try:
-        import yaml  # type: ignore[import]
-        meta = yaml.safe_load(front) or {}
-    except Exception:
-        meta: Dict[str, Any] = {}
-        for line in front.splitlines():
-            if ":" in line:
-                k, _, v = line.partition(":")
-                k = k.strip(); v = v.strip().strip("'\"")
-                if v.startswith("[") and v.endswith("]"):
-                    meta[k] = [i.strip().strip("'\"") for i in v[1:-1].split(",") if i.strip()]
-                elif v.lower() in ("true", "false"):
-                    meta[k] = v.lower() == "true"
-                else:
-                    meta[k] = v
-    return meta, body
-
-
-# ── SkillManifest ──────────────────────────────────────────────────────────────
-
-@dataclass
-class SkillManifest:
-    """Metadata descriptor for a skill — equivalent to SKILL.md frontmatter."""
-    name:         str
-    description:  str
-    version:      str       = "0.1.0"
-    author:       str       = ""
-    permissions:  List[str] = field(default_factory=list)
-    tags:         List[str] = field(default_factory=list)
-    install_hint: str       = ""
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Serialize to a plain dictionary."""
-        return {
-            "name":         self.name,
-            "description":  self.description,
-            "version":      self.version,
-            "author":       self.author,
-            "permissions":  self.permissions,
-            "tags":         self.tags,
-            "install_hint": self.install_hint,
-        }
-
-
-# ── SkillResult ────────────────────────────────────────────────────────────────
-
-@dataclass
-class SkillResult:
-    """
-    Structured output from a skill execution.
-
-    content      : primary text result
-    attributions : source citations — REQUIRED for any web/external content
-    fragments    : pre-built MemoryFragments ready to store (with attribution)
-    metadata     : skill-specific extra data (query, latency, result_count, etc.)
-    success      : False if the skill failed gracefully
-    error        : error message when success=False
-    """
-    content:      str
-    attributions: List[Any]      = field(default_factory=list)
-    fragments:    List[Any]      = field(default_factory=list)
-    metadata:     Dict[str, Any] = field(default_factory=dict)
-    success:      bool           = True
-    error:        Optional[str]  = None
-
-    def has_attribution(self) -> bool:
-        """Return True when source attribution is present."""
-        return len(self.attributions) > 0
-
-    def as_context(self) -> str:
-        """Format for injection into an LLM prompt, with citations."""
-        lines = [f"<skill_result>\n{self.content}"]
-        if self.attributions:
-            lines.append("\nSources:")
-            for attr in self.attributions:
-                cite = attr.cite() if hasattr(attr, "cite") else str(attr)
-                lines.append(f"  - {cite}")
-        lines.append("</skill_result>")
-        return "\n".join(lines)
-
-
-# ── Skill ABC ──────────────────────────────────────────────────────────────────
-
-class Skill(ABC):
-    """
-    Abstract base class for all MARK skills.
-
-    Built-in Apache-2.0 skills:
-        EchoSkill         — smoke test / passthrough
-        MarkMemorySkill   — read/write local memory blocks
-        WebSearchSkill    — DuckDuckGo + Wikipedia + basic fetch
-
-    MARK Core skills (MSAL):
-        AdvancedWebSearchSkill  — LLM-guided browser lookup + credibility scoring
-        ConsolidationSkill      — LLM-backed memory consolidation
-
-    Third-party skills:
-        pip install mark-skill-<name>  →  registry.discover()
-    """
-
-    name:        str      = "skill"
-    description: str      = ""
-    permissions: Set[str] = set()
-
-    @abstractmethod
-    async def run(self, input: SkillInput, context: SkillContext) -> SkillResult:
-        """Execute the skill with the given input and context."""
-        ...
-
-    def run_sync(self, input: SkillInput, context: SkillContext) -> SkillResult:
-        """Synchronous wrapper — safe to call whether or not an event loop is running.
-
-        The running-loop check happens *before* the skill runs, so a
-        RuntimeError raised by the skill itself propagates unchanged instead
-        of being mistaken for "no running loop" and re-executed.
-        """
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(self.run(input, context))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, self.run(input, context)).result()
-
-    @classmethod
-    def manifest(cls) -> SkillManifest:
-        """Return this skill's manifest."""
-        return SkillManifest(
-            name        = cls.name if isinstance(cls.name, str) else "skill",
-            description = cls.description if isinstance(cls.description, str) else "",
-            permissions = list(cls.permissions) if isinstance(cls.permissions, set) else [],
-        )
-
-
-# ── MarkdownSkill ─────────────────────────────────────────────────────────────
-
-class MarkdownSkill(Skill):
-    """
-    A skill loaded from a SKILL.md file — compatible with local agent skills
-    directory structure. Returns the Markdown instructions as content.
-    """
-
-    def __init__(self, manifest: SkillManifest, instructions: str,
-                 source_path: Optional[Path] = None) -> None:
-        self.name        = manifest.name
-        self.description = manifest.description
-        self.permissions = set(manifest.permissions)
-        self._manifest_data = manifest
-        self._instructions  = instructions
-        self._source_path   = source_path
-
-    @classmethod
-    def from_file(cls, path: Path) -> "MarkdownSkill":
-        """Load a skill from a Python file."""
-        text = path.read_text(encoding="utf-8")
-        meta, body = _parse_frontmatter(text)
-        name = meta.get("name") or path.parent.name
-        manifest = SkillManifest(
-            name         = name,
-            description  = str(meta.get("description", "")),
-            version      = str(meta.get("version", "0.1.0")),
-            author       = str(meta.get("author", "")),
-            permissions  = list(meta.get("permissions") or []),
-            tags         = list(meta.get("tags") or []),
-            install_hint = str(meta.get("install_hint", "")),
-        )
-        return cls(manifest=manifest, instructions=body, source_path=path)
-
-    @classmethod
-    def from_text(cls, name: str, text: str) -> "MarkdownSkill":
-        """Build a skill from raw SKILL.md text (e.g. a packaged skill)."""
-        meta, body = _parse_frontmatter(text)
-        manifest = SkillManifest(
-            name         = str(meta.get("name") or name),
-            description  = str(meta.get("description", "")),
-            version      = str(meta.get("version", "0.1.0")),
-            author       = str(meta.get("author", "")),
-            permissions  = list(meta.get("permissions") or []),
-            tags         = list(meta.get("tags") or []),
-            install_hint = str(meta.get("install_hint", "")),
-        )
-        return cls(manifest=manifest, instructions=body)
-
-    async def run(self, input: SkillInput, context: SkillContext) -> SkillResult:
-        """Execute the skill with the given input and context."""
-        rendered = self._instructions
-        for k, v in input.items():
-            rendered = rendered.replace(f"{{{{{k}}}}}", str(v))
-        return SkillResult(
-            content  = rendered,
-            metadata = {"skill_type": "markdown", "skill_name": self.name,
-                        "source_path": str(self._source_path) if self._source_path else ""},
-        )
-
-    def manifest(self) -> SkillManifest:  # type: ignore[override]
-        """Return this skill's manifest."""
-        return self._manifest_data
 
 
 # ── SkillRegistry ──────────────────────────────────────────────────────────────

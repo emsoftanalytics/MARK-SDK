@@ -1,0 +1,238 @@
+"""Model/tool call wrappers mixin for :class:`MarkAgentMiddleware`.
+
+``(a)wrap_model_call`` is a pure transform: it appends the packaged
+middleware skill (once) and the ``[MARK project memory]`` block to the system
+message, with no backend I/O. ``(a)wrap_tool_call`` passes tool results
+through unchanged and queues (or, opt-in, immediately writes) an observation.
+Both release the run's state when the wrapped call raises.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Callable
+
+from mark.adapters.langchain._middleware_support import (
+    _run_sync,
+    _SystemMessage,
+    content_text,
+)
+
+
+class _CallWrappersMixin:
+    """System-message injection and tool-result observation."""
+
+    def _system_text(self, system_message: Any) -> str:
+        if system_message is None:
+            return ""
+        content = getattr(system_message, "content", "")
+        if isinstance(content, str):
+            return content
+        blocks = getattr(system_message, "content_blocks", None)
+        if blocks is None:
+            blocks = content if isinstance(content, list) else []
+        return content_text(list(blocks or []))
+
+    def _score_skill(self, system_text: str) -> dict[str, Any]:
+        lowered = system_text.lower()
+        checks = {
+            "frontmatter": "---" in system_text and "name:" in lowered and "description:" in lowered,
+            "mark_named": "mark" in lowered and "middleware" in lowered,
+            "recall": "recall" in lowered or "retrieve" in lowered,
+            "ground": "ground" in lowered or "current evidence" in lowered,
+            "act": "act" in lowered or "use live" in lowered,
+            "remember": "remember" in lowered or "observe" in lowered,
+            "safety": "do not store secrets" in lowered or "no secrets" in lowered,
+        }
+        score = round(sum(checks.values()) / len(checks), 2)
+        return {"present": checks["mark_named"], "score": score, "checks": checks}
+
+    # ── (a)wrap_model_call: inject MARK context into system message ───────
+
+    def _memory_block(self, context: str) -> str:
+        return (
+            "[MARK project memory]\n"
+            "Use this as durable project memory. Prefer live tool results for "
+            "current-session file contents.\n"
+            f"{context}\n"
+            "[/MARK project memory]"
+        )
+
+    def _context_for_request(self, request: Any) -> str:
+        state = getattr(request, "state", None) or {}
+        if isinstance(state, dict):
+            if "mark_context" in state:
+                return state.get("mark_context") or ""
+        elif hasattr(state, "mark_context"):
+            return getattr(state, "mark_context") or ""
+        # Fallback for requests built outside the agent graph: the run's
+        # latest context, or the run's cached recall for the human query.
+        with self._runs_lock:
+            run = self._runs.get(self._run_id(state))
+        if run is None:
+            return ""
+        if run.last_context:
+            return run.last_context
+        query = self._get_human_query_from_messages(getattr(request, "messages", []))
+        return run.recall_cache.get(query, "")
+
+    def _prepare_model_request(self, request: Any) -> Any:
+        """Pure transform shared by ``wrap_model_call`` and ``awrap_model_call``.
+
+        Returns *request* overridden with MARK's system-message additions, or
+        the original request when there is nothing to add (or on any error).
+        """
+        try:
+            context = self._context_for_request(request)
+            system_message = getattr(request, "system_message", None)
+            system_text = self._system_text(system_message)
+            additions: list[dict[str, str]] = []
+
+            # Auto-inject the packaged middleware skill once, so agents know how
+            # to treat MARK-injected memory without manual prompt wiring.
+            skill_block = self._packaged_skill() if self._include_skill else ""
+            if skill_block and "mark-memory-middleware" not in system_text:
+                additions.append({"type": "text", "text": skill_block})
+
+            if context:
+                skill_hash = self._hash(system_text)
+                if skill_hash != self._last_skill_hash:
+                    skill = self._score_skill(system_text + skill_block)
+                    self._record("skill", skill_hash=skill_hash, **skill)
+                    self._last_skill_hash = skill_hash
+                context = self._truncate_context(context)
+                context_hash = self._hash(context)
+                block = self._memory_block(context)
+                # Inject on every model request; skip only if this exact block
+                # is already part of the system prompt.
+                if block in system_text:
+                    self._record("inject_skip", chars=len(context), context_hash=context_hash)
+                else:
+                    self._record("inject", chars=len(context), context_hash=context_hash)
+                    additions.append({"type": "text", "text": block})
+
+            if not additions:
+                return request
+            new_content = self._system_content_blocks(system_message) + additions
+            return request.override(system_message=_SystemMessage(content=new_content))
+        except Exception as exc:
+            self._hook_failed("wrap_model_call", exc)
+            return request
+
+    def wrap_model_call(
+        self,
+        request: Any,
+        handler: Callable[[Any], Any],
+    ) -> Any:
+        """Sync: inject MARK context into the system message, then call the model.
+
+        Appends a ``[MARK project memory]`` block to ``request.system_message``
+        via ``request.override()``.  Pure read + transform — no backend calls.
+        """
+        prepared = self._prepare_model_request(request)
+        try:
+            return handler(prepared)
+        except BaseException as exc:
+            self._on_run_error(getattr(request, "state", None), exc)
+            raise
+
+    async def awrap_model_call(
+        self,
+        request: Any,
+        handler: Callable[[Any], Any],
+    ) -> Any:
+        """Async: inject MARK context into the system message, then call the model."""
+        prepared = self._prepare_model_request(request)
+        try:
+            return await handler(prepared)
+        except BaseException as exc:
+            self._on_run_error(getattr(request, "state", None), exc)
+            raise
+
+    def _system_content_blocks(self, system_message: Any) -> list[dict[str, Any]]:
+        """Return LangChain-compatible system content blocks.
+
+        LangChain model requests may carry no system message, a string content
+        system message, or an already-blocked message.  `wrap_model_call` should
+        be a pure transform and must not assume a specific provider shape.
+        """
+        if system_message is None:
+            return []
+        blocks = getattr(system_message, "content_blocks", None)
+        if blocks is not None:
+            return list(blocks)
+        content = getattr(system_message, "content", "")
+        if isinstance(content, list):
+            return list(content)
+        if content:
+            return [{"type": "text", "text": str(content)}]
+        return []
+
+    def _packaged_skill(self) -> str:
+        """Lazy-load the packaged mark-memory-middleware skill text."""
+        if self._skill_text is None:
+            try:
+                from mark.middlewares.skills import load_skill_text
+                self._skill_text = load_skill_text("mark-memory-middleware")
+            except Exception:
+                self._skill_text = ""
+        return self._skill_text
+
+    # ── (a)wrap_tool_call: absorb tool results into MARK ──────────────────
+
+    def _observe_tool_result(self, request: Any, result: Any) -> Any:
+        """Queue (or schedule) observation of a tool result.
+
+        Returns a coroutine for immediate observation, else ``None``.
+        """
+        if not (self._write_outcomes and self._observe_tool_results):
+            return None
+        tool_call = getattr(request, "tool_call", None) or {}
+        tool_name = str(tool_call.get("name", "unknown_tool"))
+        lowered = tool_name.lower()
+        content = content_text(getattr(result, "content", "") or "")[:900]
+        if not content or len(content) < 20:
+            return None
+        observation = f"Tool [{tool_name}] returned: {content}"
+        run = self._run(getattr(request, "state", None))
+        if self._immediate_tool_observe and not any(
+            skip in lowered for skip in ("write", "delete", "remove")
+        ):
+            self._record("observe_immediate", tool=tool_name, chars=len(content))
+            return self._backend_call("observe", observation, agent_id=self._agent_id)
+        self._queue_observation(run, observation)
+        return None
+
+    def wrap_tool_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
+        """Sync: execute the tool and queue its result for run-end archival."""
+        try:
+            result = handler(request)
+        except BaseException as exc:
+            self._on_run_error(getattr(request, "state", None), exc)
+            raise
+        try:
+            pending = self._observe_tool_result(request, result)
+            if pending is not None:
+                _run_sync(pending)
+        except Exception as exc:
+            self._hook_failed("wrap_tool_call", exc)
+        return result
+
+    async def awrap_tool_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
+        """Async: execute the tool and archive its result into MARK.
+
+        The result is returned unchanged — MARK is completely transparent.
+        With ``immediate_tool_observe=True`` the observation runs as a tracked
+        background task; otherwise it is queued until the run ends.
+        """
+        try:
+            result = await handler(request)
+        except BaseException as exc:
+            self._on_run_error(getattr(request, "state", None), exc)
+            raise
+        try:
+            pending = self._observe_tool_result(request, result)
+            if pending is not None:
+                await self._spawn(self._run(getattr(request, "state", None)), pending)
+        except Exception as exc:
+            self._hook_failed("wrap_tool_call", exc)
+        return result
