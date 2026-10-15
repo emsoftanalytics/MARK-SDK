@@ -53,10 +53,14 @@ class _Engine:
         return self.runtime.memory(agent)
 
     def cmd_ingest(self, agent: str, lines: list[str], session: str | None = None,
-                   tags: list[str] | None = None) -> dict[str, Any]:
+                   tags: list[str] | None = None, extract_facts: bool = False) -> dict[str, Any]:
         texts = [line.strip() for line in lines if line.strip()]
-        ids = self._memory(agent).store_many_sync(texts, session_id=session, tags=tags or None)
-        return {"stored": len(ids)}
+        # extract_facts=True: built-in pattern packs, each line's "[YYYY-MM-DD]" stamp as valid_from.
+        ids = self._memory(agent).store_many_sync(texts, session_id=session, tags=tags or None,
+                                                  extract_facts=True if extract_facts else None)
+        if not extract_facts:
+            return {"stored": len(ids)}
+        return {"stored": len(ids), "facts": len(self.runtime.store.fact_current(agent))}
 
     def cmd_store(self, agent: str, text: str, session: str | None = None,
                   occurred_at: str | None = None, importance: float = 0.8) -> dict[str, Any]:

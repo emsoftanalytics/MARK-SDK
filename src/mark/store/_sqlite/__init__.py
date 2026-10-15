@@ -12,6 +12,7 @@ The store is one class composed from focused mixins, one per concern:
 - ``blocks``     — memory blocks, block membership and block links
 - ``graph``      — documents, nodes and edges
 - ``facts``      — bi-temporal (subject, attribute) -> value facts
+- ``fact_jobs``  — durable fact-extraction queue and extraction ledger
 - ``events``     — session event log
 - ``rows``       — decoding SQLite rows into domain models
 

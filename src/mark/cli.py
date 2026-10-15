@@ -3,6 +3,7 @@
     mark [--db PATH] [--agent ID] <command> ...
 
     ingest FILE [--session S] [--tag T ...]      store each non-empty line as a memory
+           [--extract-facts]                     ... and extract facts from each line
     store TEXT [--session S] [--occurred-at T]   store one memory
     recall QUERY [-k N] [--chronological] [--json]
                                                  hybrid recall (facts first, then memories)
@@ -95,6 +96,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("file")
     p.add_argument("--session")
     p.add_argument("--tag", action="append", dest="tags")
+    p.add_argument("--extract-facts", action="store_true",
+                   help="record facts stated in the lines (built-in patterns; dated by '[YYYY-MM-DD]' stamps)")
     p = sub.add_parser("store", help="store one memory")
     p.add_argument("text")
     p.add_argument("--session")
@@ -184,7 +187,8 @@ def _request(args: argparse.Namespace, agent: str) -> tuple[str, dict[str, Any]]
     """Translate parsed arguments into an engine command and payload."""
     if args.cmd == "ingest":
         lines = Path(args.file).read_text(encoding="utf-8").splitlines()
-        cmd, payload = "ingest", {"agent": agent, "lines": lines, "session": args.session, "tags": args.tags}
+        cmd, payload = "ingest", {"agent": agent, "lines": lines, "session": args.session, "tags": args.tags,
+                                  "extract_facts": args.extract_facts}
     elif args.cmd == "store":
         cmd, payload = "store", {"agent": agent, "text": args.text, "session": args.session,
                                  "occurred_at": args.occurred_at}
@@ -234,7 +238,8 @@ def _print_result(args: argparse.Namespace, cmd: str, result: dict[str, Any]) ->
         if not facts:
             print("(no facts)")
     elif cmd == "ingest":
-        print(f"stored {result['stored']} memories")
+        facts = f", {result['facts']} current facts" if "facts" in result else ""
+        print(f"stored {result['stored']} memories{facts}")
     elif cmd == "store":
         print(f"stored {result['id']}")
     else:

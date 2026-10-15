@@ -7,6 +7,7 @@ Each module owns one responsibility of the per-agent memory facade:
 * ``core``        shared attribute contract every mixin relies on
 * ``write_guard`` fragment construction, consolidation gate, quarantine
 * ``write``       store / store_sync / store_many_sync (middleware-routed)
+* ``fact_extraction`` automatic fact extraction after writes
 * ``retrieve``    retrieve / retrieve_sync / retrieve_many_sync, escalation
 * ``timeline``    whole-history subject timelines (no top-k cap)
 * ``healing``     explicit gap healing through a web lookup skill

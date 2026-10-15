@@ -15,6 +15,7 @@ import functools
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from mark.memory.facade.fact_extraction import FactExtractionMixin
 from mark.memory.facade.write_guard import GuardMixin, _with_occurred_at
 from mark.types import MemoryFragment, MemoryScope, MemoryState
 
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
     from mark.memory.facts import FactsView
 
 
-class WriteMixin(GuardMixin):
+class WriteMixin(FactExtractionMixin, GuardMixin):
     """Persisting new memories, singly or in batches."""
 
     async def store(
@@ -38,6 +39,7 @@ class WriteMixin(GuardMixin):
         session_id: str | None = None,
         ttl_seconds: int | None = None,
         metadata: dict[str, Any] | None = None,
+        extract_facts: bool | None = None,
     ) -> str:
         """Persist the given value.
 
@@ -60,6 +62,7 @@ class WriteMixin(GuardMixin):
                 session_id=session_id,
                 ttl_seconds=ttl_seconds,
                 metadata=metadata,
+                extract_facts=extract_facts,
             ),
         )
 
@@ -77,13 +80,42 @@ class WriteMixin(GuardMixin):
         ttl_seconds: int | None = None,
         metadata: dict[str, Any] | None = None,
         occurred_at: "datetime | str | None" = None,
+        extract_facts: bool | None = None,
     ) -> str:
         """Synchronous variant of store().
 
-        occurred_at  when the remembered event happened (datetime or ISO
-                     string); stored as ``metadata["occurred_at"]`` and used by
-                     temporal ("current"/"original") retrieval ordering.
+        occurred_at    when the remembered event happened (datetime or ISO
+                       string); stored as ``metadata["occurred_at"]`` and used by
+                       temporal ("current"/"original") retrieval ordering.
+        extract_facts  None: use the runtime's fact extractor (if configured);
+                       True: extract (built-in patterns when none configured);
+                       False: don't. Runs on the memory as stored and never
+                       makes the write fail (see facade.fact_extraction).
         """
+        fragment_id = self._store_sync_routed(
+            content, importance=importance, scope=scope, tags=tags, source=source, state=state,
+            confidence=confidence, session_id=session_id, ttl_seconds=ttl_seconds,
+            metadata=metadata, occurred_at=occurred_at,
+        )
+        self._extract_stored([fragment_id], extract_facts)
+        return fragment_id
+
+    def _store_sync_routed(
+        self,
+        content: str,
+        *,
+        importance: float,
+        scope: MemoryScope,
+        tags: list[str] | None,
+        source: str | None,
+        state: MemoryState,
+        confidence: float,
+        session_id: str | None,
+        ttl_seconds: int | None,
+        metadata: dict[str, Any] | None,
+        occurred_at: "datetime | str | None",
+    ) -> str:
+        """store_sync without fact extraction: middleware routing, then the guarded write."""
         # Normalise before middleware sees the payload, so middleware works
         # on the same metadata that ends up persisted.
         metadata = _with_occurred_at(metadata, occurred_at)
@@ -124,7 +156,7 @@ class WriteMixin(GuardMixin):
         """Bi-temporal facts for this agent: current values with full history."""
         from mark.memory.facts import FactsView
 
-        return FactsView(self._store, self.agent_id)
+        return FactsView(self._store, self.agent_id, extraction=self._fact_service(None))
 
     def store_many_sync(
         self,
@@ -140,6 +172,7 @@ class WriteMixin(GuardMixin):
         ttl_seconds: int | None = None,
         metadata: dict[str, Any] | None = None,
         occurred_at: "list[datetime | str | None] | None" = None,
+        extract_facts: bool | None = None,
     ) -> list[str]:
         """Store many memories; returns their ids in input order.
 
@@ -147,6 +180,7 @@ class WriteMixin(GuardMixin):
         rows are written in one transaction. With middleware, every item goes
         through the full middleware path (governance, redaction, ...) exactly
         like store_sync, because batching must never skip those checks.
+        ``extract_facts`` works as in store_sync, once for the whole batch.
         """
         if occurred_at is not None and len(occurred_at) != len(contents):
             raise ValueError("occurred_at must have one entry per content item")
@@ -158,10 +192,12 @@ class WriteMixin(GuardMixin):
         # Fallback: any registered middleware disables the batch fast path
         # (checked on the stack contents, not on whether a runtime is bound).
         if self._middleware is not None and self._middleware.list():
-            return [
-                self.store_sync(content, metadata=metadata, occurred_at=at, **options)
+            ids = [
+                self.store_sync(content, metadata=metadata, occurred_at=at, extract_facts=False, **options)
                 for content, at in zip(contents, when)
             ]
+            self._extract_stored(ids, extract_facts)
+            return ids
         accepted: list[MemoryFragment] = []
         rejected: list[MemoryFragment] = []
         order: list[MemoryFragment] = []
@@ -179,7 +215,9 @@ class WriteMixin(GuardMixin):
             ]
         if accepted:
             self._pipeline.index_fragments(accepted)
-        return [fragment.id for fragment in order]
+        ids = [fragment.id for fragment in order]
+        self._extract_stored(ids, extract_facts)
+        return ids
 
     def _store_sync_impl(
         self,

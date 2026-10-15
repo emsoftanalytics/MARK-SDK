@@ -108,6 +108,7 @@ class Mark(MarkConfigureMixin):
         enable_activity_log: bool = False,
         retrieval_top_k: int = 20,
         middleware:      list["MarkMiddleware"] | None = None,
+        fact_extractor:  object | None = None,
     ) -> "Mark":
         """
         Create a local Mark instance backed by SQLite.
@@ -130,6 +131,9 @@ class Mark(MarkConfigureMixin):
                              compressor is configured (default 20).  Without a
                              compressor the built-in policy's top_k is used
                              (fast=5, balanced=10, deep=15).
+            fact_extractor:  Extract facts from every write: None (off, default),
+                             "patterns" (built-in rule packs, inline) or any
+                             FactExtractor (e.g. LLMFactExtractor, queued).
 
         The .mark/ directory is created under project_path if it does not
         exist. SQLite database is at .mark/memory.db.
@@ -153,6 +157,7 @@ class Mark(MarkConfigureMixin):
             enable_activity_log  = enable_activity_log,
             retrieval_top_k      = retrieval_top_k,
             middleware           = middleware,
+            fact_extractor       = fact_extractor,
         )
 
         # One-time migration: if a legacy memory.json exists, import it into SQLite

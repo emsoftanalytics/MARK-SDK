@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 """The `mark` CLI: in-process round trips, recall_many input formats, server
-lifecycle/auth/stale state, loopback-only serving, and lightweight imports.
+lifecycle/auth/stale state, loopback-only serving, lightweight imports, and
+ingest --extract-facts.
 """
 from __future__ import annotations
 
@@ -134,3 +135,35 @@ def test_fact_retract_command(tmp_path: Path, capsys) -> None:
     _run(capsys, "--db", db, "--no-server", "fact", "set", "test_x", "foo", "bar")
     assert "retracted 1 fact(s)" in _run(capsys, "--db", db, "--no-server", "fact", "retract", "test_x")
     assert "(no facts)" in _run(capsys, "--db", db, "--no-server", "fact", "get", "test_x")
+
+
+def test_ingest_extract_facts_in_process_and_served(tmp_path: Path, capsys, monkeypatch) -> None:
+    db = str(tmp_path / "f.db")
+    log = tmp_path / "ops.log"
+    log.write_text("[2026-03-01] atlas-core is owned by Hana Sato.\n"
+                   "[2026-03-30] CHANGE: atlas-core moved from port 9239 to port 4444.\n"
+                   "Did atlas-core move to port 1?\n")
+    out = _run(capsys, "--db", db, "--no-server", "ingest", str(log), "--extract-facts")
+    assert "stored 3 memories, 2 current facts" in out
+    assert _run(capsys, "--db", db, "--no-server", "fact", "get", "atlas-core", "port").startswith(
+        "atlas-core port = 4444 (since 2026-03-30)")
+    _run(capsys, "--db", db, "--no-server", "ingest", str(log), "--extract-facts")  # idempotent
+    assert len(_run(capsys, "--db", db, "--no-server", "fact", "history", "atlas-core", "port").splitlines()) == 1
+    assert "stored 3 memories\n" == _run(capsys, "--db", db, "--no-server", "ingest", str(log))
+
+    served = (tmp_path / "served.db").resolve()
+    stop = threading.Event()
+    threading.Thread(target=cli.serve, args=(served,), kwargs={"stop_event": stop}, daemon=True).start()
+    for _ in range(100):
+        if cli._live_server(cli._state_path(served)):
+            break
+        time.sleep(0.05)
+    try:
+        import mark._cli.client as client
+
+        monkeypatch.setattr(client, "INGEST_CHUNK_BYTES", 80)  # force several requests
+        lines = log.read_text().splitlines()
+        result = cli.execute(served, "ingest", {"agent": "x", "lines": lines, "extract_facts": True})
+        assert result == {"stored": 3, "facts": 2}
+    finally:
+        stop.set()

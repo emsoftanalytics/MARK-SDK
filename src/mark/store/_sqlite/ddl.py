@@ -20,7 +20,7 @@ from mark.store._sqlite.codec import _FTS_TABLE
 class SchemaDDL:
     """Table, index and migration definitions shared by the store mixins."""
 
-    CURRENT_SCHEMA_VERSION = 4
+    CURRENT_SCHEMA_VERSION = 5
 
     # Column additions per schema version: (table, column, declaration).
     # Applied by inspecting PRAGMA table_info, never by trusting the stamped
@@ -92,6 +92,36 @@ class SchemaDDL:
             """,
             "CREATE INDEX IF NOT EXISTS idx_fact_key ON facts(agent_id, subject_key, attribute_key, valid_from)",
             "CREATE INDEX IF NOT EXISTS idx_fact_current ON facts(agent_id, valid_to, retracted_at)",
+        ],
+        # 5: automatic fact extraction — a durable job queue for slow extractors
+        #    (one job per fragment and extractor) and the ledger of extracted
+        #    assertions that makes re-extraction idempotent.
+        5: [
+            """
+            CREATE TABLE IF NOT EXISTS fact_jobs (
+                fragment_id TEXT NOT NULL,
+                extractor TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                occurrence INTEGER DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER DEFAULT 0,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (fragment_id, extractor)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_fact_jobs_status ON fact_jobs(status, updated_at)",
+            """
+            CREATE TABLE IF NOT EXISTS fact_extractions (
+                agent_id TEXT NOT NULL,
+                key TEXT NOT NULL,
+                fragment_id TEXT,
+                fact_id TEXT,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (agent_id, key)
+            )
+            """,
         ],
     }
 
