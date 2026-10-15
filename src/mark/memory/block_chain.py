@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from mark.store import LocalMemoryStore
+from mark.store.sqlite import LocalMemoryStore
 from mark.types import BlockStatus, MemoryBlock, MemoryEdge, MemoryFragment, MemoryNode
 
 _MEMBER_HASHES_KEY = "mark_member_hashes"

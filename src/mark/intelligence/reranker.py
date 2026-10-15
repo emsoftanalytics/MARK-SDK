@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from mark.index import VectorSearchResult
-from mark.store import LocalMemoryStore
+from mark.store.sqlite import LocalMemoryStore
 from mark.types import MemoryFragment
 
 

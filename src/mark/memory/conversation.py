@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from mark.intelligence import RetrievalPolicy
+from mark.intelligence.retrieval import RetrievalPolicy
 from mark.memory.mark_memory import MarkMemory
 from mark.types import MemoryFragment, MemoryScope, MemoryState
 

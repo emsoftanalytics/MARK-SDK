@@ -10,13 +10,13 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 
 from mark.embeddings import EmbeddingProvider
-from mark.intelligence import RetrievalPipeline, RetrievalPolicy, RetrievalResult, SessionFilter
+from mark.intelligence.retrieval import RetrievalPipeline, RetrievalPolicy, RetrievalResult, SessionFilter
 from mark.middlewares.base import MiddlewareStack
 from mark.memory.graph import GraphNeighborhood
 from mark.intelligence.extractor import DeterministicExtractor, ExtractionMerger, LLMStructuredExtractor
 from mark.memory.observe import ObserveEvent, ObserveResult
 from mark.plugins import HOOK_OBSERVE_EVENT
-from mark.store import LocalMemoryStore
+from mark.store.sqlite import LocalMemoryStore
 from mark.middlewares.skills.base import Skill
 from mark.types import MemoryEdge, MemoryFragment, MemoryNode, MemoryScope, MemoryState, MemoryTier
 from mark.types.graph import EdgeRelation, NodeType

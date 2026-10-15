@@ -9,6 +9,8 @@ from mark._version import __version__
 _LAZY_EXPORTS = {
     # Core API (loaded on first access so `import mark` stays fast).
     "AgentPersona": "mark.middlewares.skills",
+    "Briefing": "mark.context",
+    "ContextWatch": "mark.context",
     "AgentResult": "mark.agent",
     "AgentRun": "mark.agent",
     "BlockChain": "mark.memory",
@@ -134,6 +136,8 @@ def __getattr__(name: str):
     return value
 
 __all__ = [
+    "Briefing",
+    "ContextWatch",
     "AgentResult",
     "AgentRun",
     "AgentPersona",

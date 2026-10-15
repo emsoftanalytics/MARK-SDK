@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from mark.store import LocalMemoryStore
+from mark.store.sqlite import LocalMemoryStore
 from mark.types import BlockLink, BlockStatus, MemoryBlock, MemoryEdge, MemoryNode, MemoryScope
 from mark.types.graph import EdgeRelation
 

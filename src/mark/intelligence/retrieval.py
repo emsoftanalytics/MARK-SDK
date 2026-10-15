@@ -21,7 +21,7 @@ from mark.intelligence.query_expander import NoopQueryExpander, QueryExpander
 from mark.intelligence.reranker import MemoryReranker, RerankResult
 from mark.plasticity.hebbian import EdgeCoActivation, HebbianReinforcement
 from mark.plugins import HOOK_POLICY_ENGINE, HOOK_SCORING, PluginRegistry
-from mark.store import LocalMemoryStore
+from mark.store.sqlite import LocalMemoryStore
 from mark.types import EdgeRelation, GapReport, GapSeverity, MemoryFragment, MemoryScope, MemoryState, MemoryTier
 
 logger = logging.getLogger("mark.retrieval")
@@ -1050,7 +1050,10 @@ _TEMPORAL_WORDS = {"now", "current", "currently", "latest", "recent", "today", "
 # v2.3.1), tokens with digits, and multi-word capitalised names.
 _COMPOUND_RE = re.compile(r"\b\w+(?:[-_.:/]\w+)+\b")
 _DIGIT_TOKEN_RE = re.compile(r"\b(?=\w*\d)\w{3,}\b")
-_NAME_RE = re.compile(r"\b([A-Z][\w'’]+(?:\s+[A-Z][\w'’]+)+)\b")
+_NUMBER_WITH_UNIT_RE = re.compile(r"\d+(?:s|st|nd|rd|th|ms|us|ns|k|kb|mb|gb|tb|m|h|x|px|pc|pct|am|pm)", re.I)
+# Title-case words only ("Mei Lin", "Liam O'Connor"); ALL-CAPS log labels such
+# as "TICKET HAL" are not names.
+_NAME_RE = re.compile(r"\b([A-Z][a-z][\w'’]*(?:\s+[A-Z][a-z'’][\w'’]*)+)\b")
 _QUESTION_WORDS = {"Who", "What", "Which", "When", "Where", "Why", "How", "Is", "Are", "Does", "Do", "Did", "Per"}
 
 # Event time: only a date stamp at the very start of a memory counts
@@ -1081,6 +1084,8 @@ def query_anchors(query: str) -> list[str]:
     for match in _COMPOUND_RE.findall(query):
         anchors.append(match)
     for match in _DIGIT_TOKEN_RE.findall(query):
+        if _NUMBER_WITH_UNIT_RE.fullmatch(match):
+            continue  # "502s", "10ms", "3rd", "5k" are quantities, not identifiers
         if not any(match in compound for compound in anchors):
             anchors.append(match)
     for match in _NAME_RE.findall(query):

@@ -7,13 +7,13 @@ from pathlib import Path
 
 from mark.embeddings import EmbeddingProvider, HashEmbeddingProvider
 from mark.index import VectorIndex
-from mark.intelligence import GraphExpander, RetrievalPipeline
+from mark.intelligence.retrieval import GraphExpander, RetrievalPipeline
 from mark.intelligence.compressor import ContextualCompressor
 from mark.intelligence.query_expander import QueryExpander
 from mark.middlewares.base import MarkMiddleware, MiddlewareStack
 from mark.plugins import MarkCorePlugin, PluginRegistry
 from mark.security import EncryptionProvider, NoOpEncryptionProvider
-from mark.store import LocalMemoryStore
+from mark.store.sqlite import LocalMemoryStore
 from mark.types.llm import LLMProvider
 
 from mark.memory.global_bus import GlobalMemoryBus

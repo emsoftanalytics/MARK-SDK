@@ -5,8 +5,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from mark.embeddings import EmbeddingProvider
-from mark.intelligence import RetrievalPipeline, RetrievalPolicy, RetrievalResult
-from mark.store import LocalMemoryStore
+from mark.intelligence.retrieval import RetrievalPipeline, RetrievalPolicy, RetrievalResult
+from mark.store.sqlite import LocalMemoryStore
 from mark.types import MemoryFragment, MemoryScope, MemoryState
 
 from mark.memory.mark_memory import MarkMemory

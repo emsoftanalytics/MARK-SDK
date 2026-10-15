@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from mark.intelligence import RetrievalPolicy, RetrievalResult
+from mark.intelligence.retrieval import RetrievalPolicy, RetrievalResult
 from mark.memory.global_bus import GlobalMemoryBus
 from mark.types import MemoryFragment
 

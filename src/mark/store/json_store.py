@@ -6,8 +6,11 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from mark.memory.block import MemoryBlock
-from mark.memory.record import MemoryRecord
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # the store layer must not import mark.memory at import time
+    from mark.memory.block import MemoryBlock
+    from mark.memory.record import MemoryRecord
 
 
 class JsonMemoryStore:
@@ -43,6 +46,8 @@ class JsonMemoryStore:
     def list_blocks(self) -> list[MemoryBlock]:
         """Return all blocks."""
         data = self._load()
+        from mark.memory.block import MemoryBlock
+
         return [MemoryBlock.from_dict(item, store=self) for item in data["blocks"]]
 
     def write_record(self, record: MemoryRecord) -> MemoryRecord:
@@ -55,6 +60,8 @@ class JsonMemoryStore:
     def list_records(self, block_id: str | None = None) -> list[MemoryRecord]:
         """Return records, optionally filtered by block."""
         data = self._load()
+        from mark.memory.record import MemoryRecord
+
         records = [MemoryRecord.from_dict(item) for item in data["records"]]
         if block_id is None:
             return records
@@ -67,6 +74,8 @@ class JsonMemoryStore:
             if item["id"] == record.id:
                 data["records"][index] = replace(record, last_accessed_at=datetime.now(timezone.utc)).to_dict()
                 self._save(data)
+                from mark.memory.record import MemoryRecord
+
                 return MemoryRecord.from_dict(data["records"][index])
         raise KeyError(f"Memory record not found: {record.id}")
 
