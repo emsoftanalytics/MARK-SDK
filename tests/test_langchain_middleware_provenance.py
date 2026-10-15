@@ -124,3 +124,16 @@ def test_stored_assistant_text_never_anchors_the_briefing(tmp_path) -> None:
         anchors = watch.briefing().anchors if watch is not None else []
     assert "E001" not in anchors and "mark_memory_middleware" not in anchors
     assert "error_code" not in context.split("Earlier assistant replies (unverified):")[0]
+
+
+def test_retrieved_assistant_replies_are_opt_in() -> None:
+    from types import SimpleNamespace as F
+
+    result = F(facts=[], fragments=[
+        F(id="u", content="User said: I manage the Leeds warehouse.", tags=["mark:user"], source="user"),
+        F(id="a", content="Agent completed task. Response: You are a concise warehouse assistant.",
+          tags=[ASSISTANT_TAG], source="assistant")])
+    default = MarkAgentMiddleware._retrieval_items(result, "who am I?")
+    assert [i.ref for i in default] == ["u"]
+    opted = MarkAgentMiddleware._retrieval_items(result, "who am I?", assistant_lines=1)
+    assert [i.section for i in opted] == ["records", "assistant"]

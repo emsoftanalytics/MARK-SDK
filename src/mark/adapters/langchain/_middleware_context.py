@@ -71,11 +71,14 @@ class _ContextControlMixin:
     # ── budget ────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _retrieval_items(value: Any, query: str = "") -> list[BudgetItem]:
+    def _retrieval_items(value: Any, query: str = "", assistant_lines: int = 0) -> list[BudgetItem]:
         """Budget items for one retrieval result: current facts, then trusted records.
 
-        Assistant output goes last under its "unverified" header; questions,
-        small talk and the stored current message (*query*) are dropped.
+        Questions, small talk and the stored current message (*query*) are
+        dropped. Assistant output is left out unless ``assistant_lines`` > 0
+        (then it goes last, under its "unverified" header): in the M7 re-run
+        llama3.2:1b copied an unverified reply that quoted its own system
+        prompt straight back into its answer.
         """
         items: list[BudgetItem] = []
         for fact in getattr(value, "facts", None) or []:
@@ -94,7 +97,7 @@ class _ContextControlMixin:
                 replies.append(BudgetItem("assistant", line, ASSISTANT_HEADER, ref))
             elif trusted(fragment):
                 items.append(BudgetItem("records", line, RETRIEVED_HEADER, ref))
-        return items + replies[:1]   # one unverified reply at most, lowest priority
+        return items + replies[:assistant_lines]
 
     def _render_budgeted(self, items: Any) -> str:
         """Briefing lines inside ``<mark_briefing>``, retrieved memory and plan after it."""
