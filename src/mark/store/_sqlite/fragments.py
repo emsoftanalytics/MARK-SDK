@@ -60,6 +60,20 @@ class FragmentWriteMixin:
             self._emit("unretrievable", unretrievable)
         return ids
 
+    def existing_ids(self, ids: Iterable[str]) -> set[str]:
+        """The subset of *ids* that already have a fragment row (any agent, any state).
+
+        Cheap (primary-key lookups, no decryption): used by idempotent bulk
+        writes to skip items a previous, interrupted call already stored.
+        """
+        wanted = list(dict.fromkeys(ids))
+        found: set[str] = set()
+        for chunk in _chunks(wanted, _SQL_CHUNK):
+            placeholders = ",".join("?" for _ in chunk)
+            found.update(str(row[0]) for row in self._fetchall(
+                f"SELECT id FROM fragments WHERE id IN ({placeholders})", chunk))
+        return found
+
     def _store_row(self, conn: sqlite3.Connection, fragment: MemoryFragment) -> tuple[str, bool]:
         """Upsert one fragment; returns (id, whether it left a retrievable state)."""
         # Hash is computed over the plaintext before encryption, so reads can

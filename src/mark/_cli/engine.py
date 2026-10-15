@@ -55,13 +55,22 @@ class _Engine:
 
     def cmd_ingest(self, agent: str, lines: list[str], session: str | None = None,
                    tags: list[str] | None = None, extract_facts: bool = False) -> dict[str, Any]:
+        import hashlib
+
         texts = [line.strip() for line in lines if line.strip()]
+        # Idempotent: a retried ingest (e.g. after the server was killed mid-request) maps the
+        # same lines to the same ids and never duplicates them; each call is one transaction.
+        key = "ingest:" + hashlib.sha256("\n".join(texts).encode("utf-8", "surrogatepass")).hexdigest()
         # extract_facts=True: built-in pattern packs, each line's "[YYYY-MM-DD]" stamp as valid_from.
-        ids = self._memory(agent).store_many_sync(texts, session_id=session, tags=tags or None,
-                                                  extract_facts=True if extract_facts else None)
-        if not extract_facts:
-            return {"stored": len(ids)}
-        return {"stored": len(ids), "facts": len(self.runtime.store.fact_current(agent))}
+        report = self._memory(agent).store_many_sync(texts, session_id=session, tags=tags or None,
+                                                     extract_facts=True if extract_facts else None,
+                                                     idempotency_key=key)
+        result: dict[str, Any] = {"stored": report.stored}
+        if report.skipped:
+            result["skipped"] = len(report.skipped)
+        if extract_facts:
+            result["facts"] = len(self.runtime.store.fact_current(agent))
+        return result
 
     def cmd_store(self, agent: str, text: str, session: str | None = None,
                   occurred_at: str | None = None, importance: float = 0.8) -> dict[str, Any]:

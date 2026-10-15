@@ -26,6 +26,7 @@ from mark.security import EncryptionProvider, NoOpEncryptionProvider
 from mark.store.sqlite import LocalMemoryStore
 from mark.types.llm import LLMProvider
 
+from mark.memory.facade.write_validation import DEFAULT_MAX_MEMORY_BYTES
 from mark.memory.global_bus import GlobalMemoryBus
 from mark.memory.mark_memory import MarkMemory
 from mark.memory.runtime_maintenance import MaintenanceMixin
@@ -51,9 +52,12 @@ class MarkRuntime(MaintenanceMixin):
         middleware: Iterable[MarkMiddleware] | None = None,
         fact_extractor: object = None,
         fact_job_lease: float = 300.0,
+        max_memory_bytes: int | None = DEFAULT_MAX_MEMORY_BYTES,
     ) -> None:
         self.store = store
         self._closed = False
+        # Largest single memory (UTF-8 bytes) a write accepts; None = no limit.
+        self.max_memory_bytes = max_memory_bytes
         self.embedder = embedder
         self.plugins = plugins
         # Explicit None check: an empty VectorIndex has len() == 0, so
@@ -111,6 +115,7 @@ class MarkRuntime(MaintenanceMixin):
         middleware: Iterable[MarkMiddleware] | None = None,
         fact_extractor: object = None,
         fact_job_lease: float = 300.0,
+        max_memory_bytes: int | None = DEFAULT_MAX_MEMORY_BYTES,
     ) -> "MarkRuntime":
         """Construct a local instance.
 
@@ -119,6 +124,8 @@ class MarkRuntime(MaintenanceMixin):
         ``"patterns"`` or a FactExtractor. ``fact_job_lease``: seconds a
         background extraction job may run before another worker may take it
         over (jobs of a crashed process on this host are reclaimed at once).
+        ``max_memory_bytes``: largest single memory a write accepts (default
+        1 MB; None = no limit); longer text belongs in ``store_document``.
         """
         registry = PluginRegistry()
         runtime = cls(
@@ -135,6 +142,7 @@ class MarkRuntime(MaintenanceMixin):
             middleware=middleware,
             fact_extractor=fact_extractor,
             fact_job_lease=fact_job_lease,
+            max_memory_bytes=max_memory_bytes,
         )
         for plugin in plugins or []:
             registry.register(plugin, runtime=runtime)
