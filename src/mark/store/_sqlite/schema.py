@@ -2,7 +2,9 @@
 
 ``_init_schema`` runs once per store, inside a single write transaction:
 create tables, migrate, stamp the schema version, build indexes, seed the
-``write_version`` counter and set up (or tear down) the FTS5 lexical index.
+``write_version`` counter, check the encryption provider against the store
+(see :mod:`mark.store._sqlite.encryption_guard`) and set up (or tear down)
+the FTS5 lexical index.
 """
 from __future__ import annotations
 
@@ -78,6 +80,7 @@ class SchemaMixin(SchemaDDL):
     # ── schema ────────────────────────────────────────────────────────────────
 
     def _init_schema(self) -> None:
+        """Create/migrate the schema; raise StoreEncryptionError on a key mismatch."""
         with self._writing() as conn:
             # Take the write lock before reading the schema stamp: two processes
             # creating the same new database must not both run migrations.
@@ -108,7 +111,15 @@ class SchemaMixin(SchemaDDL):
                 conn.execute(index)
             # Seed the cache-validation counter bumped by structural writes.
             conn.execute("INSERT OR IGNORE INTO schema_info VALUES ('write_version', '0')")
-            self._init_fts(conn)
+            # Must run before FTS setup: a keyless open of an encrypted store
+            # would otherwise "backfill" ciphertext into the plaintext index.
+            error = self._init_encryption(conn)
+            if error is None:
+                self._init_fts(conn)
+        if error is not None:
+            # Markers decided above are committed; then refuse the open.
+            self.close()
+            raise error
 
     def _run_migrations(self, conn: sqlite3.Connection, from_version: int) -> None:
         """Bring the schema up to CURRENT_SCHEMA_VERSION.

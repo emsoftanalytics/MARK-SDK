@@ -42,6 +42,7 @@ from mark.store._sqlite.codec import (  # noqa: F401 - re-exported for compatibi
     _unpack_embedding,
 )
 from mark.store._sqlite.connection import ConnectionMixin
+from mark.store._sqlite.encryption_guard import EncryptionGuardMixin
 from mark.store._sqlite.events import EventMixin
 from mark.store._sqlite.fact_jobs import FactJobMixin
 from mark.store._sqlite.facts import FactMixin
@@ -70,6 +71,7 @@ class LocalMemoryStore(
     EventMixin,
     RowDecodingMixin,
     SchemaMixin,
+    EncryptionGuardMixin,
     ConnectionMixin,
 ):
     """Thread-safe SQLite store for fragments, blocks, documents, nodes, and edges.
@@ -82,7 +84,9 @@ class LocalMemoryStore(
 
     Fragment content (and fact values) are encrypted at rest by
     ``encryption``; the FTS5 lexical index exists only when it is a no-op,
-    since it would otherwise store plaintext.
+    since it would otherwise store plaintext. Opening an encrypted store
+    without its key (or with a wrong one), or a plaintext store holding data
+    with a key, raises a :class:`mark.errors.StoreEncryptionError`.
     """
 
     def __init__(

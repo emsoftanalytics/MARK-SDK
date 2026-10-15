@@ -387,8 +387,9 @@ media continuity. See [ARCHITECTURE.md](ARCHITECTURE.md) for what each does.
 With `mark-sdk[crypto]`, `Mark.local(".", encryption=FernetEncryptionProvider(passphrase=...))`
 encrypts memory content and fact values at rest. Tags, metadata, session ids,
 fact subjects and attributes, graph labels, and embeddings stay in plaintext so
-they can be filtered. Encrypted stores use vector search only. See
-[SECURITY.md](SECURITY.md).
+they can be filtered. Encrypted stores use vector search only. An encrypted
+store opened without its key (or with the wrong one) raises an error instead
+of being read or written. See [SECURITY.md](SECURITY.md).
 
 ## Performance
 

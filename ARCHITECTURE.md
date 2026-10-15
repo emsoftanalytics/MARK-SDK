@@ -104,7 +104,8 @@ in `store/_sqlite/`. Tables: `fragments`, `documents`, `nodes`, `edges`,
   verification on read is not returned.
 - **Encryption.** With an encryption provider, fragment content and fact
   values are encrypted. Content hashes become keyed HMACs, and the FTS5 index
-  is not built, so encrypted stores use vector search only.
+  is not built, so encrypted stores use vector search only. The store records
+  whether it is encrypted and refuses to open with a missing or wrong key.
 - **Vectors.** Embeddings are stored with each fragment. `VectorIndex` is an
   in-memory index rebuilt lazily from the store. The default backend uses pure
   Python and switches to numpy once an index is large enough, if numpy is

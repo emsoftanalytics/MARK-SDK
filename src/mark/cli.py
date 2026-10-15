@@ -165,7 +165,11 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     db = _db_path(args.db)
     if args.cmd == "serve":
-        serve(db, args.host, args.port)
+        try:
+            serve(db, args.host, args.port)
+        except RuntimeError as exc:  # e.g. an encrypted store (StoreEncryptionError)
+            print(f"mark: {exc}", file=sys.stderr)
+            return 1
         return 0
 
     agent = args.agent
