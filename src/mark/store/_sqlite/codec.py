@@ -58,6 +58,9 @@ _UPSERT_FRAGMENT_SQL = (
 _FTS_TABLE = "fragments_fts"
 # schema_info key marking that the FTS index has been backfilled from fragments.
 _FTS_META_KEY = "fts_backfilled"
+# Multilingual lexical table (no stemmer; CJK bigrams, symbols) and its marker.
+_FTS_ML_TABLE = "fragments_fts_ml"
+_FTS_ML_META_KEY = "fts_ml_backfilled"
 
 ListenerCallback = Callable[[str, str], None]
 
