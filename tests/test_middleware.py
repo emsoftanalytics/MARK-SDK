@@ -129,7 +129,11 @@ def test_sync_middleware_prepares_delta_after_observe(tmp_path: Path) -> None:
 
 
 def test_governance_middleware_quarantines_rejected_store(tmp_path: Path) -> None:
-    with Mark.local(tmp_path, middleware=[GovernanceMiddleware()]) as mark:
+    from mark.middlewares.governance import ConsolidationGate, FailureFilter
+
+    # FailureFilter is opt-in since 0.2.0a10: errors are remembered by default.
+    gate = ConsolidationGate(failure=FailureFilter())
+    with Mark.local(tmp_path, middleware=[GovernanceMiddleware(gate=gate)]) as mark:
         mem = mark.runtime.memory("governed")
         fragment_id = mem.store_sync("Traceback (most recent call last)")
         stored = mark.runtime.store.get(fragment_id)

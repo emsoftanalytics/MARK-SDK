@@ -80,7 +80,14 @@ def test_consolidate_blocks_failure_artifacts_and_audits(tmp_path: Path) -> None
     wm.store("Traceback (most recent call last):\nValueError: broken",
              ttl_seconds=9999, importance=0.95)
 
-    result = runtime.consolidate("gov-block", promote_threshold=0.7)
+    # The FailureFilter is opt-in since 0.2.0a10 (agents keep errors by default).
+    from mark.memory.consolidation import ConsolidationManager
+    from mark.middlewares.governance import ConsolidationGate, FailureFilter
+
+    result = ConsolidationManager(
+        runtime.store, agent_id="gov-block", audit_log=runtime.governance_audit_log(),
+        gate=ConsolidationGate(failure=FailureFilter()),
+    ).run(promote_threshold=0.7)
 
     assert result.promoted == 0
     assert result.blocked == 1

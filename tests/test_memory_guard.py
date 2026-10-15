@@ -2,11 +2,12 @@
 stores do not, and quarantine_sync stores non-retrievable diagnostics.
 """
 from mark import GovernanceMiddleware, Mark
+from mark.middlewares.governance import ConsolidationGate, FailureFilter
 from mark.types import MemoryState
 
 
 def test_store_sync_quarantines_failure_artifact(tmp_path):
-    mark = Mark.local(project_path=tmp_path, middleware=[GovernanceMiddleware()])
+    mark = Mark.local(project_path=tmp_path, middleware=[GovernanceMiddleware(gate=ConsolidationGate(failure=FailureFilter()))])
     memory = mark.runtime.memory("agent")
 
     fragment_id = memory.store_sync(

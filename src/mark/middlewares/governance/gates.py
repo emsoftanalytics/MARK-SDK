@@ -91,13 +91,15 @@ class FailureFilter:
     """
     Reject content that looks like an error message or exception trace.
 
-    Designed to prevent accidental storage of stack traces, HTTP error bodies,
-    or raw exception strings as memory fragments.
+    Opt-in (not part of the default ConsolidationGate since 0.2.0a10):
+    agents usually need to remember errors and how they were fixed. Enable it
+    for pipelines that ingest raw tool output and must keep error bodies out
+    of retrieval: ``ConsolidationGate(failure=FailureFilter())``.
     """
 
     def check(self, content: str) -> GateResult:
         """Check the content and return the gate outcome."""
         for p in _FAILURE_PATTERNS:
             if p.search(content):
-                return GateResult(False, f"content matches failure pattern")
+                return GateResult(False, "content matches failure pattern")
         return GateResult(True)
