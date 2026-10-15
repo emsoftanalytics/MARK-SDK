@@ -118,9 +118,10 @@ class FactsView:
 
         Queued jobs are processed in the calling thread. Jobs the background
         worker has already claimed are not re-run; with ``wait`` (default
-        True: up to the job lease, 300 s by default; a float: that many
-        seconds; False: no waiting) the call blocks until they are done, so
-        their facts are readable when it returns. The count includes jobs the
+        True: up to 30 seconds; a float: that many seconds; False: no
+        waiting) the call blocks until they are done, so their facts are
+        readable when it returns. The wait is bounded so a hung extractor
+        can never hang the caller; on timeout, unfinished jobs stay queued. The count includes jobs the
         worker finished while waiting. Returns 0 when no background extractor
         is configured (inline extractors have no queue).
         """

@@ -11,6 +11,11 @@ Concurrency model (see also ``LocalMemoryStore``):
 ``_writing`` is the only way the store writes: one lock-held transaction that
 commits on success and rolls back on any exception. Structural writes also
 bump the persisted ``write_version`` counter inside that same transaction.
+
+``close()`` is final: every later read or write raises
+:class:`mark.errors.StoreClosedError` instead of silently reopening a
+connection (which used to leak file descriptors and let a background thread
+keep writing to a store its owner had shut down).
 """
 from __future__ import annotations
 
@@ -21,6 +26,7 @@ import time
 from contextlib import contextmanager
 from typing import Iterable, Iterator
 
+from mark.errors import StoreClosedError
 from mark.security import EncryptionProvider
 from mark.store._sqlite.codec import ListenerCallback
 
@@ -42,8 +48,12 @@ class ConnectionMixin:
     _shared_conn: sqlite3.Connection | None
 
     def close(self) -> None:
-        """Close every connection this store opened, on any thread."""
+        """Close every connection this store opened, on any thread; idempotent.
+
+        After close the store refuses further use (``StoreClosedError``).
+        """
         with self._lock:
+            self._closed = True
             if self._shared_conn is not None:
                 self._shared_conn.close()
                 self._shared_conn = None
@@ -89,13 +99,17 @@ class ConnectionMixin:
         """
         if self._shared_conn is not None:
             return self._shared_conn
-        if self.db_path == ":memory:":
-            raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
+        # getattr: _closed is set by close(); stores built before it existed default to open.
+        if getattr(self, "_closed", False) or self.db_path == ":memory:":
+            raise StoreClosedError(self.db_path)
         local = self._local
         conn = getattr(local, "conn", None)
         if conn is None or getattr(local, "generation", -1) != self._generation:
             conn = self._open(self.db_path)
             with self._lock:
+                if getattr(self, "_closed", False):  # closed while we were opening
+                    conn.close()
+                    raise StoreClosedError(self.db_path)
                 self._conns.append(conn)
                 local.generation = self._generation
             local.conn = conn
@@ -108,7 +122,7 @@ class ConnectionMixin:
             with self._lock:
                 conn = self._shared_conn
                 if conn is None:  # pragma: no cover - closed concurrently
-                    raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
+                    raise StoreClosedError(self.db_path)
                 yield conn
         else:
             yield self._conn()

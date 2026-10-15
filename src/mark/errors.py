@@ -10,8 +10,11 @@ from __future__ import annotations
 __all__ = [
     "EncryptionKeyError",
     "EncryptionRequiredError",
+    "InvalidMemoryError",
     "MarkError",
+    "MemoryTooLargeError",
     "PlaintextStoreError",
+    "StoreClosedError",
     "StoreEncryptionError",
     "StoreVersionError",
 ]
@@ -73,3 +76,41 @@ class StoreVersionError(MarkError, RuntimeError):
             f"up to version {supported}; refusing to open it so it is not damaged. "
             "Upgrade mark-sdk (pip install -U mark-sdk) to use this store."
         )
+
+
+class StoreClosedError(MarkError, RuntimeError):
+    """The store (or the runtime that owns it) was closed and cannot be used again."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(
+            f"MARK store {path!r} is closed; open a new one "
+            "(e.g. MarkRuntime.local(store_path=...)) instead of reusing it after shutdown()/close()."
+        )
+
+
+class InvalidMemoryError(MarkError, ValueError):
+    """A value passed to a memory write is not a storable memory.
+
+    Also a :class:`ValueError`, so callers that already catch ``ValueError``
+    keep working. ``reason`` is a short machine-friendly code such as
+    ``"empty"``, ``"not_text"``, ``"invalid_unicode"``, ``"too_large"`` or
+    ``"metadata"``.
+    """
+
+    def __init__(self, message: str, *, reason: str = "invalid") -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+class MemoryTooLargeError(InvalidMemoryError):
+    """A single memory exceeds the configured maximum write size."""
+
+    def __init__(self, size: int, limit: int) -> None:
+        super().__init__(
+            f"memory is {size:,} bytes, over the {limit:,}-byte limit for one memory; "
+            "split it or use store_document(...) for long text "
+            "(or raise max_memory_bytes if you really need one huge memory)",
+            reason="too_large",
+        )
+        self.size = size
+        self.limit = limit

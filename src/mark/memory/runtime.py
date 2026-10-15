@@ -1,5 +1,14 @@
-"""MarkRuntime: wiring and lifecycle for the local memory engine."""
+"""MarkRuntime: wiring and lifecycle for the local memory engine.
+
+Lifecycle: :meth:`MarkRuntime.shutdown` is bounded and final. It stops the
+background fact worker (the job in flight may finish within the timeout;
+everything it claimed but did not finish goes back to the durable queue),
+drains the executor, retires MARK's adapter offload pool and closes the
+store, which then refuses further use with ``StoreClosedError``.
+"""
 from __future__ import annotations
+
+import sys
 
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
@@ -41,8 +50,10 @@ class MarkRuntime(MaintenanceMixin):
         retrieval_top_k: int = 20,
         middleware: Iterable[MarkMiddleware] | None = None,
         fact_extractor: object = None,
+        fact_job_lease: float = 300.0,
     ) -> None:
         self.store = store
+        self._closed = False
         self.embedder = embedder
         self.plugins = plugins
         # Explicit None check: an empty VectorIndex has len() == 0, so
@@ -73,7 +84,9 @@ class MarkRuntime(MaintenanceMixin):
         self.middleware.bind(self)
         # Default fact extractor for writes (None = off; background ones get a durable queue).
         extractor = resolve_extractor(fact_extractor)
-        self.fact_extraction = FactExtractionService(store, extractor) if extractor is not None else None
+        self.fact_extraction = (
+            FactExtractionService(store, extractor, lease_seconds=fact_job_lease) if extractor is not None else None
+        )
 
     def _on_store_event(self, event: str, fragment_id: str) -> None:
         """Store listener: drop deleted/unretrievable fragments from the index."""
@@ -97,12 +110,15 @@ class MarkRuntime(MaintenanceMixin):
         retrieval_top_k: int = 20,
         middleware: Iterable[MarkMiddleware] | None = None,
         fact_extractor: object = None,
+        fact_job_lease: float = 300.0,
     ) -> "MarkRuntime":
         """Construct a local instance.
 
         ``embedder``: a provider, a spec such as ``"auto"`` (see ``mark.embeddings.auto``)
         or None (hash, or ``MARK_EMBEDDER``). ``fact_extractor``: None (off),
-        ``"patterns"`` or a FactExtractor.
+        ``"patterns"`` or a FactExtractor. ``fact_job_lease``: seconds a
+        background extraction job may run before another worker may take it
+        over (jobs of a crashed process on this host are reclaimed at once).
         """
         registry = PluginRegistry()
         runtime = cls(
@@ -118,6 +134,7 @@ class MarkRuntime(MaintenanceMixin):
             retrieval_top_k=retrieval_top_k,
             middleware=middleware,
             fact_extractor=fact_extractor,
+            fact_job_lease=fact_job_lease,
         )
         for plugin in plugins or []:
             registry.register(plugin, runtime=runtime)
@@ -223,9 +240,22 @@ class MarkRuntime(MaintenanceMixin):
             return self.store.integrity_check()
         return []
 
-    def shutdown(self) -> None:
-        """Release resources held by the runtime."""
+    def shutdown(self, timeout: float = 5.0) -> None:
+        """Stop background work and close the store; bounded by ``timeout`` seconds.
+
+        The fact worker finishes its current job if it can within
+        ``timeout``; otherwise that job (and any it claimed but had not
+        started) is returned to the durable queue for the next run. The store
+        is closed for good: later calls raise ``StoreClosedError``.
+        Idempotent.
+        """
+        if self._closed:
+            return
+        self._closed = True
         if self.fact_extraction is not None:
-            self.fact_extraction.close()  # queued jobs stay in the store
+            self.fact_extraction.close(timeout)  # queued jobs stay in the store
         self.executor.shutdown(wait=True)
+        backend = sys.modules.get("mark.adapters.backend")
+        if backend is not None:  # only if adapters were used; never import them here
+            backend.shutdown_offload_pool()
         self.store.close()
