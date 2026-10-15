@@ -13,6 +13,7 @@ __all__ = [
     "MarkError",
     "PlaintextStoreError",
     "StoreEncryptionError",
+    "StoreVersionError",
 ]
 
 # How to supply a key, repeated in every encryption error message.
@@ -60,4 +61,15 @@ class PlaintextStoreError(StoreEncryptionError):
             f"MARK store {path!r} already holds unencrypted memories; refusing to open it "
             "with an encryption provider because that would mix plaintext and ciphertext. "
             "Open it without encryption=, or start a new (empty) store for encrypted memory."
+        )
+
+
+class StoreVersionError(MarkError, RuntimeError):
+    """The store was written by a newer MARK whose schema this version cannot read safely."""
+
+    def __init__(self, path: str, stored: int, supported: int) -> None:
+        super().__init__(
+            f"MARK store {path!r} uses schema version {stored}, but this mark-sdk supports "
+            f"up to version {supported}; refusing to open it so it is not damaged. "
+            "Upgrade mark-sdk (pip install -U mark-sdk) to use this store."
         )

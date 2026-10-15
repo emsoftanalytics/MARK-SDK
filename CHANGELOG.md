@@ -111,6 +111,12 @@ This project follows semantic versioning for public package releases.
   did not re-embed existing memories; switching embedders now re-embeds once.
 - Opening a new store from several processes at once could fail while
   enabling WAL mode.
+- A store written by a newer MARK is now refused with `StoreVersionError`
+  before anything is written, so an older installation can no longer migrate
+  or modify a store it does not understand.
+- A memory whose stored content cannot be decrypted (for example plaintext
+  written into an encrypted store by an older release opened without its key)
+  is set aside as unreadable instead of making every retrieval fail.
 
 ## 0.2.0a8 - 2026-10-15
 

@@ -80,7 +80,13 @@ class SchemaMixin(SchemaDDL):
     # ── schema ────────────────────────────────────────────────────────────────
 
     def _init_schema(self) -> None:
-        """Create/migrate the schema; raise StoreEncryptionError on a key mismatch."""
+        """Create/migrate the schema; raise StoreEncryptionError on a key mismatch.
+
+        A store stamped with a newer schema than this build knows is refused
+        before anything is written: older code must never "migrate" or write
+        into a layout it does not understand.
+        """
+        self._refuse_newer_schema()
         with self._writing() as conn:
             # Take the write lock before reading the schema stamp: two processes
             # creating the same new database must not both run migrations.
@@ -120,6 +126,19 @@ class SchemaMixin(SchemaDDL):
             # Markers decided above are committed; then refuse the open.
             self.close()
             raise error
+
+    def _refuse_newer_schema(self) -> None:
+        """Raise StoreVersionError if the store was written by a newer MARK."""
+        from mark.errors import StoreVersionError
+
+        with self._reading() as conn:
+            try:
+                row = conn.execute("SELECT value FROM schema_info WHERE key = 'schema_version'").fetchone()
+            except sqlite3.OperationalError:  # new database: no schema_info yet
+                return
+        if row is not None and int(row[0]) > self.CURRENT_SCHEMA_VERSION:
+            self.close()
+            raise StoreVersionError(str(self.db_path), int(row[0]), self.CURRENT_SCHEMA_VERSION)
 
     def _run_migrations(self, conn: sqlite3.Connection, from_version: int) -> None:
         """Bring the schema up to CURRENT_SCHEMA_VERSION.
