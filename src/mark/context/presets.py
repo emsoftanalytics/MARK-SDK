@@ -30,10 +30,10 @@ PRESETS: dict[str, dict[str, Any]] = {
     "default": {},
     "small": {"budget_chars": 1000, "max_anchors": 3, "per_anchor": 1, "line_chars": 160,
               "budget_tokens": 200, "relevant_lines": 4, "assistant_lines": 0,
-              "follow_links": 1},
+              "change_lines": 4, "follow_links": 1},
     "tiny": {"budget_chars": 600, "max_anchors": 2, "per_anchor": 1, "line_chars": 120,
              "budget_tokens": 160, "relevant_lines": 3, "assistant_lines": 0,
-             "follow_links": 0},
+             "change_lines": 2, "follow_links": 0},
 }
 
 #: Packaged skill used with each preset ("mark-memory-compact" is ~200 tokens).

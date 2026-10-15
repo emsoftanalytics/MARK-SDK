@@ -9,6 +9,8 @@ briefing has to explain itself)::
     - atlas-core port is 4444 now (since 2026-03-30); 9239 is outdated.
     Known facts (current):
     - atlas-core port = 4444 (since 2026-03-30)
+    Recent changes (newest first):
+    - User said: I moved from Porto to Braga last weekend.
     Related notes:
     - User said: Biscuit's vet appointment moved to 21 October, same time.
     Earlier assistant replies (unverified):
@@ -60,6 +62,7 @@ from mark.context.watch_support import _anchor_norm, _contains_anchor, _timeline
 CORRECTIONS_HEADER = "Corrections:"
 FACTS_HEADER = "Known facts (current):"
 RELATED_HEADER = "Related notes:"
+CHANGES_HEADER = "Recent changes (newest first):"
 ASSISTANT_HEADER = "Earlier assistant replies (unverified):"
 OPEN, CLOSE = "<mark_briefing>", "</mark_briefing>"
 #: Records of the current request that rank as "relevant" (the rest rank low).
@@ -125,6 +128,9 @@ def briefing_items(snapshot: dict[str, Any], *, per_anchor: int | None,
         seen.add(fragment.id)
         return BudgetItem(section, text, header, fragment.id)
 
+    # Change statements for "now/before" questions: their own group, newest first.
+    changes = sorted(snapshot.get("changes") or (), key=_timeline_key, reverse=True)
+    items += [item for item in (note("relevant", f, CHANGES_HEADER) for f in changes) if item]
     task_records = [f for f in (task_result.fragments if task_result is not None else [])
                     if trusted(f)]
     relevant_count = snapshot.get("relevant_lines", RELEVANT_LINES)

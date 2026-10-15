@@ -86,6 +86,9 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
     budget_fill     True: lift max_anchors/per_anchor and fill up to budget_tokens
     relevant_lines  records retrieved for the current request that rank as
                     "relevant" (above subject records) under a budget
+    change_lines    for questions about current/earlier values ("now",
+                    "before", "changed"), the user's statements that replaced
+                    a value ("moved to Braga") shown as "Recent changes"
     assistant_lines earlier assistant replies (low trust, labelled
                     "unverified") the briefing may show (default 0: none)
     """
@@ -105,6 +108,7 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
         budget_fill: bool = False,
         relevant_lines: int = 4,
         assistant_lines: int = 0,
+        change_lines: int = 4,
     ) -> None:
         self._memory = memory
         self.budget_chars = budget_chars
@@ -114,6 +118,8 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
         self.line_chars = line_chars
         self.relevant_lines = max(0, int(relevant_lines))
         self.assistant_lines = max(0, int(assistant_lines))
+        self.change_lines = max(0, int(change_lines))
+        self._task_changes: dict[str, list[Any]] = {}   # task text -> change statements
         self.budget = as_budget(budget_tokens, token_counter, budget_fill)
         self._lock = threading.RLock()
         self._anchors: dict[str, _Anchor] = {}
@@ -223,6 +229,7 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
                 "task": self._task,
                 "relevant_lines": self.relevant_lines,
                 "assistant_lines": self.assistant_lines,
+                "changes": list(self._task_changes.get(self._task, ())),
             }
             pending = len(self._pending)
 
@@ -269,6 +276,7 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
             self._anchors.clear()
             self._results.clear()
             self._task_results.clear()
+            self._task_changes.clear()
             self._corrections.clear()
             self._task = ""
             self._turn = 0

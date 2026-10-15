@@ -78,6 +78,35 @@ def _with_user_lane(memory: Any, batch: list[str], results: list[Any]) -> list[A
     return merged
 
 
+#: Questions about a value now, before or since it changed.
+_STATE_QUESTION = re.compile(
+    r"\b(now|current(ly)?|before|originally|original|old|previous(ly)?|used to|chang\w*|"
+    r"still|any ?more|latest|new|moved|switched)\b", re.IGNORECASE)
+#: Statements that replace an earlier value ("moved from Porto to Braga").
+_CHANGE_STATEMENT = re.compile(
+    r"\b(moved|changed|switched|no longer|actually|now|new|instead|stopped|started|"
+    r"replaced|renamed|correction|not \w+ any ?more)\b", re.IGNORECASE)
+_CHANGE_QUERY = "moved changed switched now no longer actually new instead stopped started replaced"
+
+
+def _change_lane(memory: Any, task: str, limit: int) -> list[Any]:
+    """The user's change statements, for questions about current or earlier values.
+
+    "Which city do I live in now?" shares no word with "I moved from Porto
+    to Braga", so relevance search alone misses the one line that answers
+    it (a10 replay, llama3.2:3b). For such questions the user's statements
+    that replace an earlier value are fetched as their own small group.
+    """
+    if limit <= 0 or not _STATE_QUESTION.search(task):
+        return []
+    try:
+        lane = memory.retrieve_many_sync([_CHANGE_QUERY], tags=[USER_TAG])[0]
+    except Exception as exc:
+        logger.warning("change-statement retrieval failed: %s", exc)
+        return []
+    return [f for f in lane.fragments if trusted(f) and _CHANGE_STATEMENT.search(f.content)][:limit]
+
+
 class _WatchPrefetchMixin:
     """Anchor extraction, background prefetch, link anticipation and stale-value checks."""
 
@@ -168,6 +197,10 @@ class _WatchPrefetchMixin:
                         links.extend(self._links_from(anchor, result))
             if task:
                 self._task_results = {task: results[-1]}
+        if task:
+            changes = _change_lane(self._memory, task, getattr(self, "change_lines", 0))
+            with self._lock:
+                self._task_changes = {task: changes}
         if links:
             self._prefetch(links, None)
 
