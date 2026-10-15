@@ -28,6 +28,10 @@ doesn't know instead of improvising.
     system_prompt += watch.briefing().text   # before every model call
     watch.observe(model_output, role="assistant")
 
+Plain agent loops with OpenAI-style message lists use
+``watch.observe_messages(messages)`` and :func:`inject` (``watch_messages``);
+``ContextWatch.for_small_models(memory)`` is a tighter preset for small models.
+
 The background machinery lives in ``watch_prefetch`` and the data types and
 text helpers in ``watch_support``; both are re-exported here.
 """
@@ -39,6 +43,7 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
+from mark.context.watch_messages import _WatchMessagesMixin, inject
 from mark.context.watch_prefetch import _WatchPrefetchMixin
 # Some of these are not used here; they stay importable from this module.
 from mark.context.watch_support import (
@@ -58,7 +63,7 @@ from mark.context.watch_support import (
 logger = logging.getLogger("mark.context.watch")
 
 
-class ContextWatch(_WatchPrefetchMixin):
+class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
     """Follows an agent's stream and keeps anticipated context ready.
 
     memory          a ``MarkMemory`` (``runtime.memory(agent_id)``)
@@ -66,6 +71,7 @@ class ContextWatch(_WatchPrefetchMixin):
     max_anchors     how many active subjects a briefing covers
     per_anchor      memories shown per subject
     ttl_turns       turns an anchor stays active without being mentioned
+    line_chars      maximum length of one record bullet
     background      prefetch on a worker thread (False: inline, deterministic)
     """
 
@@ -78,12 +84,14 @@ class ContextWatch(_WatchPrefetchMixin):
         per_anchor: int = 3,
         ttl_turns: int = 6,
         background: bool = True,
+        line_chars: int = 240,
     ) -> None:
         self._memory = memory
         self.budget_chars = budget_chars
         self.max_anchors = max_anchors
         self.per_anchor = per_anchor
         self.ttl_turns = ttl_turns
+        self.line_chars = line_chars
         self._lock = threading.RLock()
         self._anchors: dict[str, _Anchor] = {}
         self._results: dict[str, Any] = {}          # anchor key -> RetrievalResult
@@ -208,7 +216,7 @@ class ContextWatch(_WatchPrefetchMixin):
             for fact in facts:
                 add(f"- {fact.attribute}: {fact.value} (since {fact.valid_from.date().isoformat()})")
             for fragment in records:
-                if add(f"- {_one_line(fragment.content)}"):
+                if add(f"- {_one_line(fragment.content, self.line_chars)}"):
                     seen_ids.add(fragment.id)
                     shown.append(fragment.id)
         if task_result is not None:
@@ -216,7 +224,7 @@ class ContextWatch(_WatchPrefetchMixin):
             if extra:
                 add("Related to the current request:")
                 for fragment in extra:
-                    if add(f"- {_one_line(fragment.content)}"):
+                    if add(f"- {_one_line(fragment.content, self.line_chars)}"):
                         seen_ids.add(fragment.id)
                         shown.append(fragment.id)
         if unknown:
