@@ -86,14 +86,23 @@ def execute(db: Path, cmd: str, args: dict[str, Any], *, use_server: bool = True
 
 def _ingest_in_chunks(server: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     """Send large ingests as several requests, each well under the size cap."""
-    stored, chunk, size = 0, [], 0
+    result: dict[str, Any] = {"stored": 0}
+    chunk: list[str] = []
+    size = 0
+
+    def send() -> None:
+        # Counts add up; other fields (e.g. current "facts") come from the last chunk.
+        nonlocal result
+        part = _call_server(server, "ingest", {**args, "lines": chunk})
+        result = {**part, "stored": result["stored"] + part["stored"]}
+
     for line in args["lines"]:
         line_size = len(line.encode("utf-8")) + 8  # + JSON quoting/separator slack
         if chunk and size + line_size > INGEST_CHUNK_BYTES:
-            stored += _call_server(server, "ingest", {**args, "lines": chunk})["stored"]
+            send()
             chunk, size = [], 0
         chunk.append(line)
         size += line_size
     if chunk:
-        stored += _call_server(server, "ingest", {**args, "lines": chunk})["stored"]
-    return {"stored": stored}
+        send()
+    return result
