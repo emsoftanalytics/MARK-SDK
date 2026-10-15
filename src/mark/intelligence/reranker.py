@@ -16,6 +16,10 @@ from typing import Any, Mapping
 
 from mark.index import VectorSearchResult
 from mark.intelligence.supersession import is_retired
+
+# Assistant replies (tag "mark:assistant") and stored questions ("mark:question") are context, not facts.
+_LOW_TRUST_TAGS = frozenset({"mark:assistant", "mark:question"})
+_LOW_TRUST_FACTOR = 0.6
 from mark.store.sqlite import LocalMemoryStore
 from mark.types import MemoryFragment
 
@@ -107,6 +111,9 @@ class MemoryReranker:
             retired = demote_retired and fragment is not None and is_retired(fragment)
             if retired:
                 score *= self._RETIRED_FACTOR
+            # The model's own replies and stored bare questions rank below what the user stated.
+            if fragment is not None and _LOW_TRUST_TAGS.intersection(fragment.tags or ()):
+                score *= _LOW_TRUST_FACTOR
             score = round(score, 6)
             results.append(
                 RerankResult(

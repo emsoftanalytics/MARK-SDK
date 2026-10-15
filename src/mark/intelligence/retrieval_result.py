@@ -98,6 +98,14 @@ class RetrievalResult:
         """Compact plain-text rendering (the "numbered" format of :meth:`as_context`)."""
         return self.as_context(max_words, format="numbered", max_tokens=max_tokens, max_item_chars=max_item_chars)
 
+    def to_dict(self, max_words: int = 1500) -> dict:
+        """JSON-ready result: the "json" format of :meth:`as_context` plus facts and the gap report."""
+        payload = _json.loads(self.as_context(max_words, format="json"))
+        payload = payload if isinstance(payload, dict) else {"memories": payload}
+        payload.setdefault("facts", [f.as_text() if hasattr(f, "as_text") else str(f) for f in self.facts])
+        payload.setdefault("gap", getattr(getattr(self.gap_report, "severity", None), "value", None))
+        return payload
+
     def _render_items(self, max_words: int, max_item_chars: int) -> tuple[list[dict], int]:
         """Results that fit the word budget, each windowed to its best passage; plus the omitted count."""
         from mark.intelligence.temporal_order import declared_event_time, same_day_order

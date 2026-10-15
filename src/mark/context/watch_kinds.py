@@ -107,8 +107,11 @@ def closed_todos(fragments: list[Any]) -> set[str]:
     for todo in todos:
         meta = _meta(todo)
         tags = {str(t).lower() for t in getattr(todo, "tags", None) or ()}
-        if (str(meta.get("status") or "").lower() in _CLOSED_STATUS or meta.get("resolved")
-                or tags & {"done", "resolved", "status:done", "status:resolved"} or todo.id in resolved_ids):
+        # "mark:resolved"/"mark:superseded" and metadata["lifecycle"] come from memory.resolve()/supersede().
+        if (str(meta.get("status") or meta.get("lifecycle") or "").lower() in _CLOSED_STATUS | {"superseded"}
+                or meta.get("resolved") or meta.get("resolved_at") or meta.get("superseded_by")
+                or tags & {"done", "resolved", "status:done", "status:resolved", "mark:resolved", "mark:superseded"}
+                or todo.id in resolved_ids):
             closed.add(todo.id)
             continue
         target = _content_words(todo)

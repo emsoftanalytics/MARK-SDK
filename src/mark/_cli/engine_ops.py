@@ -101,12 +101,11 @@ class EngineOpsMixin:
     def cmd_brief(self, agent: str, budget: int = 400) -> dict[str, Any]:
         memory = self._memory(agent)
         try:
-            from mark.context.brief import brief  # W5: brief(memory, budget_tokens=...)
+            from mark.context.session_brief import brief
         except ImportError:
             return {"text": fallback_brief(memory, int(budget)), "source": "fallback"}
         result = brief(memory, budget_tokens=int(budget))
-        text = result.as_text() if hasattr(result, "as_text") else str(result)
-        return {"text": text, "source": "brief"}
+        return {**result.to_dict(), "source": "brief"}
 
 
 def fallback_brief(memory: Any, budget_tokens: int) -> str:

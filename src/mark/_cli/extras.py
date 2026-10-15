@@ -63,9 +63,12 @@ def run_mcp(db: Path, agent: str, *, briefing: bool = False) -> None:
         from mark.adapters import mcp as adapter
     except ImportError as exc:  # pragma: no cover - adapter module is part of the package
         raise RuntimeError(str(exc)) from exc
-    launcher: Any = getattr(adapter, "run_mcp_server", None)
-    if launcher is not None:
-        launcher(db=db, agent_id=agent, briefing=briefing)
+    try:
+        from mark.adapters.mcp.launcher import main as launch
+    except ImportError:
+        launch = None
+    if launch is not None:
+        launch(["--db", str(db), "--agent", agent, *(["--briefing"] if briefing else [])])
         return
     from mark.runtime import Mark
 

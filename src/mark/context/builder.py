@@ -20,6 +20,15 @@ class ContextBundle:
         """Render as a plain text string."""
         return self.text
 
+    def as_context(self) -> str:
+        """The bundle text, ready to place in a prompt (same rendering family as RetrievalResult)."""
+        return self.text
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-ready summary of the bundle."""
+        return {"query": self.query, "text": self.text, "token_estimate": self.token_estimate,
+                "scores": dict(self.scores)}
+
 
 class ContextBuilder:
     """Renders scored records into an LLM-ready context string."""

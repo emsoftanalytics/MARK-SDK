@@ -58,6 +58,7 @@ class SimpleVerbsMixin:
     supersede = _forward("supersede")
     asupersede = _forward("asupersede")
     update = _forward("update")
+    brief = _forward("brief")
     aupdate = _forward("aupdate")
     resolve = _forward("resolve")
     aresolve = _forward("aresolve")

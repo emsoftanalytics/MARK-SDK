@@ -143,6 +143,15 @@ class VerbsMixin(MemoryCore):
             result = _select(result, keep)
         return apply_order(result, order)
 
+    def brief(self, *, budget_tokens: int = 400, focus: str | None = None, **options: Any) -> Any:
+        """One-call session brief: current facts, open TODOs, decisions, bugs/fixes, changes.
+
+        See :func:`mark.context.brief`; the result is budgeted to ``budget_tokens``.
+        """
+        from mark.context.session_brief import brief
+
+        return brief(self, budget_tokens=budget_tokens, focus=focus, **options)
+
     # ── async twins (a-prefix) ────────────────────────────────────────────────
 
     async def _in_executor(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
