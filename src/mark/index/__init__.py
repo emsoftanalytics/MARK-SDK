@@ -1,3 +1,3 @@
-from mark.index.vector import VectorIndex, VectorSearchResult
+from mark.index.vector import DimensionMismatchError, VectorIndex, VectorSearchResult
 
-__all__ = ["VectorIndex", "VectorSearchResult"]
+__all__ = ["DimensionMismatchError", "VectorIndex", "VectorSearchResult"]
