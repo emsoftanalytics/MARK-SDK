@@ -122,3 +122,15 @@ def test_switch_back_to_hash_restores_hash_vectors(tmp_path: Path) -> None:
         assert runtime.store.get_meta(KEY) == "mark.hash-v2:256"
     finally:
         runtime.shutdown()
+
+
+def test_paraphrase_eval_set_is_valid() -> None:
+    """benchmarks/embeddings: paraphrase queries share no content word with their gold fact."""
+    import importlib.util
+
+    script = Path(__file__).resolve().parents[1] / "benchmarks" / "embeddings" / "eval_embedders.py"
+    spec = importlib.util.spec_from_file_location("eval_embedders", script)
+    module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    spec.loader.exec_module(module)  # type: ignore[union-attr]
+    assert module.check_dataset() == []
+    assert len(module.FACTS) == 60 and len(module.QUERIES) == 60
