@@ -136,14 +136,16 @@ class Mark(MarkConfigureMixin):
                              FactExtractor (e.g. LLMFactExtractor, queued).
 
         The .mark/ directory is created under project_path if it does not
-        exist. SQLite database is at .mark/memory.db.
+        exist (mode 0700 on POSIX). SQLite database is at .mark/memory.db
+        (created 0600).
         """
+        from mark._private_fs import ensure_private_dir
         from mark.memory.runtime import MarkRuntime
 
         project  = Path(project_path).expanduser().resolve()
         mark_dir = (Path(store_path).expanduser().resolve()
                     if store_path else project / ".mark")
-        mark_dir.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(mark_dir)  # 0700 when MARK creates it; existing dirs untouched
         db_path = mark_dir / "memory.db"
 
         runtime = MarkRuntime.local(

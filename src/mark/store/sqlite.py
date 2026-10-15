@@ -12,6 +12,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
+from mark._private_fs import ensure_private_db_file, ensure_private_dir
 from mark.security import EncryptionProvider, NoOpEncryptionProvider
 from mark.store._sqlite.blocks import BlockMixin
 from mark.store._sqlite.codec import (  # noqa: F401 - re-exported for compatibility
@@ -112,5 +113,7 @@ class LocalMemoryStore(
             # Each :memory: connection is a separate database, so share one.
             self._shared_conn = self._open(":memory:")
         else:
-            Path(self.db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
+            # Private by default: memory.db (and -wal/-shm) 0600, a new parent 0700.
+            ensure_private_dir(Path(self.db_path).expanduser().parent)
+            ensure_private_db_file(self.db_path)
         self._init_schema()

@@ -34,9 +34,10 @@ class _Engine:
     """Loads MARK lazily and executes commands against one database."""
 
     def __init__(self, db: Path) -> None:
+        from mark._private_fs import ensure_private_dir
         from mark.memory.runtime import MarkRuntime
 
-        db.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(db.parent)  # 0700 when created here
         self.runtime = MarkRuntime.local(store_path=db)
 
     def close(self) -> None:
