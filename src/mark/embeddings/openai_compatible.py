@@ -15,7 +15,7 @@ class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
     LM Studio (``http://localhost:1234/v1``), vLLM, LocalAI, and Ollama
     (``http://localhost:11434/v1``). Sends ``POST {base_url}/embeddings`` with
     ``{"model", "input": [...]}``, orders results by ``index``, and
-    re-normalises vectors client-side. Connection errors and HTTP 429/5xx are
+    re-normalises vectors client-side. Connection errors, timeouts and HTTP 429/5xx are
     retried with exponential backoff and full jitter. The API key is only sent
     as a bearer header; it never appears in errors, logs, or ``repr``.
     """
