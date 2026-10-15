@@ -36,6 +36,10 @@ This project follows semantic versioning for public package releases.
 - `mark serve` keeps a store warm for fast command-line use, restricted to
   loopback with token authentication and a per-database lock.
 - `RetrievalResult` exposes `facts`, `temporal_intent`, and `missing_anchors`.
+- `memory.facts.retract()` and `mark fact retract` withdraw facts recorded by
+  mistake; retracted facts are kept for audit.
+- Recall output labels events that share a date with their order that day,
+  so the latest of several same-day changes is clear.
 
 ### Changed
 
@@ -55,6 +59,8 @@ This project follows semantic versioning for public package releases.
 - Term matching treated unrelated identifiers with a shared prefix (for
   example `titan` and `titanium`) as the same word.
 - Concurrent creation of a new store from several processes could fail.
+- A `mark` client and a running `mark serve` from different builds could fail
+  mid-command; the client now detects the mismatch and runs locally.
 - Several modules could not be imported on their own because of circular
   imports.
 
