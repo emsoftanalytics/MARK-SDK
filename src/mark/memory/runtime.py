@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from mark.embeddings import EmbeddingProvider, HashEmbeddingProvider
+from mark.embeddings import EmbeddingProvider, resolve_embedder
 from mark.index import VectorIndex
 from mark.intelligence.retrieval import GraphExpander, RetrievalPipeline
 from mark.intelligence.compressor import ContextualCompressor
@@ -79,7 +79,7 @@ class MarkRuntime:
         cls,
         *,
         store_path: str | Path = ":memory:",
-        embedder: EmbeddingProvider | None = None,
+        embedder: EmbeddingProvider | str | None = None,
         encryption: EncryptionProvider | None = None,
         plugins: Iterable[MarkCorePlugin] | None = None,
         workers: int = 4,
@@ -91,11 +91,12 @@ class MarkRuntime:
         retrieval_top_k: int = 20,
         middleware: Iterable[MarkMiddleware] | None = None,
     ) -> "MarkRuntime":
-        """Construct a local instance with default wiring."""
+        """Construct a local instance; ``embedder`` accepts a provider, a spec such as
+        ``"auto"`` (see ``mark.embeddings.auto``) or None (hash, or ``MARK_EMBEDDER``)."""
         registry = PluginRegistry()
         runtime = cls(
             store=LocalMemoryStore(store_path, encryption=encryption or NoOpEncryptionProvider()),
-            embedder=embedder or HashEmbeddingProvider(),
+            embedder=resolve_embedder(embedder),
             plugins=registry,
             workers=workers,
             llm=llm,

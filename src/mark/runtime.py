@@ -115,7 +115,9 @@ class Mark(MarkConfigureMixin):
         Args:
             project_path: Root directory of your project (default: cwd).
             store_path:   Override the .mark/ directory location.
-            embedder:     EmbeddingProvider (default: HashEmbeddingProvider).
+            embedder:     EmbeddingProvider, or a spec string: "auto" (best local
+                          model, else hash), "hash", "ollama:<model>", ...
+                          Default: HashEmbeddingProvider, or MARK_EMBEDDER if set.
             encryption:   EncryptionProvider (default: no encryption).
             workers:      Thread-pool size for async retrieval (default: 4).
             llm:          LLMProvider for local entity extraction in observe().

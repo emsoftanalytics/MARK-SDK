@@ -1,4 +1,6 @@
+"""Embedding providers: hash fallback, local models, HTTP servers, and ``auto_embedder``."""
 from mark.embeddings._http import EmbeddingHTTPError
+from mark.embeddings.auto import auto_embedder, resolve_embedder
 from mark.embeddings.base import EmbeddingProvider, HashEmbeddingProvider
 from mark.embeddings.cache import CachedEmbeddingProvider
 from mark.embeddings.fastembed import FastEmbedProvider
@@ -17,4 +19,6 @@ __all__ = [
     "OllamaEmbeddingProvider",
     "OpenAICompatibleEmbeddingProvider",
     "SentenceTransformerEmbeddingProvider",
+    "auto_embedder",
+    "resolve_embedder",
 ]
