@@ -122,6 +122,9 @@ class SimpleMemory:
         bus   = mark.runtime.global_bus()
     """
 
+    #: Maximum importance change applied by one feedback() call.
+    FEEDBACK_STEP = 0.05
+
     def __init__(self, runtime: Any) -> None:
         from mark.memory.mark_memory import MarkMemory
         self._runtime:     Any       = runtime
@@ -279,9 +282,31 @@ class SimpleMemory:
 
     # ── feedback API ──────────────────────────────────────────────────────────
 
-    def feedback(self, record_id: str, score: float) -> None:
-        """Signal quality feedback. Register HOOK_FEEDBACK for custom collection."""
-        pass
+    def feedback(self, record_id: str, score: float) -> bool:
+        """Record quality feedback for a memory record.
+
+        ``score`` is clamped to ``[-1.0, 1.0]``. Positive feedback nudges the
+        record's importance up, negative feedback down, by at most
+        ``FEEDBACK_STEP`` per call; running totals are kept in metadata
+        (``feedback_count`` / ``feedback_sum``). A registered HOOK_FEEDBACK
+        plugin also receives the signal. Returns False for unknown records.
+        """
+        score = max(-1.0, min(1.0, float(score)))
+        store = self._runtime.store
+        fragment = store.get(record_id)
+        if fragment is None:
+            return False
+        metadata = dict(fragment.metadata)
+        metadata["feedback_count"] = int(metadata.get("feedback_count", 0)) + 1
+        metadata["feedback_sum"] = round(float(metadata.get("feedback_sum", 0.0)) + score, 6)
+        importance = max(0.0, min(1.0, fragment.importance + self.FEEDBACK_STEP * score))
+        store.store(fragment.model_copy(update={"metadata": metadata, "importance": importance}))
+        from mark.plugins import HOOK_FEEDBACK
+
+        hook = self._runtime.plugins.get(HOOK_FEEDBACK) if hasattr(self._runtime, "plugins") else None
+        if hook:
+            hook(record_id=record_id, score=score, agent_id=fragment.agent_id)
+        return True
 
     # ── graph API (delegates to the underlying MarkMemory) ───────────────────
 

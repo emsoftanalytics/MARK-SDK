@@ -367,7 +367,7 @@ class LocalMemoryStore:
 
         Raises ValueError when the id already belongs to a different agent.
         """
-        fragment = ContentHasher.attach(fragment)
+        fragment = ContentHasher.attach(fragment, self.encryption)
         encrypted_content = self.encryption.encrypt_str(fragment.content)
         params = {
             "id": fragment.id,
@@ -1429,7 +1429,7 @@ class LocalMemoryStore:
             embedding=_decode_embedding(row.get("embedding_blob"), row["embedding"]),
             contradiction_ids=json.loads(str(row["contradiction_ids"])),
         )
-        if not ContentHasher.check(fragment):
+        if not ContentHasher.check(fragment, self.encryption):
             already = fragment.state == MemoryState.CONTRADICTED
             return fragment.model_copy(update={"state": MemoryState.CONTRADICTED}), not already
         return fragment, False

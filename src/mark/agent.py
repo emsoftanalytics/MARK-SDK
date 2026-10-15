@@ -420,8 +420,4 @@ class MarkAgent:
     @staticmethod
     def _new_stack(inherited: list[MarkMiddleware], runtime: object) -> MiddlewareStack:
         """Return a stack bound to *runtime* holding already-bound *inherited* items."""
-        stack = MiddlewareStack()
-        stack.bind(runtime)  # empty stack: records the runtime, binds nothing
-        for item in inherited:
-            stack._middleware.append(item)  # already bound; do not re-bind
-        return stack
+        return MiddlewareStack.from_bound(inherited, runtime)

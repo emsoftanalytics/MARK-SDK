@@ -543,3 +543,28 @@ def test_retrievable_ids_cache_honours_ttl_expiry(tmp_path) -> None:
     _time.sleep(1.3)
     assert store.retrievable_ids("t") == set()
     store.close()
+
+
+def test_encrypted_store_keeps_no_plain_content_hash(tmp_path) -> None:
+    import hashlib
+    import json
+    import sqlite3
+
+    pytest.importorskip("cryptography")
+    from mark.security.encryption import FernetEncryptionProvider
+    from mark.store import LocalMemoryStore
+    from mark.types import MemoryFragment, MemoryScope, MemoryState, MemoryTier
+
+    path = tmp_path / "enc.db"
+    store = LocalMemoryStore(path, encryption=FernetEncryptionProvider(passphrase="correct horse"))
+    secret = "PIN is 4821"
+    fid = store.store(MemoryFragment(content=secret, scope=MemoryScope.AGENT, tier=MemoryTier.SEMANTIC,
+                                     agent_id="e", state=MemoryState.UNVERIFIED))
+    assert store.get(fid).content == secret
+    assert store.get(fid).state == MemoryState.UNVERIFIED  # keyed digest verifies
+    store.close()
+
+    raw = sqlite3.connect(path).execute("SELECT metadata FROM fragments WHERE id = ?", (fid,)).fetchone()[0]
+    plain = hashlib.sha256(secret.encode()).hexdigest()
+    assert plain not in raw
+    assert "hmac-sha256:" in json.dumps(json.loads(raw))

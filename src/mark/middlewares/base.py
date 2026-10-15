@@ -101,6 +101,18 @@ class MiddlewareStack:
         """Return middleware in execution order."""
         return list(self._middleware)
 
+    @classmethod
+    def from_bound(cls, middleware: Iterable[MarkMiddleware], runtime: Any) -> "MiddlewareStack":
+        """Return a stack for *runtime* holding middleware that is already bound.
+
+        Use this to derive an independent stack from an existing one (e.g. a
+        per-agent copy of the runtime stack) without re-binding its items.
+        """
+        stack = cls()
+        stack._runtime = runtime
+        stack._middleware = list(middleware)
+        return stack
+
     def run(
         self,
         operation: str,
