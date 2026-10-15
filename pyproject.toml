@@ -50,6 +50,15 @@ ollama = [
 sentence-transformers = [
   "sentence-transformers>=2.7",
 ]
+fast = [
+  "numpy>=1.26",
+]
+fastembed = [
+  "fastembed>=0.5",
+]
+model2vec = [
+  "model2vec>=0.4",
+]
 web = [
   "duckduckgo-search>=6.0",
   "beautifulsoup4>=4.12",
