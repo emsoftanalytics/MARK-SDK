@@ -8,8 +8,9 @@
 from __future__ import annotations
 
 import hashlib
+from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Deque, Dict, List
 
 
 @dataclass
@@ -41,9 +42,14 @@ class RoutingDecisionLogger:
     training implementation.
     """
 
-    def __init__(self, runtime: Any = None) -> None:
+    DEFAULT_MAX_ENTRIES = 10_000
+
+    def __init__(self, runtime: Any = None, *, max_entries: int = DEFAULT_MAX_ENTRIES) -> None:
+        if max_entries < 1:
+            raise ValueError(f"max_entries must be >= 1, got {max_entries!r}")
         self._runtime = runtime
-        self._log: List[Dict] = []
+        # Bounded: the oldest decisions are dropped once max_entries is reached.
+        self._log: Deque[Dict] = deque(maxlen=max_entries)
 
     def log(self, experience: Any, query_hash: str, policy: str) -> None:
         """Log a routing decision. Pass hash(query), not the raw query."""
@@ -57,7 +63,9 @@ class RoutingDecisionLogger:
 
     def recent(self, limit: int = 50) -> List[Dict]:
         """Return the most recent entries."""
-        return self._log[-limit:]
+        if limit <= 0:
+            return []
+        return list(self._log)[-limit:]
 
 
 class GovernanceSignalCollector:
