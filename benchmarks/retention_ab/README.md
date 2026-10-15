@@ -48,6 +48,7 @@ forward itself.
 | File | Purpose |
 | --- | --- |
 | `gen.py` | Deterministic generator (seed 20261015): writes `chunks/chunk_{1..5}.log`, `questions.json`, and private `answers.json` |
+| `gen_data.py`, `gen_questions.py` | Generator modules used by `gen.py`: static vocabulary, and question/answer construction |
 | `markcli.py` | The `mark` CLI used by arm B |
 | `grade.py` | Strict, LLM-free grader (exact value or alias; hedges listing competing values are wrong) |
 | `prompts.md` | Verbatim session prompt templates |
@@ -90,5 +91,5 @@ cp questions.json run/armA/ && cp questions.json run/armB/
 python grade.py --key answers.json run/armA/answers.json run/armB/answers.json --out results/graded.json
 ```
 
-Agents must not be able to read `gen.py`, `answers.json` or `chunks/` during
+Agents must not be able to read `gen*.py`, `answers.json` or `chunks/` during
 the run. Keep them outside the arm workspaces, as the original run did.

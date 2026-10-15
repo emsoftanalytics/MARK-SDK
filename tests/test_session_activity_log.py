@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
+"""Session activity log: event logging/filtering/ordering, SessionLog helpers
+and summaries, runtime scoping, and on-disk persistence.
+"""
 from __future__ import annotations
 
 from pathlib import Path

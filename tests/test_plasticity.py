@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
+"""Plasticity: temporal decay, Hebbian importance boosts, edge co-activation,
+the pruner, and the static router / routing feedback.
+"""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone

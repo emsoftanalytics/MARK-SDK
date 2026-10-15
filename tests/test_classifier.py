@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
+"""QueryClassifier: query-to-policy mapping, query analysis features (complexity,
+keywords, temporal/negation/reasoning flags), and reasoning strings.
+"""
 from __future__ import annotations
 
 import pytest

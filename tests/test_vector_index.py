@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
+"""VectorIndex: CRUD and agent scoping, ranking, persistence (incl. legacy v1),
+concurrency, and python/numpy backend parity and auto-promotion.
+"""
 from __future__ import annotations
 
 import json

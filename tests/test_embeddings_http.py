@@ -1,40 +1,28 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
+"""Embedding providers over HTTP (local fake server): OpenAI-compatible batching,
+retries/backoff and errors, and Ollama endpoint fallback.
+"""
 from __future__ import annotations
 
 import json
 import logging
-import math
 import socket
 import sys
 import threading
-import time
-import types
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 
 import pytest
 
 from mark.embeddings import (
-    CachedEmbeddingProvider,
     EmbeddingHTTPError,
-    EmbeddingProvider,
-    FastEmbedProvider,
-    HashEmbeddingProvider,
-    Model2VecProvider,
     OllamaEmbeddingProvider,
     OpenAICompatibleEmbeddingProvider,
-    SentenceTransformerEmbeddingProvider,
 )
 from mark.embeddings import _http
 
-
-def _cos(a: list[float], b: list[float]) -> float:
-    return sum(x * y for x, y in zip(a, b))
-
-
-def _norm(v: list[float]) -> float:
-    return math.sqrt(sum(x * x for x in v))
+from _helpers_embeddings import _norm
 
 
 # ── local fake embedding server ──────────────────────────────────────────────
@@ -91,125 +79,6 @@ def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
 
 def _vec(i: int) -> list[float]:
     return [float(i + 1), 2.0, 0.0]
-
-
-# ── base / hash v2 ───────────────────────────────────────────────────────────
-
-
-def test_base_fingerprint_default() -> None:
-    class Custom(EmbeddingProvider):
-        def embed(self, text: str) -> list[float]:
-            return [1.0]
-
-        @property
-        def dim(self) -> int:
-            return 1
-
-    assert Custom().fingerprint == f"{__name__}.test_base_fingerprint_default.<locals>.Custom:1"
-    assert Custom().embed_batch(["a", "b"]) == [[1.0], [1.0]]
-
-
-def test_hash_v2_defaults_and_fingerprint() -> None:
-    h = HashEmbeddingProvider()
-    assert h.dim == 256
-    assert h.fingerprint == "mark.hash-v2:256"
-    assert HashEmbeddingProvider(dim=64).fingerprint == "mark.hash-v2:64"
-    with pytest.raises(ValueError):
-        HashEmbeddingProvider(dim=0)
-
-
-def test_hash_v2_deterministic_normalised_and_semantic() -> None:
-    h = HashEmbeddingProvider()
-    a = h.embed("Elena enters the warehouse at midnight.")
-    assert a == HashEmbeddingProvider().embed("Elena enters the warehouse at midnight.")
-    assert _norm(a) == pytest.approx(1.0)
-    assert h.embed("") == [0.0] * 256
-    # Possessive 's stripped, case-insensitive, punctuation ignored.
-    assert h.embed("Elena's KEY!") == h.embed("elena key")
-    # Stopwords dropped (but a stopword-only text still embeds).
-    assert h.embed("the key of the warehouse") == h.embed("key warehouse")
-    assert _norm(h.embed("the of and")) == pytest.approx(1.0)
-    related = _cos(h.embed("brass key in the warehouse"), h.embed("warehouse keys made of brass"))
-    unrelated = _cos(h.embed("brass key in the warehouse"), h.embed("quantum chromodynamics lecture"))
-    assert related > 0.3 > unrelated
-    # Char 3-grams give morphological overlap.
-    assert _cos(h.embed("running"), h.embed("runner")) > 0.1
-    # Word order matters via bigrams.
-    assert h.embed("dog bites man") != h.embed("man bites dog")
-
-
-def test_hash_v2_speed() -> None:
-    h = HashEmbeddingProvider()
-    text = "Elena carries a brass key into the warehouse."
-    h.embed(text)
-    n = 2000
-    start = time.perf_counter()
-    for _ in range(n):
-        h.embed(text)
-    per_call_ms = (time.perf_counter() - start) / n * 1000
-    assert per_call_ms < 0.5  # target < 0.1 ms; generous bound for slow CI
-
-
-# ── cache ────────────────────────────────────────────────────────────────────
-
-
-class CountingProvider(EmbeddingProvider):
-    def __init__(self) -> None:
-        self.batch_calls: list[list[str]] = []
-
-    def embed(self, text: str) -> list[float]:
-        return self.embed_batch([text])[0]
-
-    def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        self.batch_calls.append(list(texts))
-        return [[float(len(t)), 1.0] for t in texts]
-
-    @property
-    def dim(self) -> int:
-        return 2
-
-    @property
-    def fingerprint(self) -> str:
-        return "counting:2"
-
-
-def test_cache_batch_only_computes_misses_once() -> None:
-    inner = CountingProvider()
-    cache = CachedEmbeddingProvider(inner, maxsize=10)
-    cache.embed("aa")
-    out = cache.embed_batch(["aa", "bbb", "c", "bbb"])
-    assert out == [[2.0, 1.0], [3.0, 1.0], [1.0, 1.0], [3.0, 1.0]]
-    assert inner.batch_calls == [["aa"], ["bbb", "c"]]
-    assert cache.fingerprint == "counting:2"
-    assert cache.stats()["misses"] == 3
-
-
-def test_cache_returns_copies() -> None:
-    cache = CachedEmbeddingProvider(CountingProvider())
-    first = cache.embed("x")
-    first[0] = 999.0
-    assert cache.embed("x") == [1.0, 1.0]
-
-
-def test_cache_thread_safe_and_bounded() -> None:
-    cache = CachedEmbeddingProvider(HashEmbeddingProvider(dim=16), maxsize=50)
-    errors: list[BaseException] = []
-
-    def worker(n: int) -> None:
-        try:
-            for i in range(300):
-                text = f"text {(i * 7 + n) % 120}"
-                assert cache.embed(text) == HashEmbeddingProvider(dim=16).embed(text)
-        except BaseException as exc:  # noqa: BLE001
-            errors.append(exc)
-
-    threads = [threading.Thread(target=worker, args=(n,)) for n in range(6)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-    assert errors == []
-    assert cache.stats()["size"] <= 50
 
 
 # ── OpenAI-compatible ────────────────────────────────────────────────────────
@@ -375,85 +244,3 @@ def test_ollama_missing_model_404_is_not_masked(no_sleep: list[float]) -> None:
         assert len(server.requests) == 1
     finally:
         server.close()
-
-
-# ── optional local model providers (faked; no downloads) ─────────────────────
-
-
-class _FakeArray:
-    def __init__(self, rows: list[list[float]]) -> None:
-        self.rows = rows
-
-    def tolist(self) -> list[list[float]]:
-        return self.rows
-
-
-def test_sentence_transformers_import_and_batch(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[dict] = []
-
-    class SentenceTransformer:
-        def __init__(self, name: str, **kwargs: object) -> None:
-            self.name = name
-
-        def get_sentence_embedding_dimension(self) -> int:
-            return 2
-
-        def encode(self, texts: list[str], **kwargs: object) -> _FakeArray:
-            calls.append({"texts": texts, **kwargs})
-            return _FakeArray([[1.0, 0.0] for _ in texts])
-
-    monkeypatch.setitem(sys.modules, "sentence_transformers", types.SimpleNamespace(SentenceTransformer=SentenceTransformer))
-    provider = SentenceTransformerEmbeddingProvider("tiny-model")
-    assert provider.dim == 2
-    assert provider.embed_batch(["a", "b"]) == [[1.0, 0.0], [1.0, 0.0]]
-    assert calls[0]["normalize_embeddings"] is True and calls[0]["texts"] == ["a", "b"]
-    assert provider.embed("c") == [1.0, 0.0]
-    assert provider.fingerprint == "sentence-transformers:tiny-model:2"
-
-
-def test_fastembed_provider(monkeypatch: pytest.MonkeyPatch) -> None:
-    class TextEmbedding:
-        def __init__(self, model_name: str, **kwargs: object) -> None:
-            self.model_name = model_name
-
-        def embed(self, texts: list[str], batch_size: int = 256):
-            for _ in texts:
-                yield _FakeArray([3.0, 4.0]).rows
-
-    monkeypatch.setitem(sys.modules, "fastembed", types.SimpleNamespace(TextEmbedding=TextEmbedding))
-    provider = FastEmbedProvider()
-    assert provider.embed_batch(["a", "b"]) == [pytest.approx([0.6, 0.8])] * 2
-    assert provider.dim == 2
-    assert provider.fingerprint == "fastembed:BAAI/bge-small-en-v1.5:2"
-
-
-def test_model2vec_provider(monkeypatch: pytest.MonkeyPatch) -> None:
-    class StaticModel:
-        dim = 2
-
-        @classmethod
-        def from_pretrained(cls, name: str, **kwargs: object) -> "StaticModel":
-            return cls()
-
-        def encode(self, texts: list[str]) -> _FakeArray:
-            return _FakeArray([[0.0, 2.0] for _ in texts])
-
-    monkeypatch.setitem(sys.modules, "model2vec", types.SimpleNamespace(StaticModel=StaticModel))
-    provider = Model2VecProvider()
-    assert provider.dim == 2
-    assert provider.embed("x") == [0.0, 1.0]
-    assert provider.fingerprint == "model2vec:minishlab/potion-base-8M:2"
-
-
-@pytest.mark.parametrize(
-    ("cls", "module", "extra"),
-    [
-        (FastEmbedProvider, "fastembed", "mark-sdk[fastembed]"),
-        (Model2VecProvider, "model2vec", "mark-sdk[model2vec]"),
-        (SentenceTransformerEmbeddingProvider, "sentence_transformers", "mark-sdk[sentence-transformers]"),
-    ],
-)
-def test_optional_providers_name_their_extra(monkeypatch: pytest.MonkeyPatch, cls, module: str, extra: str) -> None:
-    monkeypatch.setitem(sys.modules, module, None)
-    with pytest.raises(ImportError, match=extra.replace("[", r"\[").replace("]", r"\]")):
-        cls()

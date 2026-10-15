@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
+"""CachedEmbeddingProvider: protocol conformance, hit/miss accounting, LRU
+eviction, size limits, batch population, and runtime integration.
+"""
 from __future__ import annotations
 
 from pathlib import Path

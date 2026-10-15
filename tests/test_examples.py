@@ -1,3 +1,6 @@
+"""Examples and packaged docs: example runner imports, the getting-started
+notebook, the mark-usage skill file/package data, and AGENTS.md contract.
+"""
 import importlib.util
 import json
 import sys

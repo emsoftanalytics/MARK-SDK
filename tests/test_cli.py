@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
+"""The `mark` CLI: in-process round trips, recall_many input formats, server
+lifecycle/auth/stale state, loopback-only serving, and lightweight imports.
+"""
 from __future__ import annotations
 
 import json

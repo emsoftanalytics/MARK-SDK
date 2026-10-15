@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
+"""Cloud sync: options/stats/delta types, CloudSync.prepare (redaction, block
+filters, events), upload via a mock cloud, and write-through mode.
+"""
 from __future__ import annotations
 
 from pathlib import Path
