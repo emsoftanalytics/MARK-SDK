@@ -16,7 +16,13 @@ in now?" returned its port and owner. Selection per subject, in order:
    "platform team"); a head noun matching nothing means the facts hold no
    answer, so none are returned (the memories still answer it);
 4. otherwise (open questions: "Tell me about atlas-core", "What is
-   atlas-core?", "Who is Mei Lin?") every fact about the subject is kept.
+   atlas-core?", "Who is Mei Lin?") the subject's facts are kept, unless
+   the subject was only inferred (``allow_open=False``: the user subject of
+   an "I/my" question, or a subject found in the matched memories).
+
+At most ``cap`` facts per subject are returned (``DEFAULT_FACT_CAP``), the
+ones sharing most words with the query first, then the most recent; asking
+for everything ("tell me about", "everything", "overview") lifts the cap.
 
 Only the subject's real attribute names and values are matched, through the
 same stemmer as retrieval, so no attribute vocabulary is hard-coded.
@@ -86,17 +92,61 @@ def question_head(query: str, subject: str = "") -> str | None:
     return None
 
 
-def select_facts(query: str, subject: str, rows: Sequence[Any]) -> list[Any]:
+DEFAULT_FACT_CAP = 3
+_EVERYTHING_RE = re.compile(
+    r"\b(?:tell\s+me\s+(?:about|everything)|everything|all\s+(?:the\s+)?(?:facts|details|info\w*)"
+    r"|overview|summar\w*|profile|what\s+do\s+(?:you|we|i)\s+know)\b",
+    re.I,
+)
+
+
+def wants_everything(query: str) -> bool:
+    """True when the query asks for all there is about a subject (no fact cap)."""
+    return _EVERYTHING_RE.search(query) is not None
+
+
+def select_facts(
+    query: str,
+    subject: str,
+    rows: Sequence[Any],
+    *,
+    allow_open: bool = True,
+    cap: int | None = DEFAULT_FACT_CAP,
+) -> list[Any]:
     """Filter one subject's current fact rows (``attribute``/``value`` keys) for *query*."""
     terms = set(_content_terms(query))
-    named = [row for row in rows if set(_content_terms(row["attribute"])) & terms]
+    named = [row for row in rows if set(_content_terms(_attribute_text(row))) & terms]
     if named:
-        return named
-    verb = who_verb(query, subject)
-    if verb is not None:
-        return [row for row in rows
-                if verb in {_agent_stem(stem) for stem in _content_stems(str(row["attribute"]))}]
-    head = question_head(query, subject)
-    if head is None:
-        return list(rows)
-    return [row for row in rows if head in _content_stems(str(row["value"]))]
+        selected = named
+    else:
+        verb = who_verb(query, subject)
+        head = question_head(query, subject) if verb is None else None
+        if verb is not None:
+            selected = [row for row in rows
+                        if verb in {_agent_stem(stem) for stem in _content_stems(_attribute_text(row))}]
+        elif head is not None:
+            selected = [row for row in rows if head in _content_stems(str(row["value"]))]
+        else:
+            selected = list(rows) if allow_open else []
+    if cap is None or len(selected) <= cap or wants_everything(query):
+        return selected
+    return _ranked(selected, terms)[:cap]
+
+
+def attribute_named(query: str, rows: Sequence[Any]) -> list[Any]:
+    """Rows whose attribute is fully named by the query ("test command" -> test_command)."""
+    terms = set(_content_terms(query))
+    return [row for row in rows if (attr := set(_content_terms(_attribute_text(row)))) and attr <= terms]
+
+
+def _attribute_text(row: Any) -> str:
+    """An attribute key as words: "lives_in" -> "lives in", "test-command" -> "test command"."""
+    return re.sub(r"[_\-.]+", " ", str(row["attribute"]))
+
+
+def _ranked(rows: Sequence[Any], terms: set[str]) -> list[Any]:
+    """Most query words in attribute + value first, then the most recently valid."""
+    def key(row: Any) -> tuple[int, str]:
+        stems = _content_stems(f"{_attribute_text(row)} {row['value']}")
+        return len(stems & terms), str(row.get("valid_from") or "") if hasattr(row, "get") else ""
+    return sorted(rows, key=key, reverse=True)

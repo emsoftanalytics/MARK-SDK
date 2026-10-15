@@ -3,6 +3,7 @@
 """Graph types: nodes, edges, relations, and block links."""
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, ClassVar, Dict, List, Optional, Set
@@ -67,6 +68,12 @@ class EdgeRelation(str, Enum):
     APPEARS_IN   character/object appears in a scene or episode
     LOCATED_AT   character/object is present at a location
     SYMBOLIZES   object or event carries symbolic/thematic meaning
+
+    The vocabulary is open: ``EdgeRelation("manages")`` returns a relation
+    named "manages" (lower-cased, spaces and dashes folded to "_"). Custom
+    relations are expansive, compare equal to their string value and are
+    cached, so ``EdgeRelation("manages") is EdgeRelation("Manages")``; they
+    are not listed by ``list(EdgeRelation)``, which stays the known set.
     """
     RELATED_TO   = "related_to"
     SUPPORTS     = "supports"
@@ -83,10 +90,45 @@ class EdgeRelation(str, Enum):
 
     EXPANSIVE: ClassVar[Set["EdgeRelation"]]
 
+    @classmethod
+    def _missing_(cls, value: object) -> "EdgeRelation | None":
+        """Accept any well-formed relation name (open vocabulary, see class docstring)."""
+        if not isinstance(value, str):
+            return None
+        name = _RELATION_SEP_RE.sub("_", value.strip().lower())
+        known = cls._value2member_map_.get(name)
+        if known is not None:
+            return known  # type: ignore[return-value]
+        if not _RELATION_NAME_RE.fullmatch(name):
+            return None
+        # A pseudo-member: a real EdgeRelation instance (isinstance, ==, .value
+        # and pickling all work) cached by value, but not added to the
+        # member list, so iteration still yields only the known relations.
+        member = str.__new__(cls, name)
+        member._name_ = name.upper()
+        member._value_ = name
+        cls._value2member_map_[name] = member
+        return member
+
+    @property
+    def is_known(self) -> bool:
+        """True for the built-in relations, False for custom names."""
+        return self._name_ in type(self).__members__
+
     @property
     def is_expansive(self) -> bool:
-        """True if the GraphExpander should traverse this edge to find related context."""
-        return self in EdgeRelation.EXPANSIVE
+        """True if the GraphExpander should traverse this edge to find related context.
+
+        Custom relations ("manages", "depends_on") express a real link between
+        two concepts, so they are traversed like RELATED_TO.
+        """
+        return self in EdgeRelation.EXPANSIVE or not self.is_known
+
+
+# Custom relation names: a letter, then letters, digits or "_" (max 64), after
+# lower-casing and folding runs of spaces / dashes into "_".
+_RELATION_NAME_RE = re.compile(r"[a-z][a-z0-9_]{0,63}")
+_RELATION_SEP_RE = re.compile(r"[\s\-]+")
 
 
 EdgeRelation.EXPANSIVE = {
