@@ -66,6 +66,7 @@ class ContradictionDetector:
             candidates = self._store.list_by_agent(
                 self._agent_id,
                 states=[MemoryState.VERIFIED, MemoryState.PROMOTED],
+                limit=None,
             )
 
         reports: List[ContradictionReport] = []

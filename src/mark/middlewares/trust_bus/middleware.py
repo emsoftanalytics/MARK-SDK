@@ -27,6 +27,9 @@ class TrustBusMiddleware(BaseMiddleware):
         )
         if not should_publish or not hasattr(context.runtime, "trust_bus"):
             return
+        # Never publish failed, stopped, or governance-rejected content.
+        if not context.succeeded:
+            return
 
         key = "text" if context.operation == "observe" else "content"
         content = str(context.payload.get(key) or "")

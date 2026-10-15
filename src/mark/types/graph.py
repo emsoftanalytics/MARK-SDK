@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from mark.types._datetime import ensure_utc
 from mark.types.memory import MemoryDocument, MemoryFragment, MemoryScope
 
 
@@ -127,6 +128,12 @@ class MemoryNode(BaseModel):
     metadata:    Dict[str, Any] = Field(default_factory=dict)
     created_at:  datetime       = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    @field_validator("created_at")
+    @classmethod
+    def _utc_created_at(cls, v: datetime) -> datetime:
+        """Coerce naive datetimes to UTC."""
+        return ensure_utc(v)
+
     @field_validator("label")
     @classmethod
     def label_not_empty(cls, v: str) -> str:
@@ -167,6 +174,12 @@ class MemoryEdge(BaseModel):
     block_id:   Optional[str]  = None
     metadata:   Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime       = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_validator("created_at")
+    @classmethod
+    def _utc_created_at(cls, v: datetime) -> datetime:
+        """Coerce naive datetimes to UTC."""
+        return ensure_utc(v)
 
     def is_expansive(self) -> bool:
         """Return True when graph expansion traverses this edge."""
@@ -212,6 +225,12 @@ class BlockLink(BaseModel):
     weight:          float          = Field(default=1.0, ge=0.0, le=1.0)
     metadata:        Dict[str, Any] = Field(default_factory=dict)
     created_at:      datetime       = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_validator("created_at")
+    @classmethod
+    def _utc_created_at(cls, v: datetime) -> datetime:
+        """Coerce naive datetimes to UTC."""
+        return ensure_utc(v)
 
     def summary(self) -> str:
         """Return a compact human-readable description."""

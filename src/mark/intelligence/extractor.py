@@ -15,14 +15,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
     from mark.types.llm import LLMProvider
+
+logger = logging.getLogger(__name__)
 
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
@@ -95,6 +98,25 @@ _OWN_VERB_RE = re.compile(
     r')\b',
     re.IGNORECASE,
 )
+
+# Idioms where an ownership/location verb does not introduce an object or place:
+# "used to", "take care", "take place", "took part", "held on", "picks up speed"...
+_IDIOM_RE = re.compile(
+    r'\b(?:'
+    r'(?:use[sd]?|using)\s+to'
+    r'|(?:take[sn]?|taking|took)\s+(?:care|place|part|time|note|notice|advantage|over|off|turns?'
+    r'|charge|hold|effect|action|steps?|place|shape|root|aim|sides|a\s+(?:look|break|seat|moment|while|chance|stand))'
+    r'|(?:hold[s]?|holding|held)\s+(?:on|off|up|back|out|true)'
+    r'|(?:own[s]?|owned|owning)\s+up'
+    r'|(?:grab[s]?|grabbed|grabbing)\s+(?:attention|a\s+bite)'
+    r'|(?:wear[s]?|wore|wearing)\s+(?:off|out|thin|down)'
+    r'|(?:carr(?:y|ies|ied|ying))\s+(?:on|out)'
+    r')\b',
+    re.IGNORECASE,
+)
+
+# Sentence spans: text up to and including terminal punctuation (or end of text).
+_SENTENCE_RE = re.compile(r'[^.!?\n]+(?:[.!?]+|$)', re.MULTILINE)
 
 # After an OWN verb: match optional article + lowercase noun phrase (1-3 words).
 # Objects are typically lowercase common nouns ("the red scarf", "a data file").
@@ -188,68 +210,100 @@ class DeterministicExtractor:
             entities.append((ctx_type, context_label))
             seen.add(context_label.lower())
 
-        # 2. Location entities — capitalized proper-noun NP after location verbs ─
+        # 2-4. Per-sentence extraction. Relations are only inferred inside a
+        # sentence, from each object/location to the nearest subject, so
+        # "Elena holds a lamp. Marco enters the Vault." never links Elena to
+        # the Vault or Marco to the lamp.
         locations: list[str] = []
-        for m in _LOCATION_VERB_RE.finditer(text):
-            after = text[m.end():].lstrip()
-            np = _LOCATION_NP_RE.match(after)
-            if np:
+        objects:   list[str] = []
+        subjects:  list[str] = []
+        subject_links: list[tuple[str, str, str]] = []
+
+        for sentence_match in _SENTENCE_RE.finditer(text):
+            sentence = sentence_match.group(0)
+            if not sentence.strip():
+                continue
+            lead = len(sentence) - len(sentence.lstrip())
+            body = sentence.lstrip()
+
+            # Subjects: sentence-start proper nouns followed by action verbs.
+            sentence_subjects: list[tuple[int, str]] = []
+            for m in _SENTENCE_SUBJECT_RE.finditer(body):
+                label = m.group(1).strip()
+                slug  = label.lower()
+                if slug in _STOPWORDS:
+                    continue
+                sentence_subjects.append((lead + m.start(1), label))
+                if slug not in seen:
+                    entities.append(("character", label))
+                    subjects.append(label)
+                    seen.add(slug)
+
+            def nearest_subject(pos: int) -> str | None:
+                if not sentence_subjects:
+                    return None
+                before = [s for s in sentence_subjects if s[0] <= pos]
+                pool = before or sentence_subjects
+                return min(pool, key=lambda s: abs(pos - s[0]))[1]
+
+            # Locations — capitalised proper-noun NP after location verbs.
+            for m in _LOCATION_VERB_RE.finditer(sentence):
+                after = sentence[m.end():].lstrip()
+                np = _LOCATION_NP_RE.match(after)
+                if not np:
+                    continue
                 label = np.group(1).strip()
                 slug  = label.lower()
-                if slug and slug not in _STOPWORDS and slug not in seen and len(label) > 2:
+                if not slug or slug in _STOPWORDS or len(label) <= 2:
+                    continue
+                if slug not in seen:
                     entities.append(("location", label))
                     locations.append(label)
                     seen.add(slug)
+                subj = nearest_subject(m.start())
+                if subj is not None and subj.lower() != slug:
+                    subject_links.append((subj, "located_at", label))
 
-        # 3. Object entities — lowercase noun phrase after ownership / use verbs ─
-        objects: list[str] = []
-        for m in _OWN_VERB_RE.finditer(text):
-            after = text[m.end():].lstrip()
-            np = _OBJECT_NP_RE.match(after)
-            if np:
+            # Objects — lowercase noun phrase after ownership / use verbs.
+            for m in _OWN_VERB_RE.finditer(sentence):
+                if _IDIOM_RE.match(sentence, m.start()):
+                    continue
+                after = sentence[m.end():].lstrip()
+                np = _OBJECT_NP_RE.match(after)
+                if not np:
+                    continue
                 raw   = np.group(1).strip()
+                first = raw.split()[0].lower()
+                if first in _STOPWORDS:
+                    continue
                 label = _title(raw)
                 slug  = label.lower()
-                if slug and slug not in _STOPWORDS and slug not in seen and len(label) > 2:
+                if not slug or slug in _STOPWORDS or len(label) <= 2:
+                    continue
+                if slug not in seen:
                     entities.append(("object", label))
                     objects.append(label)
                     seen.add(slug)
+                subj = nearest_subject(m.start())
+                if subj is not None:
+                    subject_links.append((subj, "owns", label))
 
-        # 4. Named entity detection — two tiers ───────────────────────────────
-        #
-        # subjects:       sentence-start proper nouns followed by action verbs.
-        #                 These are clearly active participants → source of relations.
-        # mid_entities:   mid-sentence capitalised sequences not already classified.
-        #                 Recorded as "entity" type but NOT used as relation sources
-        #                 (they might be locations/objects already classified above).
-
-        subjects: list[str] = []
-
-        for m in _SENTENCE_SUBJECT_RE.finditer(text):
-            label = m.group(1).strip()
-            slug  = label.lower()
-            if slug not in seen and slug not in _STOPWORDS:
-                entities.append(("character", label))
-                subjects.append(label)
-                seen.add(slug)
-
+        # Mid-sentence capitalised sequences not already classified are
+        # recorded as "entity" but never used as relation sources.
         for m in _PROPER_NOUN_RE.finditer(text):
             label = m.group(1).strip()
             slug  = label.lower()
             if slug not in seen and slug not in _STOPWORDS and len(label) > 1:
                 entities.append(("entity", label))
-                # NOT added to subjects — mid-sentence proper nouns are not assumed
-                # to be active participants that own objects or visit locations.
                 seen.add(slug)
 
-        # 5. Relation inference — subjects only as relation sources ───────────
+        # 5. Relation inference ────────────────────────────────────────────────
         for subj in subjects:
             if context_label:
                 relations.append((subj, "appears_in", context_label))
-            for loc in locations:
-                relations.append((subj, "located_at", loc))
-            for obj in objects:
-                relations.append((subj, "owns", obj))
+        for triple in subject_links:
+            if triple not in relations:
+                relations.append(triple)
         for obj in objects:
             if context_label:
                 relations.append((obj, "appears_in", context_label))
@@ -351,28 +405,192 @@ Rules:
 Observation: {text}"""
 
 
+_ENTITY_TYPES: frozenset[str] = frozenset(get_args(_VALID_ENTITY_TYPES))
+_RELATION_TYPES: frozenset[str] = frozenset(get_args(_VALID_RELATIONS))
+
+_ENTITY_TYPE_ALIASES: dict[str, str] = {
+    "person": "character", "people": "character", "human": "character",
+    "character_name": "character", "actor": "character",
+    "place": "location", "loc": "location", "venue": "location", "setting": "location",
+    "thing": "object", "item": "object", "prop": "object", "artifact": "object", "tool": "object",
+    "idea": "concept", "topic": "concept", "theme": "concept",
+    "organization": "entity", "organisation": "entity", "org": "entity", "company": "entity",
+    "named_entity": "entity",
+    "episode": "scene", "shot": "scene",
+    "action": "event", "incident": "event",
+    "bot": "agent", "assistant": "agent",
+}
+
+_RELATION_ALIASES: dict[str, str] = {
+    "has": "owns", "have": "owns", "possesses": "owns", "holds": "owns", "carries": "owns",
+    "wears": "owns", "owned_by": "owns",
+    "located_in": "located_at", "is_at": "located_at", "at": "located_at", "in": "located_at",
+    "lives_in": "located_at", "enters": "located_at",
+    "appears": "appears_in", "featured_in": "appears_in",
+    "related": "related_to", "associated_with": "related_to", "linked_to": "related_to",
+    "represents": "symbolizes", "symbolises": "symbolizes",
+    "caused": "causes", "leads_to": "causes",
+    "belongs_to": "part_of", "member_of": "part_of",
+    "supported_by": "supports", "refers_to": "references", "cites": "references",
+    "mention": "mentions", "mentioned": "mentions",
+}
+
+_FENCE_RE = re.compile(r"```[ \t]*(?:json|JSON)?[ \t]*\n?(.*?)```", re.DOTALL)
+
+
+def _iter_json_objects(text: str):
+    """Yield every brace-balanced ``{...}`` candidate in *text*, in order."""
+    for start in (i for i, ch in enumerate(text) if ch == "{"):
+        depth = 0
+        in_string = False
+        escape = False
+        for end in range(start, len(text)):
+            ch = text[end]
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    yield text[start:end + 1]
+                    break
+
+
+def _first_json_object(raw: str) -> dict[str, Any] | None:
+    """Find the first JSON object in an LLM reply (fences, prose, trailing text)."""
+    candidates: list[str] = [m.group(1) for m in _FENCE_RE.finditer(raw)]
+    candidates.append(raw)
+    for chunk in candidates:
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            data = json.loads(chunk)
+        except ValueError:
+            data = None
+        if isinstance(data, dict):
+            return data
+        for candidate in _iter_json_objects(chunk):
+            try:
+                data = json.loads(candidate)
+            except ValueError:
+                continue
+            if isinstance(data, dict):
+                return data
+    return None
+
+
+def _coerce_confidence(value: Any) -> float:
+    if value is None or isinstance(value, bool):
+        return 1.0
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 1.0
+    if number != number:  # NaN
+        return 1.0
+    return max(0.0, min(1.0, number))
+
+
+def _norm_key(value: Any) -> str:
+    return re.sub(r"[\s\-]+", "_", str(value).strip().lower())
+
+
+def _coerce_entity(item: Any) -> ExtractedEntity | None:
+    if not isinstance(item, dict):
+        return None
+    label = item.get("label") or item.get("name")
+    if not isinstance(label, str) or not label.strip():
+        return None
+    raw_type = _norm_key(item.get("type") or "entity")
+    etype = _ENTITY_TYPE_ALIASES.get(raw_type, raw_type)
+    if etype not in _ENTITY_TYPES:
+        return None
+    return ExtractedEntity(type=etype, label=label.strip(), confidence=_coerce_confidence(item.get("confidence")))
+
+
+def _coerce_relation(item: Any) -> ExtractedRelation | None:
+    if not isinstance(item, dict):
+        return None
+    source = item.get("source")
+    target = item.get("target")
+    if not isinstance(source, str) or not source.strip() or not isinstance(target, str) or not target.strip():
+        return None
+    raw_rel = _norm_key(item.get("relation") or "related_to")
+    relation = _RELATION_ALIASES.get(raw_rel, raw_rel)
+    if relation not in _RELATION_TYPES:
+        return None
+    return ExtractedRelation(
+        source=source.strip(),
+        relation=relation,
+        target=target.strip(),
+        confidence=_coerce_confidence(item.get("confidence")),
+    )
+
+
 def _parse_structured_response(raw: str) -> StructuredExtraction:
     """Parse an LLM response into StructuredExtraction.
 
-    Tries JSON directly; strips markdown code fences if present.
-    Returns an empty StructuredExtraction on any parse or validation failure —
-    never raises, so observe() always succeeds.
+    Tolerates markdown code fences, prose before/after the JSON, unknown or
+    differently-cased entity types (aliases are mapped, unknowns skipped per
+    item), and ``null`` confidences (default 1.0). Invalid items are dropped
+    individually instead of discarding the whole response. Failures are
+    logged; this never raises, so observe() always succeeds.
     """
-    text = raw.strip()
-
-    # Strip optional markdown code fence (```json ... ``` or ``` ... ```)
-    if text.startswith("```"):
-        lines = text.splitlines()
-        text = "\n".join(
-            line for line in lines
-            if not line.strip().startswith("```")
-        ).strip()
-
-    try:
-        data = json.loads(text)
-        return StructuredExtraction.model_validate(data)
-    except Exception:
+    if not isinstance(raw, str) or not raw.strip():
+        logger.warning("structured extraction: empty LLM response")
         return StructuredExtraction()
+
+    data = _first_json_object(raw)
+    if data is None:
+        logger.warning("structured extraction: no JSON object found in LLM response (%d chars)", len(raw))
+        return StructuredExtraction()
+
+    entities: list[ExtractedEntity] = []
+    raw_entities = data.get("entities") or []
+    if not isinstance(raw_entities, list):
+        logger.warning("structured extraction: 'entities' is %s, expected list", type(raw_entities).__name__)
+        raw_entities = []
+    for item in raw_entities:
+        entity = _coerce_entity(item)
+        if entity is None:
+            logger.debug("structured extraction: skipped invalid entity %r", item)
+        else:
+            entities.append(entity)
+
+    relations: list[ExtractedRelation] = []
+    raw_relations = data.get("relations") or []
+    if not isinstance(raw_relations, list):
+        logger.warning("structured extraction: 'relations' is %s, expected list", type(raw_relations).__name__)
+        raw_relations = []
+    for item in raw_relations:
+        relation = _coerce_relation(item)
+        if relation is None:
+            logger.debug("structured extraction: skipped invalid relation %r", item)
+        else:
+            relations.append(relation)
+
+    raw_tags = data.get("tags") or []
+    tags = [t.strip() for t in raw_tags if isinstance(t, str) and t.strip()] if isinstance(raw_tags, list) else []
+    summary = data.get("summary")
+    skipped = (len(raw_entities) - len(entities)) + (len(raw_relations) - len(relations))
+    if skipped:
+        logger.info("structured extraction: skipped %d invalid item(s)", skipped)
+    return StructuredExtraction(
+        entities=entities,
+        relations=relations,
+        tags=tags,
+        summary=summary if isinstance(summary, str) else None,
+    )
 
 
 class LLMStructuredExtractor:
@@ -427,7 +645,11 @@ class LLMStructuredExtractor:
                 summary   = result.summary,
             )
             return result
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "LLMStructuredExtractor failed; using deterministic extraction only: %s: %s",
+                type(exc).__name__, exc,
+            )
             return StructuredExtraction()
 
 

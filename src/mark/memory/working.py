@@ -64,25 +64,33 @@ class WorkingMemoryManager:
 
     def active(self) -> List[MemoryFragment]:
         """Return working memory fragments that have not yet expired."""
-        from mark.types import MemoryTier as MT
         fragments = self._store.list_by_agent(
             self._agent_id,
             states=[MemoryState.UNVERIFIED, MemoryState.VERIFIED],
+            tier=MemoryTier.WORKING,
+            limit=None,
         )
         now = datetime.now(timezone.utc)
         return [
             f for f in fragments
-            if f.tier == MT.WORKING and not f.is_expired(now=now)
+            if f.tier == MemoryTier.WORKING and not f.is_expired(now=now)
         ]
 
     def expire(self) -> int:
         """Delete all expired working memory fragments. Returns count deleted."""
-        from mark.types import MemoryTier as MT
-        fragments = self._store.list_by_agent(self._agent_id)
+        from mark.memory.block_chain import sealed_membership
+
+        fragments = self._store.list_by_agent(self._agent_id, tier=MemoryTier.WORKING, limit=None)
+        sealed = sealed_membership(self._store, self._agent_id)
         now = datetime.now(timezone.utc)
         count = 0
         for f in fragments:
-            if f.tier == MT.WORKING and f.is_expired(now=now):
-                self._store.delete(f.id)
-                count += 1
+            if f.tier != MemoryTier.WORKING or not f.is_expired(now=now):
+                continue
+            if sealed.protects_fragment(f) or f.state in (
+                MemoryState.QUARANTINED, MemoryState.CONTRADICTED,
+            ):
+                continue
+            self._store.delete(f.id)
+            count += 1
         return count

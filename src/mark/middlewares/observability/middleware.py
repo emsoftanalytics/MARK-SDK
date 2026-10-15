@@ -30,6 +30,7 @@ class ObservabilityMiddleware(BaseMiddleware):
                 agent_id=context.agent_id,
                 middleware=True,
                 stopped=context.stopped,
+                error=type(context.error).__name__ if context.error is not None else None,
             )
 
 

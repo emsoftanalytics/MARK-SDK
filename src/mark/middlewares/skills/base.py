@@ -26,7 +26,10 @@ import concurrent.futures
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
+import logging
 from typing import Any, Dict, List, Optional, Set, Tuple
+
+logger = logging.getLogger(__name__)
 
 # Legacy type aliases kept for backward compat
 SkillInput   = Dict[str, Any]
@@ -153,13 +156,18 @@ class Skill(ABC):
         ...
 
     def run_sync(self, input: SkillInput, context: SkillContext) -> SkillResult:
-        """Synchronous wrapper — safe to call whether or not an event loop is running."""
+        """Synchronous wrapper — safe to call whether or not an event loop is running.
+
+        The running-loop check happens *before* the skill runs, so a
+        RuntimeError raised by the skill itself propagates unchanged instead
+        of being mistaken for "no running loop" and re-executed.
+        """
         try:
             asyncio.get_running_loop()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                return pool.submit(asyncio.run, self.run(input, context)).result()
         except RuntimeError:
             return asyncio.run(self.run(input, context))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, self.run(input, context)).result()
 
     @classmethod
     def manifest(cls) -> SkillManifest:
@@ -301,8 +309,14 @@ class SkillRegistry:
         return skill
 
     def from_skills_dir(self, path: "str | Path", filename: str = "SKILL.md",
-                        overwrite: bool = True) -> List[str]:
-        """Load skills from a directory of skill files."""
+                        overwrite: bool = True,
+                        allow_builtin_override: bool = False) -> List[str]:
+        """Load skills from a directory of skill files.
+
+        ``overwrite`` lets a SKILL.md replace another skill previously loaded
+        from a skills directory. Built-in / packaged / Python skills are never
+        shadowed unless ``allow_builtin_override=True`` is passed explicitly.
+        """
         skills_path = Path(path)
         if not skills_path.is_dir():
             return []
@@ -313,11 +327,28 @@ class SkillRegistry:
                 continue
             try:
                 skill = MarkdownSkill.from_file(skill_file)
+            except Exception as exc:
+                logger.warning("skipping skill file %s: %s: %s", skill_file, type(exc).__name__, exc)
+                continue
+            existing = self._skills.get(skill.name)
+            if existing is not None and not allow_builtin_override and self._is_protected(existing):
+                logger.warning(
+                    "skills dir %s tried to shadow protected skill %r; ignored "
+                    "(pass allow_builtin_override=True to permit)", skills_path, skill.name,
+                )
+                continue
+            try:
                 self.register(skill, overwrite=overwrite)
-                loaded.append(skill.name)
-            except Exception:
-                pass
+            except ValueError as exc:
+                logger.warning("skipping skill %r: %s", skill.name, exc)
+                continue
+            loaded.append(skill.name)
         return loaded
+
+    @staticmethod
+    def _is_protected(skill: Skill) -> bool:
+        """Built-in, packaged, and Python skills; only dir-loaded SKILL.md skills are replaceable."""
+        return not (isinstance(skill, MarkdownSkill) and skill._source_path is not None)
 
     def grant(self, *permissions: str) -> None:
         """Grant the permission."""

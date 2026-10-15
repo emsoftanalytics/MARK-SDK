@@ -1,9 +1,12 @@
 """Framework-neutral middleware primitives for MARK runtime operations."""
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -17,6 +20,21 @@ class MiddlewareContext:
     result: Any = None
     metadata: dict[str, Any] = field(default_factory=dict)
     stopped: bool = False
+    error: BaseException | None = None
+
+    @property
+    def rejected(self) -> bool:
+        """Return True when a governance gate rejected this write operation."""
+        governance = (self.payload.get("metadata") or {}).get("mark_governance")
+        if isinstance(governance, dict) and governance.get("passed") is False:
+            return True
+        state = self.payload.get("state")
+        return getattr(state, "value", state) == "quarantined"
+
+    @property
+    def succeeded(self) -> bool:
+        """Return True when the handler ran to completion and was not rejected."""
+        return not self.stopped and self.error is None and not self.rejected
 
     def stop(self, result: Any = None) -> None:
         """Stop the operation and use result as the final value."""
@@ -101,18 +119,38 @@ class MiddlewareStack:
         )
 
         executed: list[MarkMiddleware] = []
-        for middleware in self._middleware:
-            middleware.before(context)
-            executed.append(middleware)
-            if context.stopped:
-                break
+        try:
+            for middleware in self._middleware:
+                middleware.before(context)
+                executed.append(middleware)
+                if context.stopped:
+                    break
 
-        if not context.stopped:
-            context.result = handler(context)
+            if not context.stopped:
+                context.result = handler(context)
+        except BaseException as exc:
+            context.error = exc
 
+        # After-hooks of every middleware whose before-hook completed always
+        # run, even when a later middleware or the handler raised. Hooks can
+        # inspect ``context.error`` / ``context.succeeded`` to skip side effects.
         for middleware in reversed(executed):
-            middleware.after(context)
+            try:
+                middleware.after(context)
+            except Exception as after_exc:
+                if context.error is None:
+                    context.error = after_exc
+                else:
+                    logger.warning(
+                        "middleware %r after-hook failed while unwinding %s: %s: %s",
+                        getattr(middleware, "name", middleware),
+                        type(context.error).__name__,
+                        type(after_exc).__name__,
+                        after_exc,
+                    )
 
+        if context.error is not None:
+            raise context.error
         return context.result
 
 

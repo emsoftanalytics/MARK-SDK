@@ -15,11 +15,14 @@
 """Contextual compression interfaces and local compressor implementations."""
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from mark.types import MemoryFragment
     from mark.types.llm import LLMProvider
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -133,7 +136,11 @@ class LLMContextualCompressor:
                 if not response or response.upper() == "IRRELEVANT":
                     continue
                 result.append(f.model_copy(update={"content": response}))
-            except Exception:
+            except Exception as exc:
                 # Fail-open: keep the original fragment rather than losing context.
+                logger.warning(
+                    "LLMContextualCompressor failed for fragment %s: %s: %s",
+                    getattr(f, "id", "?"), type(exc).__name__, exc,
+                )
                 result.append(f)
         return result

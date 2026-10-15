@@ -9,12 +9,16 @@
 from __future__ import annotations
 
 import asyncio
+import http.client
 import ipaddress
+import logging
 import re
 import socket
+import ssl
+import time
+from dataclasses import dataclass
 from typing import Any, Dict, List
-from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.parse import urljoin, urlparse
 
 from mark.types import MemoryFragment, MemoryScope, MemoryState
 
@@ -28,60 +32,187 @@ except ImportError:
     SourceAttribution = None   # type: ignore[assignment,misc]
     SourceCredibility = None   # type: ignore[assignment,misc]
 
+logger = logging.getLogger(__name__)
+
 _USER_AGENT = "Mozilla/5.0 (compatible; MARK/1.0)"
 _TIMEOUT_MS = 15_000
 _MAX_PAGE_CHARS = 8_000
+_MAX_RESPONSE_BYTES = _MAX_PAGE_CHARS * 4
+_MAX_REDIRECTS = 5
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
+
+class FetchBlocked(Exception):
+    """Raised when a fetch (or one of its redirect hops) fails URL validation."""
+
+
+@dataclass(frozen=True)
+class _PinnedTarget:
+    """A validated fetch target: the hostname plus the single IP it is pinned to."""
+    scheme: str
+    host: str
+    port: int
+    ip: str
+    path: str
 
 
 def _is_internal_address(address: ipaddress._BaseAddress) -> bool:
-    return (
-        address.is_loopback
-        or address.is_private
-        or address.is_link_local
-        or address.is_reserved
-        or address.is_multicast
-        or address.is_unspecified
-    )
+    """Anything that is not globally routable is internal.
+
+    ``is_global`` excludes loopback, RFC1918 private ranges, link-local,
+    CGNAT (100.64.0.0/10), reserved, documentation, and unspecified ranges;
+    multicast is checked explicitly. IPv4-mapped IPv6 addresses are unwrapped.
+    """
+    mapped = getattr(address, "ipv4_mapped", None)
+    if mapped is not None:
+        address = mapped
+    return (not address.is_global) or address.is_multicast
+
+
+def _pin_url(url: str) -> tuple[_PinnedTarget | None, str | None]:
+    """Validate *url*, resolve it once, and return the pinned target or an error.
+
+    Fails closed: resolution errors, unparseable addresses, and any resolved
+    address that is not globally routable reject the URL.
+    """
+    try:
+        parsed = urlparse(url)
+        port = parsed.port
+    except ValueError:
+        return None, f"Invalid URL: {url!r}"
+    if parsed.scheme not in {"http", "https"}:
+        return None, f"Only http/https URLs can be fetched (got scheme {parsed.scheme!r})"
+    host = parsed.hostname or ""
+    if not host:
+        return None, "URL has no host"
+    if parsed.username is not None or parsed.password is not None:
+        return None, "URLs with embedded credentials are not fetched"
+    lowered = host.lower().rstrip(".")
+    if lowered == "localhost" or lowered.endswith(".localhost") or lowered.endswith(".local"):
+        return None, "Refusing to fetch loopback/internal hosts"
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is not None:
+        if _is_internal_address(literal):
+            return None, "Refusing to fetch private/loopback/link-local addresses"
+        return _PinnedTarget(parsed.scheme, host, port, str(literal), path), None
+
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except (OSError, UnicodeError) as exc:
+        return None, f"Could not resolve host {host!r}: {type(exc).__name__}"
+    if not infos:
+        return None, f"Could not resolve host {host!r}"
+    pinned: str | None = None
+    for info in infos:
+        try:
+            resolved = ipaddress.ip_address(str(info[4][0]).split("%", 1)[0])
+        except (ValueError, IndexError, TypeError):
+            return None, "Could not validate resolved host address"
+        if _is_internal_address(resolved):
+            return None, "Refusing to fetch hosts that resolve to private/loopback/link-local addresses"
+        if pinned is None:
+            pinned = str(resolved)
+    assert pinned is not None
+    return _PinnedTarget(parsed.scheme, host, port, pinned, path), None
 
 
 def _validate_fetch_url(url: str) -> str | None:
     """Return an error string when a fetch URL is unsafe, else None.
 
     Only http/https are fetchable — file://, ftp://, and friends would let a
-    crafted observation read local files into agent memory. Loopback, private,
-    and link-local addresses are rejected to keep gap healing from probing
-    internal services.
+    crafted observation read local files into agent memory. Hosts must
+    resolve, and every resolved address must be globally routable, to keep
+    gap healing from probing internal services.
     """
-    try:
-        parsed = urlparse(url)
-    except ValueError:
-        return f"Invalid URL: {url!r}"
-    if parsed.scheme not in {"http", "https"}:
-        return f"Only http/https URLs can be fetched (got scheme {parsed.scheme!r})"
-    host = parsed.hostname or ""
-    if not host:
-        return "URL has no host"
-    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
-        return "Refusing to fetch loopback/internal hosts"
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
+    return _pin_url(url)[1]
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    """HTTP connection to a pre-validated IP; ``Host`` still carries the hostname."""
+
+    def __init__(self, target: _PinnedTarget, timeout: float) -> None:
+        super().__init__(target.host, target.port, timeout=timeout)
+        self._pinned_ip = target.ip
+
+    def connect(self) -> None:
+        self.sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS connection to a pre-validated IP; SNI and certificate checks use the hostname."""
+
+    def __init__(self, target: _PinnedTarget, timeout: float) -> None:
+        context = ssl.create_default_context()
+        super().__init__(target.host, target.port, timeout=timeout, context=context)
+        self._pinned_ip = target.ip
+        self._ssl_context = context
+
+    def connect(self) -> None:
+        sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
+        self.sock = self._ssl_context.wrap_socket(sock, server_hostname=self.host)
+
+
+def _open_connection(target: _PinnedTarget, timeout: float) -> http.client.HTTPConnection:
+    if target.scheme == "https":
+        return _PinnedHTTPSConnection(target, timeout)
+    return _PinnedHTTPConnection(target, timeout)
+
+
+def _safe_http_get(
+    url: str,
+    *,
+    timeout: float,
+    max_bytes: int = _MAX_RESPONSE_BYTES,
+    max_redirects: int = _MAX_REDIRECTS,
+) -> bytes:
+    """GET *url* with SSRF protection.
+
+    Every hop (including redirects) is re-validated and connected to its
+    pinned IP. Proxy environment variables are never consulted. The body is
+    capped at *max_bytes* and the whole exchange at *timeout* seconds.
+    """
+    deadline = time.monotonic() + timeout
+    current = url
+    for _hop in range(max_redirects + 1):
+        target, error = _pin_url(current)
+        if error or target is None:
+            raise FetchBlocked(error or "blocked")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("fetch deadline exceeded")
+        conn = _open_connection(target, remaining)
         try:
-            infos = socket.getaddrinfo(host, parsed.port, type=socket.SOCK_STREAM)
-        except socket.gaierror:
-            return None
-        for info in infos:
-            resolved_host = info[4][0]
-            try:
-                resolved = ipaddress.ip_address(resolved_host)
-            except ValueError:
-                return "Could not validate resolved host address"
-            if _is_internal_address(resolved):
-                return "Refusing to fetch hosts that resolve to private/loopback/link-local addresses"
-        return None
-    if _is_internal_address(address):
-        return "Refusing to fetch private/loopback/link-local addresses"
-    return None
+            conn.request(
+                "GET",
+                target.path,
+                headers={
+                    "User-Agent": _USER_AGENT,
+                    "Accept-Encoding": "identity",
+                    "Connection": "close",
+                },
+            )
+            response = conn.getresponse()
+            if response.status in _REDIRECT_STATUSES:
+                location = response.getheader("Location")
+                if not location:
+                    raise FetchBlocked("redirect without Location header")
+                current = urljoin(current, location.strip())
+                continue
+            if response.status >= 400:
+                raise FetchBlocked(f"HTTP {response.status}")
+            return response.read(max_bytes)
+        finally:
+            conn.close()
+    raise FetchBlocked(f"too many redirects (> {max_redirects})")
 
 
 class WebSearchSkill(Skill):
@@ -225,13 +356,9 @@ class WebSearchSkill(Skill):
             return []
 
     async def _fetch_page(self, url: str) -> str:
-        if _validate_fetch_url(url):
-            return ""
-
+        # Validation (and DNS pinning) happens inside _safe_http_get for every hop.
         def _sync() -> str:
-            request = Request(url, headers={"User-Agent": _USER_AGENT})
-            with urlopen(request, timeout=max(1, self.timeout_ms / 1000)) as response:
-                raw = response.read(_MAX_PAGE_CHARS * 4)
+            raw = _safe_http_get(url, timeout=max(1.0, self.timeout_ms / 1000))
             html = raw.decode("utf-8", errors="ignore")
             try:
                 from bs4 import BeautifulSoup  # type: ignore[import]
@@ -246,7 +373,11 @@ class WebSearchSkill(Skill):
 
         try:
             return await asyncio.get_running_loop().run_in_executor(None, _sync)
-        except Exception:
+        except FetchBlocked as exc:
+            logger.warning("web fetch blocked for %s: %s", url, exc)
+            return ""
+        except Exception as exc:
+            logger.warning("web fetch failed for %s: %s: %s", url, type(exc).__name__, exc)
             return ""
 
     def _build_result(

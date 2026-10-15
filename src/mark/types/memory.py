@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from mark.types._datetime import ensure_utc
 from mark.types.attribution import SourceAttribution
 
 
@@ -127,6 +128,12 @@ class MemoryFragment(BaseModel):
             raise ValueError("content must not be blank")
         return v
 
+    @field_validator("created_at", "updated_at", "last_accessed_at")
+    @classmethod
+    def _utc_datetimes(cls, v: Optional[datetime]) -> Optional[datetime]:
+        """Coerce naive datetimes to UTC."""
+        return ensure_utc(v)
+
     @property
     def is_working_memory(self) -> bool:
         """True if this fragment is short-term (has a TTL)."""
@@ -136,8 +143,9 @@ class MemoryFragment(BaseModel):
         """True if a TTL was set and has elapsed."""
         if self.ttl_seconds is None:
             return False
-        current = now or datetime.now(timezone.utc)
-        return (current - self.created_at).total_seconds() > self.ttl_seconds
+        # model_copy() skips validation, so coerce defensively here too.
+        current = ensure_utc(now) if now is not None else datetime.now(timezone.utc)
+        return (current - ensure_utc(self.created_at)).total_seconds() > self.ttl_seconds
 
     def transition_to(self, new_state: MemoryState) -> "MemoryFragment":
         """Return a copy of this fragment with updated state, or raise ValueError."""
@@ -225,6 +233,12 @@ class MemoryBlock(BaseModel):
     created_at:      datetime             = Field(default_factory=lambda: datetime.now(timezone.utc))
     metadata:        Dict[str, Any]       = Field(default_factory=dict)
 
+    @field_validator("created_at", "sealed_at")
+    @classmethod
+    def _utc_datetimes(cls, v: Optional[datetime]) -> Optional[datetime]:
+        """Coerce naive datetimes to UTC."""
+        return ensure_utc(v)
+
     @property
     def is_sealed(self) -> bool:
         """True once the block has been sealed into the provenance chain."""
@@ -298,6 +312,12 @@ class MemoryDocument(BaseModel):
     tags:         List[str]        = Field(default_factory=list)
     metadata:     Dict[str, Any]   = Field(default_factory=dict)
     created_at:   datetime         = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_validator("created_at")
+    @classmethod
+    def _utc_datetimes(cls, v: datetime) -> datetime:
+        """Coerce naive datetimes to UTC."""
+        return ensure_utc(v)
 
     @field_validator("title")
     @classmethod

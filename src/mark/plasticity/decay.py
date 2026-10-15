@@ -17,6 +17,12 @@ from typing import ClassVar, Dict, Optional
 
 DECAY_FLOOR     = 0.05   # fragments at or below this importance are pruned
 REINFORCE_DELTA = 0.05   # per-access importance boost (see HebbianReinforcement)
+DECAY_METADATA_KEY = "mark_decay"  # {"base_importance": float, "last_decay_at": iso8601}
+
+
+def _aware(value: datetime) -> datetime:
+    """Treat naive datetimes as UTC so aware/naive arithmetic never crashes."""
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
 
 class TemporalScope(str, Enum):
@@ -78,24 +84,58 @@ class ExponentialDecay:
             return 1.0
         return math.exp(-self._lambda * max(0.0, age_hours))
 
-    def apply(self, fragment: object) -> float:
+    def reference_time(self, fragment: object) -> Optional[datetime]:
+        """When decay was last applied (``mark_decay.last_decay_at``), else created_at."""
+        metadata = getattr(fragment, "metadata", None) or {}
+        record = metadata.get(DECAY_METADATA_KEY) if isinstance(metadata, dict) else None
+        if isinstance(record, dict) and record.get("last_decay_at"):
+            try:
+                return _aware(datetime.fromisoformat(str(record["last_decay_at"])))
+            except ValueError:
+                pass
+        created_at = getattr(fragment, "created_at", None)
+        return _aware(created_at) if isinstance(created_at, datetime) else None
+
+    def apply(self, fragment: object, *, now: Optional[datetime] = None) -> float:
         """
         Compute decayed importance for one fragment.
+
+        Decay is applied to the current importance for the time elapsed since
+        decay was last applied (recorded in ``metadata["mark_decay"]``), or
+        since creation for never-decayed fragments. Because exponential decay
+        composes multiplicatively, repeated runs equal one run over the total
+        interval, and re-running at the same instant changes nothing.
+
         PROMOTED state = forget gate: no decay applied.
         Returns float in [floor, 1.0]. Does not mutate the fragment.
         """
         from mark.types import MemoryState
         if getattr(fragment, "state", None) == MemoryState.PROMOTED:
             return float(getattr(fragment, "importance", 1.0))
-        created_at = getattr(fragment, "created_at", None)
-        if created_at is None:
-            return float(getattr(fragment, "importance", 0.5))
-        now       = datetime.now(timezone.utc)
-        age_hours = (now - created_at).total_seconds() / 3600.0
+        reference = self.reference_time(fragment)
         importance = float(getattr(fragment, "importance", 0.5))
+        if reference is None:
+            return importance
+        current   = _aware(now) if now is not None else datetime.now(timezone.utc)
+        age_hours = (current - reference).total_seconds() / 3600.0
         new_imp   = importance * self.decay_factor(age_hours)
         return max(self._floor, min(1.0, new_imp))
 
-    def should_prune(self, fragment: object) -> bool:
+    def decay_metadata(self, fragment: object, *, now: datetime) -> Dict[str, object]:
+        """Return fragment metadata updated with this decay step's bookkeeping."""
+        metadata = dict(getattr(fragment, "metadata", None) or {})
+        previous = metadata.get(DECAY_METADATA_KEY)
+        base = (
+            previous.get("base_importance")
+            if isinstance(previous, dict) and "base_importance" in previous
+            else float(getattr(fragment, "importance", 0.5))
+        )
+        metadata[DECAY_METADATA_KEY] = {
+            "base_importance": base,
+            "last_decay_at": _aware(now).isoformat(),
+        }
+        return metadata
+
+    def should_prune(self, fragment: object, *, now: Optional[datetime] = None) -> bool:
         """Return True if decayed importance has reached the floor."""
-        return self.apply(fragment) <= self._floor
+        return self.apply(fragment, now=now) <= self._floor

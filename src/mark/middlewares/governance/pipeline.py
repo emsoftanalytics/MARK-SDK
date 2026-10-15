@@ -15,6 +15,8 @@ class ConsolidationGateResult:
     passed:  bool
     content: str   # sanitized content (even when blocked)
     reason:  str = ""
+    truncated:       bool = False
+    original_length: int  = 0
 
 
 class ConsolidationGate:
@@ -51,19 +53,28 @@ class ConsolidationGate:
         confidence: float = 1.0,
     ) -> ConsolidationGateResult:
         """Check the content and return the gate outcome."""
-        cleaned = self._sanitizer.sanitize(content)
+        if hasattr(self._sanitizer, "sanitize_report"):
+            report = self._sanitizer.sanitize_report(content)
+            cleaned, truncated, original_length = report.text, report.truncated, report.original_length
+        else:  # custom sanitizer implementing only sanitize()
+            cleaned, truncated, original_length = self._sanitizer.sanitize(content), False, len(content)
+
+        def result(passed: bool, reason: str = "") -> ConsolidationGateResult:
+            return ConsolidationGateResult(
+                passed, cleaned, reason, truncated=truncated, original_length=original_length,
+            )
 
         v = self._validation.check(cleaned, confidence=confidence)
         if not v.passed:
-            return ConsolidationGateResult(False, cleaned, v.reason)
+            return result(False, v.reason)
 
         f = self._failure.check(cleaned)
         if not f.passed:
-            return ConsolidationGateResult(False, cleaned, f.reason)
+            return result(False, f.reason)
 
         if self._dedup is not None:
             d = self._dedup.check(cleaned)
             if not d.passed:
-                return ConsolidationGateResult(False, cleaned, d.reason)
+                return result(False, d.reason)
 
-        return ConsolidationGateResult(True, cleaned)
+        return result(True)
