@@ -86,6 +86,21 @@ print([f.value for f in facts.history("payments-api", "owner")])      # ['dana',
 Use `correction=True` to fix a wrong value and `facts.retract(...)` to
 withdraw one recorded by mistake.
 
+### Facts from text, and timelines
+
+With `extract_facts=True` on a write (or `Mark.local(".", fact_extractor="patterns")`
+for every write), stated changes such as "moved from port 8080 to port 9090",
+"is owned by", or "status: resolved" become facts automatically. For "how did
+X change" or "what happened to X" questions, read the subject's timeline: it
+lists every fact and memory about the subject, oldest first, with no top-k cap.
+
+```python
+ops = mark.runtime.memory("__mark__")
+ops.store_sync("[2026-04-15] payments-api moved from port 8080 to port 9090.", extract_facts=True)
+print(ops.facts.get("payments-api", "port").value)     # 9090
+print(ops.timeline("payments-api").as_text())          # every event, oldest first
+```
+
 ### Recall results
 
 `mark.runtime.memory(agent_id).retrieve_sync(query)` returns a result with
@@ -124,14 +139,38 @@ and subjects that are not in memory.
 
 ```python
 from mark import ContextWatch
+from mark.context.watch import inject
 
-with ContextWatch(mark.runtime.memory("__mark__")) as watch:
-    watch.observe("Who should review the payments-api change?", role="user")
-    system_prompt = "You are a coding agent.\n" + watch.briefing(wait=1.0).text
+messages = [{"role": "system", "content": "You are a coding agent."},
+            {"role": "user", "content": "Who should review the payments-api change?"}]
+with ContextWatch(mark.runtime.memory("__mark__"), budget_tokens=300) as watch:
+    watch.observe_messages(messages)                       # only messages it has not seen
+    prompt = inject(messages, watch.briefing(wait=1.0))    # briefing in the system message
 ```
 
-Feed it user messages, your replies (`role="assistant"`), and tool results
-(`role="tool"`).
+Feed it user messages, your replies, and tool results, either one at a time
+with `observe(text, role=...)` or as the whole message list before each call.
+`budget_tokens` is a hard cap: corrections and "Not in memory" notices are
+kept first. `ContextWatch.for_small_models(memory)` suits small local models.
+
+### MARK As Context Window
+
+`MarkChat` keeps only the last `keep_last` messages in the prompt and lets
+MARK supply the rest through a budgeted briefing. It works with any
+OpenAI-compatible endpoint, such as a local Ollama:
+
+```python
+from mark import MarkChat
+
+with MarkChat(mark.runtime.memory("chat"), model="llama3.2:3b",
+              base_url="http://localhost:11434/v1", keep_last=4, budget_tokens=300) as chat:
+    chat.send("The payments-api reviewer is Priya.")
+    print(chat.send("Who reviews payments-api changes?"))
+```
+
+When your own history is windowed like this, earlier turns live in MARK, not
+in your context: check the briefing or recall before saying something was
+never discussed.
 
 ### MARK As Tool
 
@@ -165,14 +204,25 @@ mark_write(content, agent_id?, session_id?, tags?, source?, importance?, canonic
 mark_observe(content, agent_id?, session_id?, tags?, source?, importance?)
 ```
 
-Pass `allowed_agent_ids` when clients should not choose any namespace.
+Pass `allowed_agent_ids` when clients should not choose any namespace. With
+`briefing=True` the server also offers a push-style briefing for the current
+conversation:
+
+```text
+mark_briefing(text?, session_id?, role?, messages?, agent_id?, wait?, budget_tokens?)
+```
+
+Call it with the latest message and a stable `session_id`, and put the result
+in your context before answering.
 
 ### MARK As Middleware
 
 For LangChain v1 agents, `MarkAgentMiddleware(backend=LocalMarkBackend(mark))`
 injects a `[MARK project memory]` block and the briefing before each model
-call and records useful model and tool output afterwards. For other loops,
-the same pattern by hand:
+call and records useful model and tool output afterwards. `budget_tokens=`
+caps everything it injects, and `history="mark", keep_last=6` sends the model
+only recent messages plus MARK's context. For other loops, the same pattern
+by hand:
 
 ```python
 def mark_middleware(prompt: str, call_next):
@@ -188,7 +238,11 @@ print(mark_middleware("Add pagination to the tasks endpoint.", lambda text: text
 mark store "payments-api uses Postgres 16" --occurred-at 2026-04-02
 mark fact set payments-api owner eli --valid-from 2026-04-01
 mark recall "Who owns payments-api now?"
+mark timeline payments-api owner        # every owner change, oldest first
 ```
+
+`mark ingest FILE --extract-facts` stores one memory per line and records the
+facts the lines state.
 
 ## Memory Blocks To Prefer
 
@@ -217,6 +271,8 @@ the user asked not to keep.
   the current source and update MARK (a fact with `correction=True`, or a new
   memory).
 - If memory reports a subject as not in memory, say so rather than guessing.
+- For questions about how a subject changed, use its timeline rather than
+  the top few recall results.
 - Do not store secrets or hidden reasoning.
 - Use the public SDK API. Integrations live in `mark.adapters` inside
   `mark-sdk` (install the `langchain` or `mcp` extra).

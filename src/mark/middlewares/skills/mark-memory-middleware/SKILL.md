@@ -19,6 +19,17 @@ anticipation is on, a `<mark_briefing>` prepared from the conversation.
   superseded. Use the current value from now on.
 - **Not in memory** lists subjects MARK has no record of. Say you do not know
   rather than guessing.
+- The block may be held to a token budget. When it is, corrections and "Not
+  in memory" notices are kept first, so never ignore them because the block
+  is short.
+
+## When History Is Windowed
+
+With `history="mark"`, you see only the system message, the last few
+messages, and the memory block. Earlier turns were stored in MARK before they
+were dropped and come back through the block when they matter. Do not
+conclude that something was never said because it is not in the visible
+messages; check the memory block first.
 
 ## Operating Loop
 
@@ -47,7 +58,8 @@ The middleware is fast, bounded, and fails safe:
 
 - it retrieves before model calls within a time limit, and a memory failure
   never stops the agent,
-- it injects at most `max_context_chars` of memory,
+- it injects at most `max_context_chars` of memory, or `budget_tokens`
+  tokens when a token budget is set,
 - it refreshes on richer triggers such as search, retrieval, or subagent
   output rather than on every file read,
 - it records tool results and responses, and writes durable observations
