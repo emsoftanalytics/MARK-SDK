@@ -15,7 +15,16 @@ from pathlib import Path
 from typing import Iterable
 
 from mark.security import NoOpEncryptionProvider
-from mark.store._sqlite.codec import _FTS_META_KEY, _FTS_TABLE, _as_bytes, _probe_fts5, _table_columns
+from mark.store._sqlite.codec import (
+    _FTS_META_KEY,
+    _FTS_ML_META_KEY,
+    _FTS_ML_TABLE,
+    _FTS_TABLE,
+    _as_bytes,
+    _probe_fts5,
+    _table_columns,
+)
+from mark.store._sqlite.fts_text import multilingual_index_text
 from mark.store._sqlite.ddl import SchemaDDL
 
 logger = logging.getLogger("mark.store.sqlite")
@@ -164,44 +173,62 @@ class SchemaMixin(SchemaDDL):
     # ── FTS5 lexical index ────────────────────────────────────────────────────
 
     def _init_fts(self, conn: sqlite3.Connection) -> None:
-        """Enable, backfill, or drop the FTS5 index for this store.
+        """Enable, backfill, or drop the FTS5 indexes for this store.
 
-        The index holds plaintext, so it exists only for unencrypted stores;
+        The indexes hold plaintext, so they exist only for unencrypted stores;
         an encrypted store drops any index left by an earlier unencrypted
-        open. A one-time backfill (guarded by the fts_backfilled meta key)
-        indexes fragments written before FTS was available.
+        open. One-time backfills (guarded by meta keys) index fragments
+        written before a table existed: both tables for a new index, only the
+        multilingual one when upgrading a schema-5 store.
         """
         self._fts_supported = _probe_fts5(conn)
         self._fts_enabled = self._fts_supported and isinstance(self.encryption, NoOpEncryptionProvider)
+        self._fts_ml_enabled = False
         if not self._fts_supported:
             return
         if not self._fts_enabled:
             # Encrypted store: never keep a plaintext lexical index around.
-            conn.execute(f"DROP TABLE IF EXISTS {_FTS_TABLE}")
-            conn.execute("DELETE FROM schema_info WHERE key = ?", (_FTS_META_KEY,))
+            conn.execute(f"DROP TRIGGER IF EXISTS {_FTS_ML_TABLE}_delete")
+            for table, key in ((_FTS_TABLE, _FTS_META_KEY), (_FTS_ML_TABLE, _FTS_ML_META_KEY)):
+                conn.execute(f"DROP TABLE IF EXISTS {table}")
+                conn.execute("DELETE FROM schema_info WHERE key = ?", (key,))
             return
         conn.execute(self._DDL_FTS)
-        done = conn.execute("SELECT value FROM schema_info WHERE key = ?", (_FTS_META_KEY,)).fetchone()
-        if done is not None and str(done[0]) == "1":
+        try:
+            conn.execute(self._DDL_FTS_ML)
+        except sqlite3.OperationalError:  # SQLite without the categories option
+            conn.execute(self._DDL_FTS_ML_FALLBACK)
+        conn.execute(self._DDL_FTS_ML_TRIGGER)
+        self._fts_ml_enabled = True
+        marker = "SELECT value FROM schema_info WHERE key = ?"
+        porter_done = (conn.execute(marker, (_FTS_META_KEY,)).fetchone() or ["0"])[0] == "1"
+        ml_done = (conn.execute(marker, (_FTS_ML_META_KEY,)).fetchone() or ["0"])[0] == "1"
+        if porter_done and ml_done:
             return
-        conn.execute(f"DELETE FROM {_FTS_TABLE}")
-        rows = conn.execute("SELECT rowid, id, content, tags, agent_id FROM fragments").fetchall()
-        for row in rows:
+        conn.execute(f"DELETE FROM {_FTS_ML_TABLE}")
+        if not porter_done:
+            conn.execute(f"DELETE FROM {_FTS_TABLE}")
+        # Streamed, not fetchall(): a million-row store must not be held in memory.
+        for row in conn.execute("SELECT rowid, id, content, tags, agent_id FROM fragments"):
             try:
                 content = self.encryption.decrypt_str(_as_bytes(row["content"]))
                 tags = json.loads(str(row["tags"] or "[]"))
             except Exception:  # noqa: BLE001 - skip undecodable legacy rows
                 logger.warning("Skipping FTS backfill for undecodable fragment %s", row["id"])
                 continue
-            self._fts_upsert(conn, int(row["rowid"]), str(row["id"]), str(row["agent_id"]), content, tags)
-        conn.execute(
-            "INSERT INTO schema_info (key, value) VALUES (?, '1')"
-            " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (_FTS_META_KEY,),
-        )
+            if not porter_done:
+                self._fts_upsert(conn, int(row["rowid"]), str(row["id"]), str(row["agent_id"]), content, tags)
+            else:
+                self._fts_ml_insert(conn, int(row["rowid"]), str(row["id"]), str(row["agent_id"]), content)
+        for key in (_FTS_META_KEY, _FTS_ML_META_KEY):
+            conn.execute(
+                "INSERT INTO schema_info (key, value) VALUES (?, '1')"
+                " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key,),
+            )
 
-    @staticmethod
     def _fts_upsert(
+        self,
         conn: sqlite3.Connection,
         rowid: int,
         fragment_id: str,
@@ -209,7 +236,7 @@ class SchemaMixin(SchemaDDL):
         content: str,
         tags: Iterable[str],
     ) -> None:
-        """Replace the FTS row for a fragment (FTS rowid == fragments.rowid).
+        """Replace the FTS rows for a fragment (FTS rowid == fragments.rowid).
 
         Synced from Python rather than triggers because fragments.content may
         be ciphertext; callers pass the plaintext. Must run inside the same
@@ -220,3 +247,17 @@ class SchemaMixin(SchemaDDL):
             f"INSERT INTO {_FTS_TABLE} (rowid, content, tags, fragment_id, agent_id) VALUES (?, ?, ?, ?, ?)",
             (rowid, content, " ".join(str(tag) for tag in tags), fragment_id, agent_id),
         )
+        self._mark_vector_dirty(conn, agent_id, fragment_id)  # no-op without a vector snapshot
+        if getattr(self, "_fts_ml_enabled", False):
+            conn.execute(f"DELETE FROM {_FTS_ML_TABLE} WHERE rowid = ?", (rowid,))
+            self._fts_ml_insert(conn, rowid, fragment_id, agent_id, content)
+
+    @staticmethod
+    def _fts_ml_insert(conn: sqlite3.Connection, rowid: int, fragment_id: str, agent_id: str, content: str) -> None:
+        """Index a fragment in the multilingual table when it has non-ASCII text."""
+        prepared = multilingual_index_text(content)
+        if prepared is not None:
+            conn.execute(
+                f"INSERT INTO {_FTS_ML_TABLE} (rowid, content, fragment_id, agent_id) VALUES (?, ?, ?, ?)",
+                (rowid, prepared, fragment_id, agent_id),
+            )

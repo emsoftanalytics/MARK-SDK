@@ -35,6 +35,12 @@ class _PythonPartition:
         vector = self.vectors.get(fragment_id)
         return None if vector is None else list(vector)
 
+    def ids(self) -> list[str]:
+        return list(self.vectors)
+
+    def keys(self) -> Any:
+        return self.vectors.keys()
+
     def snapshot(self) -> Any:
         # Vectors are never mutated in place, so a shallow copy is consistent.
         return list(self.vectors.items())
@@ -53,67 +59,126 @@ class _PythonPartition:
 
 
 class _NumpyPartition:
-    """Vectors for one agent, scored with a lazily (re)built float32 matrix."""
+    """Vectors for one agent, scored with one float32 matrix (rows in insertion order).
+
+    The matrix is the source of truth (no per-vector Python objects), so a
+    million-vector partition costs one contiguous array plus an id list:
+
+    - appends write the next free row in place; when the matrix is full a
+      larger copy replaces it (snapshots keep the old object);
+    - re-adding an id overwrites its row in place, keeping its position, which
+      is what the pure-Python backend does with dict assignment;
+    - removals only mark the row dead (scored as -inf and skipped); dead rows
+      are compacted away once they exceed a quarter of the matrix.
+    """
 
     def __init__(self, np: Any, dim: int) -> None:
         self._np = np
         self._dim = dim
-        self.vectors: dict[str, Any] = {}
-        self._matrix: Any = None
-        self._ids: list[str] = []
-        self._pos: dict[str, int] = {}
-        self._size = 0
-        self._dirty = True
+        self._matrix: Any = np.zeros((16, dim), dtype=np.float32)
+        self._ids: list[str | None] = []  # row -> id (None once removed)
+        self._pos: dict[str, int] = {}  # live id -> row
+        self._dead: Any = None  # bool mask over rows, allocated on first removal
+        self._dead_count = 0
 
-    def add(self, fragment_id: str, vector: list[float]) -> None:
-        row = self._np.asarray(vector, dtype=self._np.float32)
-        replacing = fragment_id in self.vectors
-        self.vectors[fragment_id] = row
-        if replacing or self._dirty or self._matrix is None or self._size >= self._matrix.shape[0]:
-            self._dirty = True
+    @property
+    def vectors(self) -> dict[str, list[float]]:
+        """Live id -> vector mapping (a copy; used for promotion and persistence)."""
+        return {fid: self._matrix[row].tolist() for fid, row in self._pos.items()}
+
+    def ids(self) -> list[str]:
+        return list(self._pos)
+
+    def keys(self) -> Any:
+        return self._pos.keys()
+
+    def add(self, fragment_id: str, vector: Any) -> None:
+        row = self._pos.get(fragment_id)
+        if row is not None:
+            # Same position as dict assignment in the Python backend. A search
+            # scoring concurrently may see the old or the new vector.
+            self._matrix[row] = vector
             return
-        # Append in place: rows below a snapshot's size are never touched, so
-        # concurrent searches on an older snapshot stay consistent.
-        self._matrix[self._size] = row
+        size = len(self._ids)
+        if size >= self._matrix.shape[0]:
+            self._grow(size + 1)
+        self._matrix[size] = vector
         self._ids.append(fragment_id)
-        self._pos[fragment_id] = self._size
-        self._size += 1
+        self._pos[fragment_id] = size
+
+    def add_matrix(self, ids: list[str], matrix: Any, expected: int = 0) -> None:
+        """Append many unit-normalised rows at once (ids must not be indexed yet).
+
+        ``expected`` sizes the matrix for a whole multi-block load up front:
+        growing block by block would copy a 1 GB matrix a dozen times.
+        """
+        size = len(self._ids)
+        if size + len(ids) > self._matrix.shape[0]:
+            self._grow(max(size + len(ids), expected))
+        self._matrix[size:size + len(ids)] = matrix
+        self._ids.extend(ids)
+        self._pos.update(zip(ids, range(size, size + len(ids))))
 
     def remove(self, fragment_id: str) -> None:
-        if self.vectors.pop(fragment_id, None) is not None:
-            self._dirty = True
+        row = self._pos.pop(fragment_id, None)
+        if row is None:
+            return
+        np = self._np
+        if self._dead is None or self._dead.shape[0] < self._matrix.shape[0]:
+            dead = np.zeros(self._matrix.shape[0], dtype=bool)
+            if self._dead is not None:
+                dead[: self._dead.shape[0]] = self._dead
+            self._dead = dead
+        self._dead[row] = True
+        self._ids[row] = None
+        self._dead_count += 1
+        if self._dead_count > max(64, len(self._ids) // 4):
+            self._compact()
 
     def get(self, fragment_id: str) -> list[float] | None:
-        row = self.vectors.get(fragment_id)
-        return None if row is None else [float(value) for value in row.tolist()]
+        row = self._pos.get(fragment_id)
+        return None if row is None else [float(value) for value in self._matrix[row].tolist()]
 
-    def _rebuild(self) -> None:
+    def _grow(self, needed: int) -> None:
+        # Grow by ~1/8 for big partitions (1M x 256 floats is 1 GB: a 1.5x
+        # policy would waste half a gigabyte), by doubling for small ones.
+        capacity = max(16, needed + max(needed // 8, min(needed, 65_536)))
+        matrix = self._np.empty((capacity, self._dim), dtype=self._np.float32)
+        size = len(self._ids)
+        matrix[:size] = self._matrix[:size]
+        if self._dead is not None:
+            dead = self._np.zeros(capacity, dtype=bool)
+            dead[: self._dead.shape[0]] = self._dead
+            self._dead = dead
+        self._matrix = matrix  # a new object: snapshots keep the old one
+
+    def _compact(self) -> None:
         np = self._np
-        count = len(self.vectors)
-        capacity = max(16, int(count * 1.5))
+        live = list(self._pos.items())  # insertion (row) order
+        rows = np.fromiter((row for _, row in live), dtype=np.int64, count=len(live))
+        capacity = max(16, len(live) + max(len(live) // 8, min(len(live), 65_536)))
         matrix = np.zeros((capacity, self._dim), dtype=np.float32)
-        if count:
-            matrix[:count] = np.stack(list(self.vectors.values()))
-        # New objects: snapshots holding the old ones remain valid.
+        matrix[: len(live)] = self._matrix[rows]
+        # New objects throughout, so in-flight snapshots stay consistent.
         self._matrix = matrix
-        self._ids = list(self.vectors)
-        self._pos = {fragment_id: row for row, fragment_id in enumerate(self._ids)}
-        self._size = count
-        self._dirty = False
+        self._ids = [fid for fid, _ in live]
+        self._pos = {fid: row for row, fid in enumerate(self._ids)}
+        self._dead = None
+        self._dead_count = 0
 
     def snapshot(self) -> Any:
-        if self._dirty or self._matrix is None:
-            self._rebuild()
-        return (self._matrix, self._ids, self._pos, self._size)
+        return (self._matrix, self._ids, self._pos, len(self._ids), self._dead if self._dead_count else None)
 
     def top(self, snapshot: Any, query: Any, top_k: int, include_ids: set[str] | None) -> list[tuple[float, int, str]]:
         np = self._np
-        matrix, ids, pos, size = snapshot
+        matrix, ids, pos, size, dead = snapshot
         if size == 0:
             return []
         if include_ids is None:
             rows = None
             scores = matrix[:size] @ query
+            if dead is not None:
+                scores[dead[:size]] = -np.inf
         else:
             selected = [row for row in (pos.get(fid) for fid in include_ids) if row is not None and row < size]
             if not selected:
@@ -132,14 +197,28 @@ class _NumpyPartition:
         else:
             candidates = np.arange(count)
         positions = candidates if rows is None else rows[candidates]
-        order = np.lexsort((positions, -scores[candidates]))[:top_k]
-        return [
-            (float(scores[candidates[i]]), int(positions[i]), ids[int(positions[i])])
-            for i in order
-        ]
+        order = np.lexsort((positions, -scores[candidates]))
+        hits: list[tuple[float, int, str]] = []
+        for i in order:
+            score = float(scores[candidates[i]])
+            fragment_id = ids[int(positions[i])] if score != -np.inf else None
+            if fragment_id is not None:  # None: removed after the snapshot was taken
+                hits.append((score, int(positions[i]), fragment_id))
+                if len(hits) == top_k:
+                    break
+        return hits
 
     def __len__(self) -> int:
-        return len(self.vectors)
+        return len(self._pos)
+
+
+def _load_numpy() -> Any | None:
+    """Import numpy on demand; None when it is not installed (or fails to import)."""
+    try:
+        import numpy  # type: ignore[import-not-found]
+    except Exception:  # pragma: no cover - exercised when numpy is absent
+        return None
+    return numpy
 
 
 def _normalize(vector: Iterable[float]) -> list[float]:

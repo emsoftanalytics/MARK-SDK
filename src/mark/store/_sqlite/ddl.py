@@ -1,9 +1,7 @@
 """Schema definitions for the SQLite store (data only, no behaviour).
 
-Holds the CREATE TABLE / CREATE INDEX statements and the per-version
-migration tables consumed by :class:`mark.store._sqlite.schema.SchemaMixin`.
-They live on a class so ``LocalMemoryStore`` keeps exposing them as class
-attributes (``LocalMemoryStore.CURRENT_SCHEMA_VERSION``, ``._DDL_*``, ...).
+CREATE statements and per-version migrations consumed by ``SchemaMixin``,
+kept on a class so ``LocalMemoryStore`` exposes them as class attributes.
 
 Invariants:
   - every statement is idempotent (IF NOT EXISTS), so opening an existing
@@ -14,13 +12,14 @@ Invariants:
 """
 from __future__ import annotations
 
-from mark.store._sqlite.codec import _FTS_TABLE
+from mark.store._sqlite.codec import _FTS_ML_TABLE, _FTS_TABLE
+from mark.store._sqlite.vector_snapshot import SNAPSHOT_DDL
 
 
 class SchemaDDL:
     """Table, index and migration definitions shared by the store mixins."""
 
-    CURRENT_SCHEMA_VERSION = 5
+    CURRENT_SCHEMA_VERSION = 6
 
     # Column additions per schema version: (table, column, declaration).
     # Applied by inspecting PRAGMA table_info, never by trusting the stamped
@@ -122,6 +121,14 @@ class SchemaDDL:
                 PRIMARY KEY (agent_id, key)
             )
             """,
+        ],
+        # 6: a partial index finds the next TTL expiry (only TTL rows pay for it; a
+        #    covering retrievable-id index cost ~25% of write speed: not used).
+        #    The multilingual FTS table is set up by _init_fts.
+        6: [
+            "CREATE INDEX IF NOT EXISTS idx_frag_ttl ON fragments(agent_id, created_at, ttl_seconds)"
+            " WHERE ttl_seconds IS NOT NULL",
+            *SNAPSHOT_DDL,  # vector-index snapshots (see vector_snapshot)
         ],
     }
 
@@ -254,6 +261,20 @@ class SchemaDDL:
             agent_id UNINDEXED,
             tokenize = 'porter unicode61 remove_diacritics 2'
         )
+    """
+    # Multilingual channel (fts_text): no stemmer; marks/symbols are token chars.
+    _DDL_FTS_ML = f"""
+        CREATE VIRTUAL TABLE IF NOT EXISTS {_FTS_ML_TABLE} USING fts5(
+            content, fragment_id UNINDEXED, agent_id UNINDEXED,
+            tokenize = "unicode61 remove_diacritics 2 categories 'L* N* Co M* S*'"
+        )
+    """
+    _DDL_FTS_ML_FALLBACK = _DDL_FTS_ML.replace(" categories 'L* N* Co M* S*'", "")
+    # Deletes need no plaintext: a trigger mirrors them. (An UPDATE OF content
+    # trigger was measured to slow every upsert by ~40%; _fts_upsert deletes.)
+    _DDL_FTS_ML_TRIGGER = f"""
+        CREATE TRIGGER IF NOT EXISTS {_FTS_ML_TABLE}_delete AFTER DELETE ON fragments
+        BEGIN DELETE FROM {_FTS_ML_TABLE} WHERE rowid = old.rowid; END
     """
     _INDEXES = [
         "CREATE INDEX IF NOT EXISTS idx_frag_agent   ON fragments(agent_id)",

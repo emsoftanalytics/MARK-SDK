@@ -58,6 +58,9 @@ _UPSERT_FRAGMENT_SQL = (
 _FTS_TABLE = "fragments_fts"
 # schema_info key marking that the FTS index has been backfilled from fragments.
 _FTS_META_KEY = "fts_backfilled"
+# Multilingual lexical table (no stemmer; CJK bigrams, symbols) and its marker.
+_FTS_ML_TABLE = "fragments_fts_ml"
+_FTS_ML_META_KEY = "fts_ml_backfilled"
 
 ListenerCallback = Callable[[str, str], None]
 
@@ -66,7 +69,10 @@ def _pack_embedding(embedding: list[float] | None) -> bytes | None:
     """Encode an embedding as float32 little-endian bytes (no numpy needed)."""
     if embedding is None:
         return None
-    packed = array("f", (float(value) for value in embedding))
+    try:
+        packed = array("f", embedding)  # C-level conversion: ~10x faster per vector
+    except TypeError:  # elements array() does not accept directly
+        packed = array("f", (float(value) for value in embedding))
     if sys.byteorder != "little":  # pragma: no cover - big-endian hosts only
         packed.byteswap()
     return packed.tobytes()

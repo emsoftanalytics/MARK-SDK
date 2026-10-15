@@ -1,0 +1,19 @@
+{
+  "_comment": "Budgets for bench.py --check: about 2x a reference run (hash embedder, 4 cores, Python 3.13, a10 W2). Lower is better; a run fails when a metric exceeds its budget. Reference values are kept next to each budget for context.",
+  "20000": {
+    "store_us_per_item": 900,
+    "recall_p50_ms": 60,
+    "recall_p95_ms": 100,
+    "cold_start_ms": 2500,
+    "timeline_warm_ms": 25,
+    "_reference": {"store_us_per_item": 418, "recall_p50_ms": 25.1, "recall_p95_ms": 39.6, "cold_start_ms": 1105, "timeline_warm_ms": 1.6}
+  },
+  "100000": {
+    "store_us_per_item": 900,
+    "recall_p50_ms": 80,
+    "recall_p95_ms": 120,
+    "cold_start_ms": 5500,
+    "timeline_warm_ms": 25,
+    "_reference": {"store_us_per_item": 377, "recall_p50_ms": 34.8, "recall_p95_ms": 50.3, "cold_start_ms": 2561, "timeline_warm_ms": 5.4}
+  }
+}

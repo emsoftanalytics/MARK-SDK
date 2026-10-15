@@ -38,8 +38,8 @@ def test_base_fingerprint_default() -> None:
 def test_hash_v2_defaults_and_fingerprint() -> None:
     h = HashEmbeddingProvider()
     assert h.dim == 256
-    assert h.fingerprint == "mark.hash-v2:256"
-    assert HashEmbeddingProvider(dim=64).fingerprint == "mark.hash-v2:64"
+    assert h.fingerprint == "mark.hash-v3:256"
+    assert HashEmbeddingProvider(dim=64).fingerprint == "mark.hash-v3:64"
     with pytest.raises(ValueError):
         HashEmbeddingProvider(dim=0)
 
