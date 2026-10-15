@@ -40,7 +40,7 @@ Before `1.0.0`, minor versions may still refine APIs, but every breaking change 
 5. Tag the release:
 
 ```bash
-git tag v0.2.0a6
+git tag v0.2.0a7
 ```
 
 6. Build and inspect the release artifacts:

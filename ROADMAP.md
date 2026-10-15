@@ -6,9 +6,14 @@ focused on work that can be implemented, tested, documented, and shipped in the
 
 MARK's current promise is simple: agents should not forget important work.
 
-## Current Release: 0.2.0a6
+## Current Release: 0.2.0a7
 
 The current alpha provides:
+
+- Hybrid lexical + vector retrieval with rank fusion and calibrated gap
+  reports, with no LLM calls on the hot path.
+- Pluggable local embedders: Ollama, any OpenAI-compatible local server,
+  FastEmbed, Model2Vec, sentence-transformers, or the zero-dependency default.
 
 - Local-first memory through `Mark.local()`.
 - Persistent memory storage and retrieval.
@@ -21,6 +26,15 @@ The current alpha provides:
 - Graph-scoped memory blocks with provenance sealing, verification, and
   quarantine.
 - Offline examples, tests, and packaging checks.
+
+## Next
+
+- Bi-temporal facts: validity intervals and supersession records that keep
+  history auditable in the block chain.
+- An entity channel as a third retrieval signal.
+- A durable background extraction queue that keeps writes fast.
+- An optional local cross-encoder reranker.
+- A reproducible long-memory evaluation harness with a pinned local judge.
 
 ## Near Term
 
