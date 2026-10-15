@@ -42,6 +42,7 @@ In scope:
 - Secret redaction for sync envelopes and logs.
 - URL validation in optional web lookup paths.
 - Optional encryption providers.
+- The `mark` command line and `mark serve`.
 - Adapter and MCP surfaces shipped in `mark-sdk`.
 - CI/release configuration that affects distributed packages.
 
@@ -66,6 +67,10 @@ Out of scope for this repository:
   the caller supplies a client object.
 - Sandbox middleware is blocked by default unless the caller wires an execution
   backend explicitly.
+- Gap healing (`auto_heal=True` on `MarkAgentMiddleware`) is off by default
+  because it can reach the network.
+- The MCP server lets clients choose an agent namespace. Pass
+  `allowed_agent_ids` when clients are not fully trusted.
 
 ## Secrets And Memory
 
@@ -79,28 +84,77 @@ system.
 
 ## Encryption
 
-The default local store uses `NoOpEncryptionProvider`, which does not encrypt
-memory at rest. Install `mark-sdk[crypto]` and configure
-`FernetEncryptionProvider` when your application needs encrypted local memory
-content.
+The default store does not encrypt memory at rest. Install `mark-sdk[crypto]`
+and pass a `FernetEncryptionProvider` when your application needs encrypted
+local memory:
 
-`FernetEncryptionProvider` requires an explicit `key` or `passphrase`; pass
-`ephemeral=True` only for throwaway data (the key is lost when the process
-exits).
+```python
+import os
+from tempfile import TemporaryDirectory
 
-What encryption at rest covers:
+from mark import Mark
+from mark.security.encryption import FernetEncryptionProvider
 
-- **Encrypted:** fragment content. Integrity digests of content are keyed
-  HMACs, so they don't reveal plaintext.
-- **Not encrypted:** tags, metadata, session ids, source labels, graph node
-  labels, embeddings, and session events. MARK filters and updates these in
-  SQL. Do not put secrets in them. Embeddings can leak the semantics of the
-  content they were computed from.
-- **Not indexed:** encrypted stores never build the plaintext FTS5 lexical
-  index; retrieval uses the vector channel only.
+os.environ.setdefault("MARK_PASSPHRASE", "example only - load this from a secret manager")
+with TemporaryDirectory() as folder:
+    encryption = FernetEncryptionProvider(passphrase=os.environ["MARK_PASSPHRASE"])
+    with Mark.local(folder, encryption=encryption) as mark:
+        mark.memory.block("ops").write("The staging database is db-7.")
+```
 
-Keep encryption keys outside the repository. Prefer environment variables or
-your application's secret-management system.
+`FernetEncryptionProvider` requires exactly one of `key` (a Fernet key) or
+`passphrase` (stretched with PBKDF2-SHA256).
+`FernetEncryptionProvider.from_env()` reads a Fernet key from
+`$MARK_ENCRYPTION_KEY`. `ephemeral=True` generates a
+throwaway key for tests; data written with it cannot be read after the
+process exits.
+
+| Data | At rest |
+| --- | --- |
+| Fragment content | Encrypted |
+| Fact values | Encrypted |
+| Content integrity digests | Keyed HMAC, so they do not reveal plaintext |
+| Tags, metadata, session ids, source labels | Plaintext |
+| Fact subjects and attributes | Plaintext (they are lookup keys) |
+| Graph node labels, block labels, session events | Plaintext |
+| Embeddings | Plaintext; they can reveal the meaning of the content |
+
+MARK filters on the plaintext fields in SQL. Do not put secrets in them.
+Encrypted stores never build the plaintext keyword (FTS5) index, so recall
+uses vector search only.
+
+Keep keys and passphrases outside the repository. Use environment variables
+or your application's secret manager.
+
+## The `mark` command and `mark serve`
+
+The CLI opens a local SQLite file and does not encrypt it (use the Python API
+for encrypted stores). The database file and the `.mark/` directory are
+created with your default file permissions; on a shared machine, restrict
+them yourself.
+
+`mark serve` keeps a store open for fast command-line calls. Its design:
+
+- **Loopback only.** It refuses to bind to anything other than `127.0.0.1`,
+  `::1`, or `localhost`. Clients never use an HTTP proxy.
+- **Token.** Each server generates a random token and writes it, with its
+  address and pid, to `<db>.server.json` with mode `0600`. Every request must
+  carry the token as a bearer token; tokens are compared in constant time.
+- **Server authentication.** Before sending the token, the client sends a
+  random nonce to `GET /hello`. The server must answer with
+  HMAC-SHA256(token, nonce). A stale state file therefore never leaks the token
+  to another process that has taken the port.
+- **One server per database.** `<db>.server.lock` (created with `O_EXCL`,
+  mode `0600`) holds the owner's pid. A lock left by a dead process is
+  reclaimed.
+- **Build fingerprint.** The handshake includes a fingerprint of the package
+  version and command signatures. If the client and server builds differ, the
+  client runs the command in-process instead of sending arguments the server
+  cannot accept.
+- **Request limits.** Request bodies are limited to 8 MB.
+
+Any process running as your user can read the state file and therefore use
+the server. Treat it like the database file itself.
 
 ## Dependency Policy
 

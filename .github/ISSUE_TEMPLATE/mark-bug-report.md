@@ -1,6 +1,6 @@
 ---
 name: Mark Bug report
-about: Create a report to help us improve
+about: Report something in MARK that does not work as documented
 title: ''
 labels: ''
 assignees: ''
@@ -8,33 +8,33 @@ assignees: ''
 ---
 
 **Describe the bug**
-A clear and concise description of what the bug is.
+A clear description of what went wrong.
 
-**To Reproduce**
-Steps to reproduce the behavior:
-1. Go to '...'
-2. Click on '....'
-3. Scroll down to '....'
-4. See error
-5. File affected
-6. lines affected
+**To reproduce**
+A minimal script or command that shows the problem, for example:
 
-**Expected behavior**
-A clear and concise description of what you expected to happen.
+```python
+from mark import Mark
 
-**Screenshots**
-If applicable, add screenshots to help explain your problem.
+with Mark.local(".") as mark:
+    ...
+```
 
-**Desktop (please complete the following information):**
- - OS: [e.g. iOS]
- - Browser [e.g. chrome, safari]
- - Version [e.g. 22]
+**Expected behaviour**
+What you expected to happen.
 
-**Smartphone (please complete the following information):**
- - Device: [e.g. iPhone6]
- - OS: [e.g. iOS8.1]
- - Browser [e.g. stock browser, safari]
- - Version [e.g. 22]
+**Actual behaviour**
+What happened instead. Include the full traceback or command output.
+
+**Environment**
+- MARK version (`python -c "import mark; print(mark.__version__)"`):
+- Python version:
+- OS:
+- Extras installed (for example `fast`, `langchain`, `mcp`, `crypto`):
+- Embedding provider, if not the default:
+- Integration, if any (LangChain middleware, tools, MCP, `mark` CLI, `mark serve`):
 
 **Additional context**
-Add any other context about the problem here.
+Anything else that helps, such as store size or whether the store is encrypted.
+Do not include secrets or private memory content. Report security issues
+privately (see SECURITY.md).
