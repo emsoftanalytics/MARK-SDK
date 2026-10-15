@@ -20,10 +20,26 @@ import time
 from concurrent.futures import Future
 from typing import Any
 
+from mark.context.watch_lines import trusted
 from mark.context.watch_support import _TOKEN_RE, _Anchor, _label_for, _mentions_value
 
 # Same logger name as before the split, so log filtering keeps working.
 logger = logging.getLogger("mark.context.watch")
+
+
+def _confirmed(result: Any, key: str) -> bool:
+    """Memory confirms a subject only through a fact or a trusted record naming it.
+
+    The model's own stored replies do not count: otherwise a phrase it
+    invented ("Caldo Verde", "mark_memory_middleware") would be "known" as
+    soon as its reply was stored, and anchor the next briefings (M7).
+    """
+    from mark.intelligence.query_understanding import _anchor_norm, _contains_anchor
+
+    if any(_anchor_norm(str(f.subject)) == key for f in getattr(result, "facts", None) or []):
+        return True
+    return any(trusted(f) and _contains_anchor(_anchor_norm(f.content), key)
+               for f in result.fragments)
 
 
 class _WatchPrefetchMixin:
@@ -111,7 +127,7 @@ class _WatchPrefetchMixin:
                 self._results[key] = result
                 anchor = self._anchors.get(key)
                 if anchor is not None:
-                    anchor.known = key not in result.missing_anchors
+                    anchor.known = key not in result.missing_anchors and _confirmed(result, key)
                     if anchor.known and not anchor.linked and self.follow_links:
                         links.extend(self._links_from(anchor, result))
             if task:
@@ -124,7 +140,7 @@ class _WatchPrefetchMixin:
         from mark.intelligence.query_understanding import _anchor_norm, _contains_anchor
 
         labels: list[str] = []
-        for fragment in result.fragments[:3]:
+        for fragment in [f for f in result.fragments if trusted(f)][:3]:
             if not _contains_anchor(_anchor_norm(fragment.content), anchor.key):
                 continue
             for key, label in self._extract_anchors(fragment.content):

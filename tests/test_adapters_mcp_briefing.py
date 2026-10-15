@@ -47,6 +47,18 @@ def _call(server, args):
     return _text(asyncio.run(server.call_tool("mark_briefing", {"wait": 2.0, **args})))
 
 
+def _first_note(text: str) -> str:
+    """The first line under "Related notes:" (the best record for the request)."""
+    lines = text.splitlines()
+    return lines[lines.index("Related notes:") + 1] if "Related notes:" in lines else ""
+
+
+def _anchors(server, session_id: str) -> list[str]:
+    """Subjects the session's watch is following (isolation is per session)."""
+    watch = server.mark_briefing_sessions.get(AGENT, session_id, create=False)
+    return watch.briefing().anchors
+
+
 def _read(server, uri):
     async def _run():
         return list(await server.read_resource(uri))
@@ -65,7 +77,7 @@ def test_briefing_end_to_end_with_links_and_corrections(mark) -> None:
     server = _server(mark)
     text = _call(server, {"text": "Customers see 502s. Please look into HAL-4433.", "session_id": "s1"})
     assert text.startswith("<mark_briefing>")
-    assert "TICKET HAL-4433" in text and "port: 9090" in text
+    assert "TICKET HAL-4433" in text and "checkout-api port = 9090" in text
     text = _call(server, {"text": "I'll restart checkout-api on port 8080.", "role": "assistant",
                           "session_id": "s1"})
     assert "checkout-api port is 9090 now" in text and "8080 is outdated" in text
@@ -78,19 +90,21 @@ def test_briefing_accepts_message_lists(mark) -> None:
         {"role": "user", "content": [{"type": "text", "text": "What about HAL-5150?"}]},
     ]
     text = _call(server, {"messages": messages, "session_id": "m"})
-    assert "\nHAL-5150:" in text and "\nHAL-4433:" not in text   # subject headings
+    assert "HAL-5150" in _first_note(text)
 
 
 def test_sessions_are_isolated(mark) -> None:
     server = _server(mark)
     one = _call(server, {"text": "Look into HAL-4433.", "session_id": "one"})
     two = _call(server, {"text": "Look into HAL-5150.", "session_id": "two"})
-    # Subject headings show what each session is about ("Related to the current
-    # request" may list other records: the store is tiny).
-    assert "\nHAL-4433:" in one and "\nHAL-5150:" not in one
-    assert "\nHAL-5150:" in two and "\nHAL-4433:" not in two
+    # Each session's subjects and best note are its own (other notes may follow:
+    # the store is tiny).
+    assert "HAL-4433" in _anchors(server, "one") and "HAL-5150" not in _anchors(server, "one")
+    assert "HAL-5150" in _anchors(server, "two") and "HAL-4433" not in _anchors(server, "two")
+    assert "HAL-4433" in _first_note(one) and "HAL-5150" in _first_note(two)
     # Session one is unchanged by session two's traffic.
-    assert "\nHAL-5150:" not in _call(server, {"session_id": "one"})
+    assert "HAL-4433" in _first_note(_call(server, {"session_id": "one"}))
+    assert "HAL-5150" not in _anchors(server, "one")
     # Same session id in another agent namespace is a different session.
     server = create_mark_mcp_server_from_local(mark, agent_id=AGENT, briefing=True)
     other = _call(server, {"text": "SECRET-77?", "session_id": "one", "agent_id": "other"})
@@ -108,7 +122,8 @@ def test_lru_eviction_closes_watches(mark) -> None:
     assert len(sessions) == 2 and (AGENT, "a") not in sessions.keys()
     assert first._executor is None                       # evicted watch was closed
     # A re-created session starts empty: nothing leaks from the evicted state.
-    assert "\nHAL-4433:" not in _call(server, {"session_id": "a"})
+    _call(server, {"session_id": "a"})
+    assert _anchors(server, "a") == []
     sessions.close_all()
     assert len(sessions) == 0
 

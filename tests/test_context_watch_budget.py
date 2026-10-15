@@ -43,7 +43,7 @@ def test_no_budget_keeps_the_original_output(memory) -> None:
     with _primed(memory) as plain:
         brief = plain.briefing()
     assert brief.usage is None and brief.items == ()
-    assert brief.text.startswith("<mark_briefing>\nCorrections (memory has newer values):")
+    assert brief.text.startswith("<mark_briefing>\nCorrections:\n- atlas-core port is 4444 now")
     assert "Not in memory: Zorbatron-9" in brief.text
 
 
@@ -75,10 +75,10 @@ def test_custom_counter_and_per_call_override(memory) -> None:
 
 
 def test_fill_lifts_count_limits(memory) -> None:
-    with _primed(memory, budget_tokens=2000, per_anchor=1, max_anchors=1) as capped, \
-            _primed(memory, budget_tokens=2000, per_anchor=1, max_anchors=1, budget_fill=True) as filled:
+    options = dict(budget_tokens=2000, per_anchor=1, max_anchors=1, relevant_lines=1)
+    with _primed(memory, **options) as capped, _primed(memory, budget_fill=True, **options) as filled:
         few, many = capped.briefing(), filled.briefing()
-    assert len(few.memory_ids) <= 2 < len(many.memory_ids)
+    assert len(few.memory_ids) <= 3 < len(many.memory_ids)   # 1 request line + 1 per subject + 1 more
     assert len(many.anchors) > len(few.anchors) == 1
 
 
@@ -87,12 +87,19 @@ def test_budgeted_briefing_is_deterministic(memory) -> None:
         assert a.briefing().text == b.briefing().text
 
 
-def test_small_model_preset_sets_a_token_budget(memory) -> None:
-    with ContextWatch.for_small_models(memory, background=False) as small:
-        assert small.budget.max_tokens == 175
-        small.observe(QUESTION, role="user")
-        assert small.briefing().usage.used_tokens <= 175
+def test_size_presets_set_token_budgets(memory) -> None:
+    from mark.context.presets import PRESETS
+
+    for factory, name in ((ContextWatch.for_small_models, "small"), (ContextWatch.for_tiny_models, "tiny")):
+        cap = PRESETS[name]["budget_tokens"]
+        with factory(memory, background=False) as watch:
+            assert watch.budget.max_tokens == cap and watch.assistant_lines == 0
+            watch.observe(QUESTION, role="user")
+            assert watch.briefing().usage.used_tokens <= cap
+    assert PRESETS["tiny"]["budget_tokens"] < PRESETS["small"]["budget_tokens"]
     assert ContextWatch.for_small_models(memory, budget_tokens=None, background=False).budget is None
+    with pytest.raises(ValueError):
+        ContextWatch.for_preset(memory, "huge")
 
 
 def test_inject_applies_a_budget(memory) -> None:

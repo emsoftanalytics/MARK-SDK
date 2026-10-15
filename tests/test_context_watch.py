@@ -45,8 +45,8 @@ def test_links_are_anticipated(memory) -> None:
         watch.observe("Please look into ticket HAL-4433.", role="user")
         brief = watch.briefing(wait=2.0)
     # The ticket names atlas-core: its current port is ready before anyone asks.
-    assert "atlas-core (linked):" in brief.text
-    assert "port 4444" in brief.text
+    assert "Known facts (current):\n- atlas-core port = 4444" in brief.text
+    assert brief.text.count("atlas-core port = 4444") == 1   # one fact line, no linked repeat
 
 
 def test_briefing_never_blocks_by_default(memory) -> None:

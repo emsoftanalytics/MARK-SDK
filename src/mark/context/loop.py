@@ -12,6 +12,19 @@ and nothing else. Every completed exchange is stored in MARK *before* it can
 fall out of the window, so an early fact ("my hive is called Colmeia Azul")
 reaches the model through the briefing twenty turns later.
 
+What is stored, and why (usage test 0.2.0a9, small models): one dense
+memory per user message ("User said: ..."), so a briefing line carries the
+user's words and nothing else; the model's reply as a *separate*, low-trust
+memory (``source="assistant"``, tag ``mark:assistant``) that never anchors a
+briefing and is never shown as something the user said
+(``store_assistant=False`` drops it). Questions are kept but tagged
+``mark:question`` and left out of briefings: they add no information.
+
+``preset`` ("default", "small", "tiny"; see ``mark.context.presets``) sizes
+the briefing for the model; ``skill`` adds a packaged SKILL.md to the system
+prompt and charges its tokens to ``budget_tokens``, so the budget is the
+whole MARK footprint of the prompt.
+
     chat = MarkChat(mark.runtime.memory("chat"), model="llama3.2:3b",
                     base_url="http://localhost:11434/v1", keep_last=4, budget_tokens=300)
     print(chat.send("What did I call my hive?"))
@@ -29,6 +42,8 @@ from typing import Any
 
 from mark.context.budget import ContextBudget, as_budget
 from mark.context.history import split_history
+from mark.context.presets import preset_settings, split_budget
+from mark.context.provenance import assistant_options, user_options
 from mark.context.watch import Briefing, ContextWatch
 from mark.context.watch_messages import inject
 from mark.context.watch_render import render_briefing
@@ -62,6 +77,18 @@ def chat_completion(base_url: str, model: str, messages: list[dict[str, Any]], *
         raise MarkChatError(f"unexpected model response: {str(payload)[:300]}") from None
 
 
+def _skill_text(name: str | None) -> str:
+    """The packaged skill *name* for a system prompt ("" for none; unknown names raise)."""
+    if not name:
+        return ""
+    from mark.middlewares.skills.loader import load_skill_text, prompt_text
+
+    text = load_skill_text(name)
+    if not text:
+        raise ValueError(f"unknown packaged skill {name!r}")
+    return prompt_text(text)
+
+
 class MarkChat:
     """Conversation whose long-term context lives in MARK, not in the prompt.
 
@@ -70,18 +97,28 @@ class MarkChat:
     base_url        OpenAI-compatible base URL (default local Ollama)
     system          system prompt
     keep_last       messages kept verbatim (>= 1; default 6 = three exchanges)
-    budget_tokens   cap on the injected briefing (int or ContextBudget; default
-                    400, filled: as many relevant memories as fit)
+    budget_tokens   cap on everything MARK adds to the prompt (int or
+                    ContextBudget; default 400, or the preset's budget; filled:
+                    as many relevant memories as fit)
     token_counter   ``str -> int`` for the budget (default ceil(chars / 4))
+    preset          "default", "small" (~1-3B) or "tiny" (<=1B) briefing shape
+    store_assistant store replies as low-trust context (default True)
+    skill           packaged skill name (e.g. "mark-memory-compact") appended
+                    to the system prompt; its tokens count inside budget_tokens
     """
 
     def __init__(self, memory: Any, *, model: str = "llama3.2:3b",
                  base_url: str = "http://localhost:11434/v1", system: str = "",
-                 keep_last: int = 6, budget_tokens: int | ContextBudget = 400,
+                 keep_last: int = 6, budget_tokens: int | ContextBudget | None = None,
                  token_counter: Any = None, api_key: str | None = None,
-                 timeout: float = 120.0, options: dict[str, Any] | None = None) -> None:
+                 timeout: float = 120.0, options: dict[str, Any] | None = None,
+                 preset: str | None = None, store_assistant: bool = True,
+                 skill: str | None = None) -> None:
         if keep_last < 1:
             raise ValueError("keep_last must be >= 1")
+        settings = preset_settings(preset)        # validates the name
+        if budget_tokens is None:
+            budget_tokens = settings.get("budget_tokens", 400)
         self.memory = memory
         self.model = model
         self.base_url = base_url
@@ -90,10 +127,17 @@ class MarkChat:
         self.api_key = api_key
         self.timeout = timeout
         self.options = dict(options or {})
+        self.store_assistant = store_assistant
+        self.skill_text = _skill_text(skill)
         self.budget = as_budget(budget_tokens, token_counter, fill=True)
+        # The skill is charged to the same budget: the briefing gets the rest.
+        self._brief_budget = ContextBudget(
+            split_budget(self.budget.max_tokens, self.skill_text, self.budget.token_counter),
+            fill=True, token_counter=self.budget.token_counter) if self.skill_text else self.budget
         # Inline prefetch (background=False): this loop is synchronous anyway,
         # and the briefing must reflect the turn just stored.
-        self.watch = ContextWatch(memory, background=False, budget_tokens=self.budget)
+        self.watch = ContextWatch.for_preset(memory, preset, background=False,
+                                             budget_tokens=self._brief_budget)
         self.window: list[dict[str, Any]] = []      # the last keep_last messages, nothing older
         self.last_prompt: list[dict[str, Any]] = []
         self.last_briefing: Briefing | None = None
@@ -105,7 +149,8 @@ class MarkChat:
         pending = [*self.window, {"role": "user", "content": text}]
         kept = split_history(pending, self.keep_last).kept
         self.last_briefing = self._briefing(kept)
-        base = [{"role": "system", "content": self.system}] if self.system else []
+        system = "\n\n".join(part for part in (self.system, self.skill_text) if part)
+        base = [{"role": "system", "content": system}] if system else []
         self.last_prompt = inject(base + kept, self.last_briefing)
         return self.last_prompt
 
@@ -119,7 +164,7 @@ class MarkChat:
         items = [i for i in brief.items if not any(text in i.text for text in recent)]
         if len(items) == len(brief.items):
             return brief
-        fit = self.budget.fit(items, render_briefing)   # re-fit: freed tokens go to other memories
+        fit = self._brief_budget.fit(items, render_briefing)   # re-fit: freed tokens go to other memories
         return replace(brief, text=fit.text, usage=fit.usage, items=tuple(items),
                        memory_ids=[i.ref for i in fit.items if i.ref])
 
@@ -130,14 +175,16 @@ class MarkChat:
         """
         self.turns += 1
         exchange = [{"role": "user", "content": text}]
-        stored = f"User said: {' '.join(text.split())}"
+        meta = {"turn": self.turns}
+        # Stored first, trimmed second: nothing leaves the window unless MARK has it.
+        self.memory.store_sync(f"User said: {' '.join(text.split())}", metadata=meta,
+                               **user_options(text))
         if reply is not None:
             exchange.append({"role": "assistant", "content": reply})
-            stored += f"\nAssistant replied: {' '.join(reply.split())}"
-            self.watch.observe(reply, role="assistant")
-        # Stored first, trimmed second: nothing leaves the window unless MARK has it.
-        self.memory.store_sync(stored, source="mark-chat", tags=["conversation"],
-                               metadata={"turn": self.turns})
+            self.watch.observe(reply, role="assistant")   # still checked for stale values
+            if self.store_assistant and reply.strip():
+                self.memory.store_sync(f"Assistant replied: {' '.join(reply.split())}",
+                                       metadata={**meta, "trust": "low"}, **assistant_options())
         self.watch.refresh()   # subjects first seen in this turn are in memory now
         self.window = split_history([*self.window, *exchange], self.keep_last).kept
 

@@ -31,7 +31,12 @@ doesn't know instead of improvising.
 
 Plain agent loops with OpenAI-style message lists use
 ``watch.observe_messages(messages)`` and :func:`inject` (``watch_messages``);
-``ContextWatch.for_small_models(memory)`` is a tighter preset for small models.
+``ContextWatch.for_small_models(memory)`` and ``ContextWatch.for_tiny_models``
+are measured presets for small models (``mark.context.presets``).
+
+Provenance: the model's own replies stored in memory (``mark:assistant``)
+never confirm a subject, never become notes about the user and are shown, if
+at all, only as "unverified" (``mark.context.provenance``).
 
 The background machinery lives in ``watch_prefetch`` and the data types and
 text helpers in ``watch_support``; both are re-exported here.
@@ -79,6 +84,10 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
     budget_tokens   hard token cap (int or ContextBudget); replaces budget_chars
     token_counter   ``str -> int`` for budget_tokens (default: ceil(chars / 4))
     budget_fill     True: lift max_anchors/per_anchor and fill up to budget_tokens
+    relevant_lines  records retrieved for the current request that rank as
+                    "relevant" (above subject records) under a budget
+    assistant_lines earlier assistant replies (low trust, labelled
+                    "unverified") the briefing may show (default 0: none)
     """
 
     def __init__(
@@ -94,6 +103,8 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
         budget_tokens: int | ContextBudget | None = None,
         token_counter: Any = None,
         budget_fill: bool = False,
+        relevant_lines: int = 4,
+        assistant_lines: int = 0,
     ) -> None:
         self._memory = memory
         self.budget_chars = budget_chars
@@ -101,6 +112,8 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
         self.per_anchor = per_anchor
         self.ttl_turns = ttl_turns
         self.line_chars = line_chars
+        self.relevant_lines = max(0, int(relevant_lines))
+        self.assistant_lines = max(0, int(assistant_lines))
         self.budget = as_budget(budget_tokens, token_counter, budget_fill)
         self._lock = threading.RLock()
         self._anchors: dict[str, _Anchor] = {}
@@ -207,6 +220,9 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
                 "results": {a.key: self._results.get(a.key) for a in active},
                 "task_result": self._task_results.get(self._task),
                 "corrections": list(self._corrections.values()),
+                "task": self._task,
+                "relevant_lines": self.relevant_lines,
+                "assistant_lines": self.assistant_lines,
             }
             pending = len(self._pending)
 
