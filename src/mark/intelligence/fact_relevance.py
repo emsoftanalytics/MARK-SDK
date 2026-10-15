@@ -105,6 +105,28 @@ def wants_everything(query: str) -> bool:
     return _EVERYTHING_RE.search(query) is not None
 
 
+# Everyday question words -> the attribute names extraction uses. Small and
+# generic on purpose: "Where do I live?" must reach a ``location`` fact.
+_SYNONYM_GROUPS = (
+    "live lives living reside resides based home location city town moved",
+    "work works working job employer company occupation role",
+    "eat eats diet food vegetarian vegan",
+    "born birthday birth age old",
+    "contact email phone number call reach",
+    "like likes love prefer prefers favourite favorite hate dislike preference",
+)
+
+
+def _expand(terms: set[str]) -> set[str]:
+    """Add the synonym group of every query term (normalised like the terms)."""
+    out = set(terms)
+    for group in _SYNONYM_GROUPS:
+        words = set(_content_terms(group))
+        if words & terms:
+            out |= words
+    return out
+
+
 def select_facts(
     query: str,
     subject: str,
@@ -115,7 +137,7 @@ def select_facts(
 ) -> list[Any]:
     """Filter one subject's current fact rows (``attribute``/``value`` keys) for *query*."""
     terms = set(_content_terms(query))
-    named = [row for row in rows if set(_content_terms(_attribute_text(row))) & terms]
+    named = [row for row in rows if set(_content_terms(_attribute_text(row))) & _expand(terms)]
     if named:
         selected = named
     else:

@@ -33,23 +33,6 @@ def _invalid(exc: Exception, what: str = "memory") -> Exception:
     return exc
 
 
-def _when(value: datetime | str | None, name: str) -> datetime | None:
-    """Parse a since/until bound (ISO date or datetime); naive values are UTC."""
-    if value is None or isinstance(value, datetime):
-        stamp = value
-    else:
-        try:
-            stamp = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
-        except ValueError:
-            from mark.errors import InvalidInputError
-
-            raise InvalidInputError(f"{name} must be an ISO date or datetime, got {value!r}") from None
-    if stamp is not None and stamp.tzinfo is None:
-        from datetime import timezone
-
-        stamp = stamp.replace(tzinfo=timezone.utc)
-    return stamp
-
 
 class VerbsMixin(MemoryCore):
     """remember / recall and the async twins of every lifecycle verb."""
@@ -132,27 +115,28 @@ class VerbsMixin(MemoryCore):
             from mark.errors import InvalidInputError
 
             raise InvalidInputError(f"k must be at least 1, got {k!r}")
-        start, end = _when(since, "since"), _when(until, "until")
         wanted = list(tags or [])
         kind = normalize_kind(kind)
         if kind:
             wanted.append(kind_tag(kind))
         if policy is None:
             policy = RetrievalPolicy.DEEP if k is not None and k > 10 else RetrievalPolicy.BALANCED
-        result = self.retrieve_sync(  # type: ignore[attr-defined]
-            query, policy, session_id=session_id, session_prefix=session_prefix,
-            tags=wanted or None, **options,
-        )
-        keep = list(range(len(result.fragments)))
-        if start is not None or end is not None:
-            # Facade-side time window: exact for what the pipeline returned.
-            # TODO(a10 integration): prefer the pipeline's since/until (W4)
-            # so the window filters candidates before top-k is taken.
-            from mark.intelligence.temporal_order import event_time
+        if since is not None or until is not None:
+            # The pipeline filters candidates by event time before top-k is
+            # taken; it accepts datetimes, ISO text and natural text ("last week").
+            options = {**options, "since": since, "until": until}
+        try:
+            result = self.retrieve_sync(  # type: ignore[attr-defined]
+                query, policy, session_id=session_id, session_prefix=session_prefix,
+                tags=wanted or None, **options,
+            )
+        except ValueError as exc:
+            from mark.errors import InvalidInputError, MarkError
 
-            keep = [i for i in keep
-                    if (start is None or event_time(result.fragments[i]) >= start)
-                    and (end is None or event_time(result.fragments[i]) <= end)]
+            if isinstance(exc, MarkError):
+                raise
+            raise InvalidInputError(str(exc)) from exc
+        keep = list(range(len(result.fragments)))
         if k is not None:
             keep = keep[: int(k)]
         if len(keep) != len(result.fragments):

@@ -53,3 +53,12 @@ def test_max_memory_bytes_is_configurable_on_mark_local(tmp_path: Path) -> None:
     with Mark.local(tmp_path, max_memory_bytes=100) as mark:
         with pytest.raises(MemoryTooLargeError):
             mark.memory.remember("x" * 200)
+
+
+def test_user_subject_links_first_person_facts_and_questions(tmp_path: Path) -> None:
+    with Mark.local(tmp_path, fact_extractor="patterns") as mark:
+        mark.runtime.configure_user_subject("somto")
+        mark.memory.remember("I moved to Porto in 2026.", extract_facts=True)
+        assert [str(f.value) for f in mark.memory.facts.current("somto")] == ["Porto"]
+        facts = mark.memory.recall("Where do I live now?").facts
+        assert any(f.subject == "somto" and str(f.value) == "Porto" for f in facts)

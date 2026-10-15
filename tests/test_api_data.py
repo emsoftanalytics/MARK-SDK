@@ -103,8 +103,9 @@ def test_recall_filters(tmp_path: Path) -> None:
     assert ids(until="2026-03-01") == [old]
     assert ids(k=1) and len(ids(k=1)) == 1
     assert ids(order="chronological") == [old, new]
+    mem.recall("x", since="last tuesday")  # natural dates are accepted
     with pytest.raises(InvalidInputError):
-        mem.recall("x", since="last tuesday")
+        mem.recall("x", since="not a date at all")
     runtime.shutdown()
 
 

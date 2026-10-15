@@ -175,7 +175,9 @@ def _result_json(result: Any, k: int, order: str = "relevance") -> dict[str, Any
     from mark.intelligence.temporal_order import same_day_order
     from mark.memory.timeline_order import fragment_order
 
-    shown = list(zip(result.fragments, result.scores))[:k]
+    # Show the calibrated relevance: the same scale the gap report uses.
+    scores = getattr(result, "relevance", None) or result.scores
+    shown = list(zip(result.fragments, scores))[:k]
     if order == "chronological":
         shown = [shown[i] for i, _ in fragment_order([fragment for fragment, _ in shown])]
     elif order != "relevance":

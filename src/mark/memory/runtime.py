@@ -176,6 +176,16 @@ class MarkRuntime(MaintenanceMixin):
         """Set the LLM-aware candidate pool size for the retrieval pipeline."""
         self.pipeline.configure_top_k_with_llm(top_k)
 
+    def configure_user_subject(self, subject: str) -> None:
+        """Name the user: the subject of "I/my" facts and of "my ..." questions (default "user")."""
+        name = str(subject or "").strip()
+        if not name:
+            raise ValueError("user subject must be a non-empty name")
+        self.pipeline.configure_user_subject(name)
+        extractor = getattr(self.fact_extraction, "extractor", None)
+        if hasattr(extractor, "user_subject"):
+            extractor.user_subject = name  # pattern extractor: first-person facts
+
     def add_middleware(self, middleware: MarkMiddleware) -> MarkMiddleware:
         """Register middleware for future memory operations."""
         return self.middleware.add(middleware)

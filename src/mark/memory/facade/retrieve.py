@@ -88,6 +88,8 @@ class RetrieveMixin(HealingMixin):
         compress: bool = False,
         expand: bool = False,
         order: str = "relevance",
+        since: object = None,
+        until: object = None,
     ) -> RetrievalResult:
         """Synchronous variant of retrieve().
 
@@ -119,6 +121,8 @@ class RetrieveMixin(HealingMixin):
                     "web_skill": web_skill,
                     "compress": compress,
                     "expand": expand,
+                    "since": since,
+                    "until": until,
                 },
                 handler=lambda ctx: self._retrieve_sync_impl(**ctx.payload),
             ), order)
@@ -137,6 +141,8 @@ class RetrieveMixin(HealingMixin):
             web_skill=web_skill,
             compress=compress,
             expand=expand,
+            since=since,
+            until=until,
         ), order)
 
     def retrieve_many_sync(
@@ -192,12 +198,14 @@ class RetrieveMixin(HealingMixin):
         web_skill: Skill | None = None,
         compress: bool = False,
         expand: bool = False,
+        since: object = None,
+        until: object = None,
     ) -> RetrievalResult:
         """Middleware-free retrieval with escalation and optional healing."""
         sf = SessionFilter(
             session_id=session_id, session_prefix=session_prefix,
             tags=tags, tier=tier, scope=scope,
-            block_id=block_id, block_ids=block_ids,
+            block_id=block_id, block_ids=block_ids, since=since, until=until,
         )
         path = ["session" if (session_id or session_prefix) else "agent_namespace"]
         result = replace(
@@ -215,10 +223,10 @@ class RetrieveMixin(HealingMixin):
             and (session_id or session_prefix)
         ):
             # Escalation widens only the session dimension; every other caller
-            # filter (tags, tier, scope, block_id/block_ids) and expand stay.
+            # filter (tags, tier, scope, blocks, time window) and expand stay.
             agent_filter = SessionFilter(
                 tags=tags, tier=tier, scope=scope,
-                block_id=block_id, block_ids=block_ids,
+                block_id=block_id, block_ids=block_ids, since=since, until=until,
             )
             agent_result = replace(
                 self._pipeline.retrieve(
