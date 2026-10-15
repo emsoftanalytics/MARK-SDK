@@ -122,6 +122,10 @@ def test_questions_are_stored_but_not_briefed(server, memory) -> None:
 def test_size_presets_shape_the_briefing(server, memory) -> None:
     from mark.context.presets import PRESETS
 
+    with MarkChat(memory, base_url=server.url) as chat:            # measured default: small
+        assert chat.budget.max_tokens == PRESETS["small"]["budget_tokens"] == 200
+    with MarkChat(memory, base_url=server.url, preset="default") as chat:
+        assert chat.budget.max_tokens == 400
     with MarkChat(memory, base_url=server.url, preset="tiny") as chat:
         assert chat.budget.max_tokens == PRESETS["tiny"]["budget_tokens"]
         assert chat.watch.assistant_lines == 0

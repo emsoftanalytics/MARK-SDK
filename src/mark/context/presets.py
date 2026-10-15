@@ -9,18 +9,21 @@ are the values those runs chose (see the a10 context report).
 preset     models                 budget   shape
 =========  =====================  =======  ================================
 default    7B+ / hosted           400*     every section, no assistant lines
-small      ~1-3B (llama3.2:1b-3b) 200      dense: 4 request lines, no
-                                           assistant lines
+small      ~1-3B (llama3.2:1b-3b) 200      dense: 4 request lines, 1 per
+                                           subject, no assistant lines
 tiny       <=1B (qwen3:0.6b)      160      facts and the best 3 lines only
 =========  =====================  =======  ================================
 
 ``*`` the default ContextWatch has no token budget (``budget_chars`` 1800);
 MarkChat uses 400 tokens.
 
-``skill`` names the packaged SKILL.md a host should add to the system prompt
-for that preset (``None``: none). Hosts that add it count its tokens inside
-the same budget (:func:`split_budget`), so "budget 300" means 300 tokens of
-MARK text in the prompt in total, never 300 plus a 750-token skill (M7).
+No preset adds a skill. The compact skill (``mark-memory-compact``, ~170
+tokens) is shipped for hosts that want one, but on llama3.2:1b it lowered
+accuracy from 18/25 to 10/25 even with the full 200-token memory beside it
+(5/25 when charged to the same 200 tokens): the briefing headers carry the
+guidance instead. A host that adds a skill counts its tokens inside the same
+budget (:func:`split_budget`), so "budget 300" means 300 tokens of MARK text
+in the prompt in total, never 300 plus a 750-token skill (M7).
 """
 from __future__ import annotations
 
@@ -35,10 +38,6 @@ PRESETS: dict[str, dict[str, Any]] = {
              "budget_tokens": 160, "relevant_lines": 3, "assistant_lines": 0,
              "change_lines": 2, "follow_links": 0},
 }
-
-#: Packaged skill used with each preset ("mark-memory-compact" is ~200 tokens).
-SKILLS: dict[str, str | None] = {"default": None, "small": None, "tiny": None}
-
 
 def preset_settings(name: str | None, **overrides: Any) -> dict[str, Any]:
     """ContextWatch keyword arguments for preset *name* with *overrides* applied."""

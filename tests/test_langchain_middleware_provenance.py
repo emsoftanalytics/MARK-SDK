@@ -5,8 +5,8 @@
 * windowed-out messages are stored with their role's provenance; assistant
   replies are low trust (or not stored with ``store_assistant=False``);
 * the model's reasoning and final answers are archived as assistant output;
-* the injected skill counts inside ``budget_tokens``, and small budgets or
-  presets get the compact, frontmatter-free skill;
+* the injected skill counts inside ``budget_tokens``; small budgets and
+  presets get no skill unless one is named (the compact one is frontmatter-free);
 * assistant output stored by earlier runs never anchors a briefing.
 """
 from __future__ import annotations
@@ -77,15 +77,19 @@ def test_run_observations_are_low_trust_assistant_output(mode: str) -> None:
     assert tools and all(backend.options[c]["source"] == "tool" for c in tools)
 
 
-def test_skill_is_charged_to_the_budget_and_compact_when_small() -> None:
-    mw = MarkAgentMiddleware(KeywordBackend(), budget_tokens=300)
+def test_skill_is_charged_to_the_budget_and_left_out_when_small() -> None:
+    mw = MarkAgentMiddleware(KeywordBackend(), budget_tokens=300, include_skill="mark-memory-compact")
     skill = mw._skill_block()
-    assert mw._skill_name() == "mark-memory-compact" and not skill.startswith("---")
+    assert skill.startswith("# Your memory")                   # frontmatter-free
     assert mw._memory_budget().max_tokens == 300 - estimate_tokens(skill)
     large = MarkAgentMiddleware(KeywordBackend(), budget_tokens=4000)
     assert large._skill_name() == "mark-memory-middleware"     # long skill unchanged
     assert large._skill_block().startswith("---")
-    assert MarkAgentMiddleware(KeywordBackend(), preset="tiny")._skill_name() == "mark-memory-compact"
+    assert large._memory_budget().max_tokens == 4000 - estimate_tokens(large._skill_block())
+    # Small budgets and presets: no skill (it lowered small-model accuracy).
+    assert MarkAgentMiddleware(KeywordBackend(), budget_tokens=300)._skill_name() is None
+    assert MarkAgentMiddleware(KeywordBackend(), preset="tiny")._skill_name() is None
+    assert MarkAgentMiddleware(KeywordBackend(), budget_tokens=300)._memory_budget().max_tokens == 300
     assert MarkAgentMiddleware(KeywordBackend(), include_skill=False)._memory_budget() is None
     with pytest.raises(ValueError):
         MarkAgentMiddleware(KeywordBackend(), preset="huge")
@@ -94,7 +98,8 @@ def test_skill_is_charged_to_the_budget_and_compact_when_small() -> None:
 @pytest.mark.parametrize("mode", ["sync", "async"])
 def test_system_prompt_mark_text_fits_the_budget(mode: str) -> None:
     memories = {f"k{i}": f"MEMORY-{i}: " + "detail " * 30 for i in range(6)}
-    mw = MarkAgentMiddleware(KeywordBackend(memories), budget_tokens=300)
+    mw = MarkAgentMiddleware(KeywordBackend(memories), budget_tokens=300,
+                             include_skill="mark-memory-compact")
     model, agent = _agent(mw)
     _invoke(agent, "tell me about " + " ".join(memories), mode)
     for _, system in model.calls:

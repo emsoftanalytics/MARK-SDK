@@ -8,8 +8,8 @@ included, as the ``[MARK project memory]`` block. The packaged skill the
 middleware injects is charged to the same budget (``split_budget``): with
 ``budget_tokens=300`` and a 170-token skill, memory gets 130 tokens, so the
 budget is the whole MARK footprint of the system prompt (usage test M7: a
-3 KB skill on top of a "300-token" budget). Small budgets therefore get the
-compact skill (see ``_skill_name``).
+3 KB skill on top of a "300-token" budget). Small budgets and the small/tiny
+presets therefore get no skill unless one is named (see ``_skill_name``).
 
 Retrieved records are filtered like briefing notes: the model's own stored
 replies are kept apart under an "unverified" header (lowest priority), bare

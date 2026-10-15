@@ -235,15 +235,16 @@ class MarkAgentMiddleware(  # type: ignore[misc]
                 lets MARK stand in for the rest (stored before dropping).
             keep_last: Messages kept in ``history="mark"`` (default 6).
             preset: Model-size preset for the briefing: ``"small"`` (~1-3B)
-                or ``"tiny"`` (<=1B) also select the compact skill
-                (``mark.context.presets``); default: none.
+                or ``"tiny"`` (<=1B) (``mark.context.presets``); they inject
+                no skill by default (it lowered small-model accuracy).
             store_assistant: Store the model's replies when they leave the
                 window (low trust, ``mark:assistant``; never anchors a
                 briefing). ``False`` drops them unstored.
 
-        ``include_skill`` may also name a packaged skill. ``True`` picks the
-        compact skill for small presets or when the long one would take over
-        half of ``budget_tokens``; the injected skill counts inside the budget.
+        ``include_skill`` may also name a packaged skill (e.g.
+        ``"mark-memory-compact"``). ``True`` injects the long skill except for
+        small presets or when it would take over half of ``budget_tokens``;
+        the injected skill counts inside the budget.
         """
         if not _LANGCHAIN_AVAILABLE:
             raise ImportError(

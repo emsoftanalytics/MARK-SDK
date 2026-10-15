@@ -20,8 +20,10 @@ briefing and is never shown as something the user said
 (``store_assistant=False`` drops it). Questions are kept but tagged
 ``mark:question`` and left out of briefings: they add no information.
 
-``preset`` ("default", "small", "tiny"; see ``mark.context.presets``) sizes
-the briefing for the model; ``skill`` adds a packaged SKILL.md to the system
+``preset`` ("small" by default, "tiny", "default"; see
+``mark.context.presets``) sizes the briefing for the model: measured on
+llama3.2:3b the small preset matched the 400-token default at fewer prompt
+tokens, and on llama3.2:1b it answered 18/25 against 14/25; ``skill`` adds a packaged SKILL.md to the system
 prompt and charges its tokens to ``budget_tokens``, so the budget is the
 whole MARK footprint of the prompt.
 
@@ -98,10 +100,11 @@ class MarkChat:
     system          system prompt
     keep_last       messages kept verbatim (>= 1; default 6 = three exchanges)
     budget_tokens   cap on everything MARK adds to the prompt (int or
-                    ContextBudget; default 400, or the preset's budget; filled:
-                    as many relevant memories as fit)
+                    ContextBudget; default: the preset's budget, 200 for
+                    "small"; filled: as many relevant memories as fit)
     token_counter   ``str -> int`` for the budget (default ceil(chars / 4))
-    preset          "default", "small" (~1-3B) or "tiny" (<=1B) briefing shape
+    preset          briefing shape: "small" (default; local ~1-3B models),
+                    "tiny" (<=1B) or "default" (larger models, 400 tokens)
     store_assistant store replies as low-trust context (default True)
     skill           packaged skill name (e.g. "mark-memory-compact") appended
                     to the system prompt; its tokens count inside budget_tokens
@@ -112,7 +115,7 @@ class MarkChat:
                  keep_last: int = 6, budget_tokens: int | ContextBudget | None = None,
                  token_counter: Any = None, api_key: str | None = None,
                  timeout: float = 120.0, options: dict[str, Any] | None = None,
-                 preset: str | None = None, store_assistant: bool = True,
+                 preset: str | None = "small", store_assistant: bool = True,
                  skill: str | None = None) -> None:
         if keep_last < 1:
             raise ValueError("keep_last must be >= 1")

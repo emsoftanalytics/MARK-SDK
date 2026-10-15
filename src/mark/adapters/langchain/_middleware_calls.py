@@ -189,12 +189,15 @@ class _CallWrappersMixin:
         return self._skill_text
 
     def _skill_name(self) -> str | None:
-        """Which packaged skill to inject: explicit name, or long/compact by model size.
+        """Which packaged skill to inject: an explicit name, the long skill, or none.
 
-        ``include_skill=True`` picks the compact skill for the small/tiny
-        presets and whenever the long skill would take more than half of
-        ``budget_tokens`` (it is charged to the budget, see
-        ``_middleware_context``); large models keep the long skill unchanged.
+        ``include_skill=True`` keeps the long skill for large models and
+        injects *no* skill for the small/tiny presets or when the long skill
+        would take more than half of ``budget_tokens`` (it is charged to the
+        budget, see ``_middleware_context``). Measured on llama3.2:1b (a10
+        context report): the compact skill cost 8 of 25 answers even with the
+        full memory budget beside it, so small models get a self-explanatory
+        briefing instead; pass ``include_skill="mark-memory-compact"`` to opt in.
         """
         choice = self._include_skill
         if not choice:
@@ -202,10 +205,10 @@ class _CallWrappersMixin:
         if isinstance(choice, str):
             return choice
         if getattr(self, "_preset", None) in ("small", "tiny"):
-            return _COMPACT_SKILL
+            return None
         budget = getattr(self, "_budget", None)
         if budget is not None and budget.count(self._packaged_skill()) > budget.max_tokens // 2:
-            return _COMPACT_SKILL
+            return None
         return _LONG_SKILL
 
     def _skill_block(self) -> str:

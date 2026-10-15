@@ -16,9 +16,10 @@ Packaged skills:
                             mark_write tools effectively
     mark-memory-middleware  how to work with MARK middleware-injected context
     mark-memory-compact     ~170-token variant of mark-memory-middleware for
-                            small models (used by the "small" presets); not
-                            in PACKAGED_SKILLS, so SkillMiddleware does not
-                            add it next to the long one
+                            small models, opt-in only (it lowered llama3.2:1b
+                            accuracy in the a10 measurements); not in
+                            PACKAGED_SKILLS, so SkillMiddleware does not add
+                            it next to the long one
 """
 
 from __future__ import annotations
