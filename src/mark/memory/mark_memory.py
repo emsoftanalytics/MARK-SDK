@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import functools
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from typing import Any, Dict
@@ -18,6 +20,8 @@ from mark.middlewares.skills.base import Skill
 from mark.types import MemoryEdge, MemoryFragment, MemoryNode, MemoryScope, MemoryState, MemoryTier
 from mark.types.graph import EdgeRelation, NodeType
 from mark.types.llm import LLMProvider
+
+logger = logging.getLogger(__name__)
 
 # Aliases for node type strings that don't map directly to NodeType values.
 # Lets callers use domain vocabulary ("episode", "person", "place") without
@@ -92,24 +96,29 @@ class MarkMemory:
         ttl_seconds: int | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> str:
-        """Persist the given value."""
-        fragment, accepted = self._guarded_fragment(
-            content,
-            importance=importance,
-            scope=scope,
-            tags=tags,
-            source=source,
-            state=state,
-            confidence=confidence,
-            session_id=session_id,
-            ttl_seconds=ttl_seconds,
-            metadata=metadata,
-        )
+        """Persist the given value.
+
+        Runs the exact same path as :meth:`store_sync` (middleware stack,
+        governance, redaction, consolidation gate) on the executor, so async
+        callers can never bypass write-time policy.
+        """
         loop = asyncio.get_running_loop()
-        if not accepted:
-            return await loop.run_in_executor(self._executor, self._store.store, fragment)
-        indexed = await loop.run_in_executor(self._executor, self._pipeline.index_fragment, fragment)
-        return indexed.id
+        return await loop.run_in_executor(
+            self._executor,
+            functools.partial(
+                self.store_sync,
+                content,
+                importance=importance,
+                scope=scope,
+                tags=tags,
+                source=source,
+                state=state,
+                confidence=confidence,
+                session_id=session_id,
+                ttl_seconds=ttl_seconds,
+                metadata=metadata,
+            ),
+        )
 
     def store_sync(
         self,
@@ -305,13 +314,19 @@ class MarkMemory:
         metadata:    dict[str, Any] | None = None,
         memory_type: str | None = None,
         auto_structure: bool = False,
+        state: MemoryState = MemoryState.UNVERIFIED,
+        confidence: float = 1.0,
     ) -> ObserveResult:
-        if not auto_structure:
+        # Governance middleware marks rejected observations QUARANTINED: store
+        # them for audit only — never indexed, never structured into the graph.
+        if state == MemoryState.QUARANTINED or not auto_structure:
             fragment_id = self._store_sync_impl(
                 text,
                 importance=importance,
                 tags=tags,
                 source=source or "observe",
+                state=state,
+                confidence=confidence,
                 session_id=session_id,
                 metadata=metadata,
             )
@@ -362,6 +377,8 @@ class MarkMemory:
             importance = importance,
             tags       = all_tags,
             source     = source or "observe",
+            state      = state,
+            confidence = confidence,
             session_id = session_id,
             metadata   = metadata,
         )
@@ -555,7 +572,12 @@ class MarkMemory:
             and result.gap_report.should_search
             and (session_id or session_prefix)
         ):
-            agent_filter = SessionFilter(tags=tags, tier=tier, scope=scope)
+            # Escalation widens only the session dimension; every other caller
+            # filter (tags, tier, scope, block_id/block_ids) and expand stay.
+            agent_filter = SessionFilter(
+                tags=tags, tier=tier, scope=scope,
+                block_id=block_id, block_ids=block_ids,
+            )
             agent_result = replace(
                 self._pipeline.retrieve(
                     query,
@@ -563,6 +585,7 @@ class MarkMemory:
                     policy,
                     session_filter=agent_filter,
                     compress=compress,
+                    expand=expand,
                 ),
                 escalation_path=[*path, "agent_namespace"],
             )
@@ -578,20 +601,14 @@ class MarkMemory:
                 web_skill=web_skill,
             )
             if healed:
-                retry_filter = SessionFilter(
-                    session_id=session_id,
-                    session_prefix=session_prefix,
-                    tags=tags,
-                    tier=tier,
-                    scope=scope,
-                )
                 retry = replace(
                     self._pipeline.retrieve(
                         query,
                         self.agent_id,
                         policy,
-                        session_filter=retry_filter,
+                        session_filter=sf,
                         compress=compress,
+                        expand=expand,
                     ),
                     escalation_path=[*result.escalation_path, "external_lookup", "session_retry"],
                     external_lookup_used=True,
@@ -604,8 +621,12 @@ class MarkMemory:
                         query,
                         self.agent_id,
                         policy,
-                        session_filter=SessionFilter(tags=tags, tier=tier, scope=scope),
+                        session_filter=SessionFilter(
+                            tags=tags, tier=tier, scope=scope,
+                            block_id=block_id, block_ids=block_ids,
+                        ),
                         compress=compress,
+                        expand=expand,
                     ),
                     escalation_path=[*result.escalation_path, "external_lookup", "agent_namespace_retry"],
                     external_lookup_used=True,
@@ -629,10 +650,17 @@ class MarkMemory:
         """
         skill = web_skill
         if skill is None:
+            # The implicit default web skill needs an explicit "web" grant.
+            # Passing a web_skill object (directly or via GapHealingMiddleware)
+            # is itself the explicit opt-in.
+            if not self._web_permission_granted():
+                logger.info("gap healing skipped: 'web' permission not granted")
+                return False
             try:
                 from mark.middlewares.skills.web_search import WebSearchSkill
                 skill = WebSearchSkill()
-            except Exception:
+            except Exception as exc:
+                logger.warning("gap healing web skill unavailable: %s: %s", type(exc).__name__, exc)
                 return False
 
         search_query = result.gap_report.search_query_hint or query
@@ -653,22 +681,37 @@ class MarkMemory:
                     "mark_acquired_via": "gap_healing",
                     "mark_original_query": query,
                     "mark_search_query": search_query,
+                    "mark_trust": "external",
+                    "source_url": fragment.source,
                 }
             )
-            tags = sorted(set([*fragment.tags, "external_evidence", "gap_healing"]))
-            evidence = fragment.model_copy(
-                update={
-                    "agent_id": self.agent_id,
-                    "session_id": session_id or fragment.session_id,
-                    "scope": MemoryScope.AGENT,
-                    "state": MemoryState.UNVERIFIED,
-                    "tags": tags,
-                    "metadata": metadata,
-                }
+            if fragment.attribution is not None:
+                metadata["attribution"] = fragment.attribution.model_dump(mode="json")
+            tags = sorted(set([*fragment.tags, "external_evidence", "gap_healing", "source:web"]))
+            # Route through the normal write path so governance, redaction, and
+            # every other middleware see externally acquired content.
+            fragment_id = self.store_sync(
+                fragment.content,
+                importance=min(fragment.importance, 0.5),
+                scope=MemoryScope.AGENT,
+                tags=tags,
+                source="web",
+                state=MemoryState.UNVERIFIED,
+                confidence=min(fragment.confidence, 0.5),
+                session_id=session_id or fragment.session_id,
+                metadata=metadata,
             )
-            self._pipeline.index_fragment(evidence)
-            stored = True
+            written = self._store.get(fragment_id)
+            if written is not None and written.state != MemoryState.QUARANTINED:
+                stored = True
         return stored
+
+    def _web_permission_granted(self) -> bool:
+        registry = getattr(self._runtime, "skills", None)
+        granted = getattr(registry, "_granted_permissions", None)
+        if granted is None:
+            granted = set(getattr(self._runtime, "granted_permissions", ()) or ())
+        return "web" in granted or "*" in granted
 
     def list(
         self,
@@ -939,7 +982,7 @@ class MarkMemory:
 
     def clear(self) -> int:
         """Delete all of this agent's fragments and index entries."""
-        fragments = self._store.list_by_agent(self.agent_id)
+        fragments = self._store.list_by_agent(self.agent_id, limit=None)
         for fragment in fragments:
             self._pipeline._index.remove(fragment.id)
         self._store.clear(self.agent_id)
@@ -989,6 +1032,8 @@ class MarkMemory:
     ) -> tuple[MemoryFragment, bool]:
         if self._consolidation_gate is None:
             self._last_rejection = None
+            # A QUARANTINED write (e.g. from governance middleware) is stored
+            # for audit but must never be indexed into retrieval.
             return self._fragment(
                 content,
                 importance=importance,
@@ -1000,7 +1045,7 @@ class MarkMemory:
                 session_id=session_id,
                 ttl_seconds=ttl_seconds,
                 metadata=metadata,
-            ), True
+            ), state != MemoryState.QUARANTINED
 
         if state == MemoryState.QUARANTINED:
             fragment = self._fragment(
@@ -1023,6 +1068,16 @@ class MarkMemory:
         )
         if gate_result.passed:
             self._last_rejection = None
+            passed_meta = metadata
+            if getattr(gate_result, "truncated", False):
+                passed_meta = {
+                    **(metadata or {}),
+                    "mark_guard": {
+                        "passed": True,
+                        "truncated": True,
+                        "original_length": gate_result.original_length,
+                    },
+                }
             return self._fragment(
                 gate_result.content,
                 importance=importance,
@@ -1033,7 +1088,7 @@ class MarkMemory:
                 confidence=confidence,
                 session_id=session_id,
                 ttl_seconds=ttl_seconds,
-                metadata=metadata,
+                metadata=passed_meta,
             ), True
 
         meta = {
@@ -1043,6 +1098,7 @@ class MarkMemory:
                 "reason": gate_result.reason,
                 "original_importance": importance,
                 "requested_state": state.value,
+                "truncated": bool(getattr(gate_result, "truncated", False)),
             },
         }
         fragment = self._fragment(
