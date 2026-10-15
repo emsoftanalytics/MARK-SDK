@@ -22,6 +22,9 @@ class LifecycleMiddleware(BaseMiddleware):
             return
         if context.agent_id is None or not hasattr(context.runtime, "run_cycle"):
             return
+        # Stopped, failed, and governance-rejected operations are not writes.
+        if not context.succeeded:
+            return
         self._write_count += 1
         if self._write_count % self.every_n_writes == 0:
             context.metadata["lifecycle"] = context.runtime.run_cycle(
