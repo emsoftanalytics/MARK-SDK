@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mark-sdk"
-version = "0.2.0a6"
+dynamic = ["version"]
 description = "Local-first cognitive memory runtime for agent applications."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -146,9 +146,8 @@ exclude = [
   "/dist",
 ]
 
-[tool.hatch.build.targets.wheel.force-include]
-"src/mark/middlewares/skills/mark-usage/SKILL.md" = "mark/middlewares/skills/mark-usage/SKILL.md"
-"src/mark/middlewares/skills/mark-memory-middleware/SKILL.md" = "mark/middlewares/skills/mark-memory-middleware/SKILL.md"
+[tool.hatch.version]
+path = "src/mark/_version.py"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

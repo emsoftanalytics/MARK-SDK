@@ -33,6 +33,16 @@ if TYPE_CHECKING:
 
 
 def _require_mcp() -> Any:
+    """Return the high-level MCP server class for the installed ``mcp`` SDK.
+
+    mcp 2.x renamed ``FastMCP`` to ``MCPServer``; mcp 1.x ships ``FastMCP``.
+    Both expose the same ``tool()`` decorator / ``run()`` surface used here.
+    """
+    try:
+        from mcp.server.mcpserver import MCPServer
+        return MCPServer
+    except ImportError:
+        pass
     try:
         from mcp.server.fastmcp import FastMCP
         return FastMCP
