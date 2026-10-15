@@ -10,8 +10,7 @@ Without MARK_LLM_URL no model is called: it prints what the model would be sent.
 import os
 from tempfile import TemporaryDirectory
 
-from mark import Mark
-from mark.context.loop import MarkChat
+from mark import Mark, MarkChat
 
 TURNS = [
     "Hi! I'm Ana. I keep bees on my roof in Lisbon.",
@@ -26,7 +25,7 @@ with TemporaryDirectory() as folder, Mark.local(folder) as mark:
     chat = MarkChat(mark.runtime.memory("chat"), base_url=url or "http://localhost:11434/v1",
                     model=os.environ.get("MARK_LLM_MODEL", "llama3.2:3b"),
                     system="You are a friendly assistant. Answer briefly.",
-                    keep_last=2, budget_tokens=200)
+                    keep_last=2)   # preset="small" (default): a 200-token briefing
     with chat:
         for text in TURNS:
             print(f"USER: {text}")

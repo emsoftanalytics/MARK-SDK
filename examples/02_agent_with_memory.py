@@ -11,13 +11,13 @@ from mark import Mark
 QUESTION = "Add a health-check endpoint to our API. Which framework and route should I use? Answer in two sentences."
 
 with TemporaryDirectory() as folder, Mark.local(folder) as mark:
-    mark.memory.block("project").write("The API is built with FastAPI; health checks go at /api/v1/health.")
+    mark.memory.remember("The API is built with FastAPI; health checks go at /api/v1/health.", kind="decision")
 
     # Without MARK: the model only sees the question.
     plain_prompt = QUESTION
 
     # With MARK: put the relevant memories in front of the question.
-    memory = mark.memory.retrieve(QUESTION).as_text()
+    memory = mark.memory.recall(QUESTION, k=3).as_context()
     mark_prompt = f"{memory}\n\n{QUESTION}"
 
     for label, prompt in [("Without MARK", plain_prompt), ("With MARK", mark_prompt)]:
