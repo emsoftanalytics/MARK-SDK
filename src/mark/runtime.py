@@ -250,7 +250,14 @@ class Mark(MarkConfigureMixin):
         agent_id: str = "mark-agent",
         max_context_chars: int = 6000,
     ) -> MarkAgent:
-        """Wrap an LLM callable with MARK memory, policies, and skills."""
+        """Wrap an LLM callable with MARK memory, policies, and skills.
+
+        Note: ``agent_id`` defaults to ``"mark-agent"``, unlike the
+        ``"__mark__"`` default used elsewhere (``observe``, the CLI). It
+        labels the agent in middleware and skill contexts and in the
+        ``agent:<id>`` tag on stored outputs; memory is still read from and
+        written to ``self.memory``. Pass ``agent_id="__mark__"`` to match.
+        """
         skill_prompt = ""
         runtime_skill_prompt = getattr(self.runtime, "skill_prompt", None)
         if callable(runtime_skill_prompt):
