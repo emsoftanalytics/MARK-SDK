@@ -136,9 +136,12 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
             for key, label in found:
                 anchor = self._anchors.get(key)
                 if anchor is None:
-                    self._anchors[key] = _Anchor(key, label, turn, turn, last_seq=self._seq)
+                    self._anchors[key] = _Anchor(key, label, turn, turn, last_seq=self._seq,
+                                                 assistant_only=role == "assistant")
                     new.append(key)
                 else:
+                    if role != "assistant":
+                        anchor.assistant_only = False
                     if anchor.linked:  # an anticipated subject is now actually discussed
                         anchor.linked = False
                         anchor.known = None if anchor.known is False else anchor.known
@@ -189,14 +192,18 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
         # so a running prefetch is never blocked by (or blocks) a briefing.
         with self._lock:
             # Mentioned subjects first (most recent first), anticipated links after.
+            # Subjects only the model has named ("nectar-rich", "Olá Ana") are
+            # shown only once memory confirms them, and never as "Not in memory".
             active = sorted(
-                (a for a in self._anchors.values() if a.known is not False),
+                (a for a in self._anchors.values()
+                 if a.known is not False and not (a.assistant_only and a.known is not True)),
                 key=lambda a: (not a.linked, a.last_seq, a.mentions), reverse=True,
             )[: None if lifted else self.max_anchors]
             snapshot = {
                 "active": active,
                 "unknown": [a.label for a in self._anchors.values()
-                            if a.known is False and not a.linked and self._turn - a.last_turn <= 1],
+                            if a.known is False and not a.linked and not a.assistant_only
+                            and self._turn - a.last_turn <= 1],
                 "results": {a.key: self._results.get(a.key) for a in active},
                 "task_result": self._task_results.get(self._task),
                 "corrections": list(self._corrections.values()),
