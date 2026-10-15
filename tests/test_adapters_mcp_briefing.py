@@ -97,13 +97,13 @@ def test_sessions_are_isolated(mark) -> None:
     server = _server(mark)
     one = _call(server, {"text": "Look into HAL-4433.", "session_id": "one"})
     two = _call(server, {"text": "Look into HAL-5150.", "session_id": "two"})
-    # Each session's subjects and best note are its own (other notes may follow:
+    # Each session follows its own subjects (other notes may be listed too:
     # the store is tiny).
     assert "HAL-4433" in _anchors(server, "one") and "HAL-5150" not in _anchors(server, "one")
     assert "HAL-5150" in _anchors(server, "two") and "HAL-4433" not in _anchors(server, "two")
-    assert "HAL-4433" in _first_note(one) and "HAL-5150" in _first_note(two)
+    assert "TICKET HAL-4433" in one and "TICKET HAL-5150" in two
     # Session one is unchanged by session two's traffic.
-    assert "HAL-4433" in _first_note(_call(server, {"session_id": "one"}))
+    assert "TICKET HAL-4433" in _call(server, {"session_id": "one"})
     assert "HAL-5150" not in _anchors(server, "one")
     # Same session id in another agent namespace is a different session.
     server = create_mark_mcp_server_from_local(mark, agent_id=AGENT, briefing=True)

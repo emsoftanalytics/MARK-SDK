@@ -24,7 +24,9 @@ Which lines survive a budget is decided by section priority
 (``mark.context.budget``): corrections > unknown > relevant (what the
 current request retrieved: its facts and best ``relevant_lines`` records) >
 facts of subjects in play > their records > linked subjects > the rest of
-the request's records > assistant replies. Rendering keeps the layout order.
+the request's records > assistant replies. Rendering keeps the layout order;
+the request's best lines come first; within each part notes are listed
+newest first (declared event time, then storage time).
 
 * :func:`briefing_items` lists the candidate lines as budget items.
 * :func:`render_briefing` renders a selection inside ``<mark_briefing>``.
@@ -125,15 +127,21 @@ def briefing_items(snapshot: dict[str, Any], *, per_anchor: int | None,
     task_records = [f for f in (task_result.fragments if task_result is not None else [])
                     if trusted(f)]
     relevant_count = snapshot.get("relevant_lines", RELEVANT_LINES)
-    notes: list[BudgetItem | None] = [note("relevant", f) for f in task_records[:relevant_count]]
+    picked: list[tuple[str, Any]] = [("relevant", f) for f in task_records[:relevant_count]]
     for anchor in active:
         result = results.get(anchor.key)
         if result is not None:
             section = "linked" if anchor.linked else "records"
-            notes += [note(section, f) for f in _anchor_records(result, anchor, per_anchor)]
+            picked += [(section, f) for f in _anchor_records(result, anchor, per_anchor)]
     rest = task_records[relevant_count:]
-    notes += [note("related", f) for f in (rest[:per_anchor] if per_anchor is not None else rest)]
-    items += [item for item in notes if item is not None]
+    picked += [("related", f) for f in (rest[:per_anchor] if per_anchor is not None else rest)]
+    notes = [(f, note(section, f)) for section, f in picked]
+    # Rank decides what is kept (sections). The block shows the request's best
+    # lines first, each part newest first, so the latest statement about a
+    # subject comes before the one it replaced ("moved to 21 October").
+    notes.sort(key=lambda pair: _timeline_key(pair[0]), reverse=True)
+    notes.sort(key=lambda pair: pair[1] is None or pair[1].section != "relevant")
+    items += [item for _, item in notes if item is not None]
 
     limit = snapshot.get("assistant_lines", 0)
     if task_result is not None and limit:
