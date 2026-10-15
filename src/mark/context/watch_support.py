@@ -62,12 +62,16 @@ def _contains_anchor(content_norm: str, anchor: str) -> bool:
     return contains(content_norm, anchor)
 
 
-def _timeline_key(fragment: Any) -> tuple[int, str]:
-    """Sort key by declared event time; undated memories get the lowest key (last when reversed)."""
+def _timeline_key(fragment: Any) -> tuple[int, str, str]:
+    """Sort key by declared event time, then storage time for same-day events.
+
+    Undated memories get the lowest key (last when sorted newest first).
+    """
     from mark.intelligence.temporal_order import declared_event_time
 
     when = declared_event_time(fragment)
-    return (1, when.isoformat()) if when is not None else (0, "")
+    stored = fragment.created_at.isoformat() if getattr(fragment, "created_at", None) else ""
+    return (1, when.isoformat(), stored) if when is not None else (0, "", stored)
 
 
 def _mentions_value(value: str, lowered: str, tokens: set[str]) -> bool:

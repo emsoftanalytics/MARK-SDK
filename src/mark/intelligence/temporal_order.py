@@ -76,7 +76,10 @@ def _order_band(fragments: list[MemoryFragment], band: list[int], *, newest_firs
     undated = [i for i in band if declared_event_time(fragments[i]) is None]
     if not dated:
         return sorted(band, key=lambda i: event_time(fragments[i]), reverse=newest_first)
-    dated.sort(key=lambda i: declared_event_time(fragments[i]), reverse=newest_first)
+    # Same declared time (e.g. two changes logged on one day): fall back to
+    # storage order, which preserves the sequence of an ingested log.
+    dated.sort(key=lambda i: (declared_event_time(fragments[i]), _stored_at(fragments[i])),
+               reverse=newest_first)
     if not newest_first or not undated:
         return dated + undated
     last_dated_store = max(_stored_at(fragments[i]) for i in dated)
