@@ -29,12 +29,17 @@ from typing import Callable, Iterator
 from mark.store._sqlite.codec import (
     _FRAGMENT_COLUMNS,
     _FTS_ML_TABLE,
+    _SQL_CHUNK,
     _FTS_TABLE,
     _RETRIEVABLE_STATES,
     _TTL_LIVE_SQL,
     _as_bytes,
+    _chunks,
 )
+from mark.security import NoOpEncryptionProvider
 from mark.store._sqlite.fts_text import fts_quote, multilingual_phrase
+from mark.store._sqlite.sketch_store import SketchMixin
+from mark.store._sqlite.sketches import sketch_tokens
 from mark.types import MemoryFragment
 
 # Embedding columns are replaced by NULL: decoding thousands of vectors would
@@ -45,7 +50,7 @@ _LIGHT_COLUMNS = ", ".join(
 )
 
 
-class MentionMixin:
+class MentionMixin(SketchMixin):
     """Paged, uncapped lookup of the memories that mention a phrase."""
 
     _fts_enabled: bool
@@ -83,6 +88,20 @@ class MentionMixin:
             match, table = "content : " + fts_quote(ml_phrase), _FTS_ML_TABLE
         elif self._fts_enabled:
             match = "content : " + fts_quote(" ".join(tokens))
+        if match is None and not isinstance(self.encryption, NoOpEncryptionProvider):
+            # Encrypted store: decrypt only rows whose keyed sketch can hold the phrase.
+            candidates = self._sketch_candidates(where, params, sketch_tokens(phrase))
+            for chunk in _chunks(candidates, min(page_size, _SQL_CHUNK)):
+                marks = ",".join("?" for _ in chunk)
+                rows = self._fetchall(
+                    f"SELECT rowid, {_LIGHT_COLUMNS} FROM fragments WHERE {where}{_TTL_LIVE_SQL}"
+                    f" AND rowid IN ({marks}) ORDER BY rowid",
+                    [*params, *chunk],
+                )
+                page = self._decode_page(rows, accept)
+                if page:
+                    yield page
+            return
         last_rowid = 0
         while True:
             rows = self._mention_page(where, params, match, last_rowid, page_size, table)
@@ -91,22 +110,27 @@ class MentionMixin:
             if not rows:
                 return
             last_rowid = int(rows[-1]["rowid"])
-            page: list[MemoryFragment] = []
-            tampered: list[str] = []
-            for row in rows:
-                if accept is not None and not accept(self.encryption.decrypt_str(_as_bytes(row["content"]))):
-                    continue
-                fragment, is_tampered = self._decode_fragment(dict(row))
-                if is_tampered:
-                    tampered.append(fragment.id)
-                else:
-                    page.append(fragment)
-            if tampered:
-                self._persist_tampered(tampered)
+            page = self._decode_page(rows, accept)
             if page:
                 yield page
             if len(rows) < page_size:
                 return
+
+    def _decode_page(self, rows: list[sqlite3.Row], accept: Callable[[str], bool] | None) -> list[MemoryFragment]:
+        """Decode accepted rows; tampered rows are persisted as CONTRADICTED and skipped."""
+        page: list[MemoryFragment] = []
+        tampered: list[str] = []
+        for row in rows:
+            if accept is not None and not accept(self.encryption.decrypt_str(_as_bytes(row["content"]))):
+                continue
+            fragment, is_tampered = self._decode_fragment(dict(row))
+            if is_tampered:
+                tampered.append(fragment.id)
+            else:
+                page.append(fragment)
+        if tampered:
+            self._persist_tampered(tampered)
+        return page
 
     def agent_contents(self, agent_id: str, page_size: int = 5_000) -> Iterator[list[tuple[str, str]]]:
         """Yield pages of (id, plaintext) for the agent's retrievable-state fragments.
