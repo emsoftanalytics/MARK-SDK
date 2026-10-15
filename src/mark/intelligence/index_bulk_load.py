@@ -7,10 +7,11 @@ embeddings are read in pages of raw blobs and appended to the index as
 whole numpy blocks (``VectorIndex.add_many``), so the load is dominated by
 SQLite reading the rows.
 
-``ScopeIds`` is the allowed-id set handed to the pipeline: a frozenset whose
-equality test short-circuits on identity. The pipeline checks
-``indexed_ids == allowed_ids`` on every recall; with a million ids a real
-comparison costs ~80 ms even when both sides are the same object.
+``ScopeIds`` (defined next to the store that produces it) is the allowed-id
+set handed to the pipeline: its equality test short-circuits on identity,
+and a set the store derived from the previous one by a few writes carries
+that delta, which ``sync_delta`` applies to the index instead of comparing
+a million ids (see :mod:`mark.store._sqlite.scope_ids`).
 """
 from __future__ import annotations
 
@@ -20,24 +21,13 @@ from typing import Any, Iterable
 
 from mark.index.vector_backends import _load_numpy
 from mark.store._sqlite.codec import _decode_embedding
-
-
-class ScopeIds(frozenset):
-    """Immutable id set whose ``==`` is O(1) when both sides are the same object."""
-
-    __slots__ = ()
-
-    def __eq__(self, other: object) -> bool:
-        return self is other or frozenset.__eq__(self, other)
-
-    def __ne__(self, other: object) -> bool:
-        return not self.__eq__(other)
-
-    __hash__ = frozenset.__hash__
+from mark.store._sqlite.scope_ids import ScopeIds  # re-exported: imported from here by callers
 
 
 def scope_ids(cache: dict, key: object, ids: frozenset[str]) -> ScopeIds:
     """Wrap the store's cached id set in a ScopeIds, once per distinct set object."""
+    if isinstance(ids, ScopeIds):  # already immutable, identity-comparable (and may carry a delta)
+        return ids
     hit = cache.get(key)
     if hit is not None and hit[0] is ids:
         return hit[1]
@@ -45,6 +35,37 @@ def scope_ids(cache: dict, key: object, ids: frozenset[str]) -> ScopeIds:
         cache.clear()
     cache[key] = (ids, ScopeIds(ids))
     return cache[key][1]
+
+
+def sync_delta(host: Any, agent_id: str, last: tuple | None, allowed: Any) -> tuple | None:
+    """Bring the index from the last synced scope to *allowed* by its delta alone.
+
+    Applies when the index partition equalled the last scope (``last`` is
+    ``(scope, revision, result)`` with ``result is scope``) and the store
+    derived *allowed* from that scope: removed ids leave the index, added
+    ones are indexed from their stored vectors (or embedded). Returns the new
+    ``_synced`` entry, or None to fall back to the full comparison. O(delta),
+    where the full path costs two set operations over every id.
+    """
+    if last is None or last[2] is not last[0] or getattr(allowed, "parent", None) is None:
+        return None
+    index = host._index
+    count, find_missing = getattr(index, "count", None), getattr(index, "missing", None)
+    if allowed.parent != getattr(last[0], "token", None) or count is None or find_missing is None:
+        return None
+    for fragment_id in allowed.removed:  # no longer retrievable: drop from the partition
+        index.remove(fragment_id)
+    missing = find_missing(allowed.added, agent_id)
+    if missing:
+        stored = host._stored_embeddings(agent_id, set(missing))
+        to_embed = index_each(stored, missing, getattr(host._embedder, "dim", None), host._index_add, agent_id)
+        if to_embed:
+            host._embed_and_index(agent_id, to_embed)
+    # Partition ⊇ allowed (it held the old scope, now plus the added ids);
+    # equal sizes therefore mean equal sets.
+    if count(agent_id) != len(allowed) or find_missing(allowed.added, agent_id):
+        return None
+    return (allowed, getattr(index, "revision", None), allowed)
 
 
 def bulk_index(

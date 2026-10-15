@@ -7,13 +7,12 @@
 - the index is lazily synced with stored embeddings under ``_sync_lock``
   (bulk-loaded in numpy blocks on a cold start, see ``index_bulk_load``;
   re-embedding only what is missing or has the wrong dimension); an
-  unchanged scope and index revision skip the sync, so steady-state recall
-  does no O(store) work;
+  unchanged scope skips the sync and a scope the store derived from the last
+  one applies just its delta, so recall after writes does no O(store) work;
 - a changed embedder fingerprint re-embeds the agent's memories once.
 
-Legacy stores/indexes are supported via ``getattr`` probes and ``TypeError`` fallbacks.
-
-Expects the host class to provide ``_store``, ``_index``, ``_embedder``,
+Legacy stores/indexes are supported via ``getattr`` probes and ``TypeError``
+fallbacks. The host class provides ``_store``, ``_index``, ``_embedder``,
 ``_sync_lock``, ``_verified_agents`` and ``EMBEDDER_META_KEY``.
 """
 from __future__ import annotations
@@ -24,7 +23,7 @@ from typing import Iterable
 from mark.index import VectorSearchResult
 from mark.intelligence.index_bulk_load import (
     _same_embedding_space, bulk_index, changed_ids, index_each, restore_snapshot, save_snapshot, scope_ids,
-    wants_numpy,
+    sync_delta, wants_numpy,
 )
 from mark.intelligence.retrieval_policy import _RETRIEVABLE_STATES, SessionFilter
 from mark.types import MemoryFragment
@@ -79,8 +78,7 @@ class _IndexSyncMixin:
             kwargs["block_ids"] = sf.block_ids
         id_set = getattr(self._store, "retrievable_id_set", None)
         if id_set is not None:
-            # The store returns its cached frozenset (same object while nothing
-            # changed); wrap it once per change, not once per recall.
+            # The store's cached set: same object while nothing changed (no copy).
             cache = self.__dict__.setdefault("_scope_cache", {})
             return scope_ids(cache, (agent_id, repr(sorted(kwargs.items()))), id_set(agent_id, **kwargs))
         retrievable_ids = getattr(self._store, "retrievable_ids", None)
@@ -108,6 +106,9 @@ class _IndexSyncMixin:
             last = synced.get(agent_id)
             if revision is not None and last is not None and last[0] is allowed_ids and last[1] == revision:
                 return last[2]
+            if (fast := sync_delta(self, agent_id, last, allowed_ids)) is not None:  # few writes: O(delta)
+                synced[agent_id] = fast
+                return allowed_ids
             complete = self._load_missing(agent_id, allowed_ids)
             count = getattr(self._index, "count", None)
             if complete and count is not None and count(agent_id) == len(allowed_ids):

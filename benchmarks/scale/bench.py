@@ -6,6 +6,8 @@ Runs one synthetic workload end to end and prints a JSON report:
   recall    p50 / p95 over needle and generic queries in the writing process
   cold      in a fresh process: open the store + first recall, then recall again
   timeline  one entity timeline
+  write+recall  alternate remember() and recall(): the recall right after a
+            write (an agent's usual loop), in the writer and after a reopen
   quality   20 planted "needle" memories must be found (hit@1 / hit@5)
 
 CI (small size, under a minute on a laptop; fails loudly on a > 2x regression
@@ -46,7 +48,8 @@ WHY = ["after a memory spike", "for the quarterly audit", "due to a bad config",
        "during the freeze", "because of a CVE", "after latency alarms", "to test failover"]
 NEEDLES = 20
 # Metrics where lower is better and that the budget file may bound.
-CHECKED = ("store_us_per_item", "recall_p50_ms", "recall_p95_ms", "cold_start_ms", "timeline_warm_ms")
+CHECKED = ("store_us_per_item", "recall_p50_ms", "recall_p95_ms", "cold_start_ms", "timeline_warm_ms",
+           "write_recall_p50_ms", "write_recall_p95_ms")
 
 
 def _rss_mb() -> int:
@@ -114,6 +117,26 @@ def _recall_round(memory, needles: dict[int, str], rnd: random.Random, generic: 
     }
 
 
+def _write_recall_round(memory, rounds: int, rnd: random.Random, prefix: str) -> dict:
+    """Alternate one remember() and one recall(); time the recall that follows each write."""
+    recalls: list[float] = []
+    cpu: list[float] = []
+    for i in range(rounds):
+        subject = rnd.choice(SUBJ)
+        memory.store_sync(f"{subject} was {rnd.choice(VERB)} by the on-call bot (probe {prefix}-{i}).")
+        # Thread CPU as well: on a loaded machine or a slow disk wall time
+        # mostly measures the neighbours and fsync (BLAS threads would inflate process time).
+        t0, c0 = time.perf_counter(), time.thread_time()
+        memory.retrieve_sync(f"what happened to {subject}?")
+        recalls.append(time.perf_counter() - t0)
+        cpu.append(time.thread_time() - c0)
+    return {
+        "p50_ms": round(1000 * statistics.median(recalls), 1),
+        "p95_ms": round(1000 * _percentile(recalls, 0.95), 1),
+        "cpu_p50_ms": round(1000 * statistics.median(cpu), 1),
+    }
+
+
 def _store_phase(path: Path, args, out: dict) -> dict[int, str]:
     needles: dict[int, str] = {}
     t0 = time.perf_counter()
@@ -129,6 +152,9 @@ def _store_phase(path: Path, args, out: dict) -> dict[int, str]:
         out["warm_first_ms"] = warm["first_ms"]
         out["recall_p50_ms"], out["recall_p95_ms"] = warm["p50_ms"], warm["p95_ms"]
         out["needle_hit@1"], out["needle_hit@5"] = f"{warm['hit1']}/{2 * NEEDLES}", f"{warm['hit5']}/{2 * NEEDLES}"
+        mixed = _write_recall_round(memory, args.write_recall, random.Random(4), "warm")
+        out["write_recall_p50_ms"], out["write_recall_p95_ms"] = mixed["p50_ms"], mixed["p95_ms"]
+        out["write_recall_cpu_p50_ms"] = mixed["cpu_p50_ms"]
     (path / "bench_needles.json").write_text(json.dumps(needles))
     return needles
 
@@ -160,6 +186,9 @@ def _cold_phase(path: Path, args, out: dict, needles: dict[int, str]) -> None:
             hits = memory.retrieve_sync("zebra-7731").fragments
             out["encrypted_keyword_ms"] = round(1000 * (time.perf_counter() - t1), 1)
             out["encrypted_keyword_hit"] = bool(hits) and "zebra-7731" in hits[0].content
+        # Last: it adds memories (kept stores grow by --write-recall per rerun).
+        mixed = _write_recall_round(memory, args.write_recall, random.Random(5), f"reopen-{os.getpid()}")
+        out["reopen_write_recall_p50_ms"], out["reopen_write_recall_p95_ms"] = mixed["p50_ms"], mixed["p95_ms"]
 
 
 def _cold_in_child(path: Path, argv: list[str]) -> dict:
@@ -197,6 +226,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--embedder", default="hash")
     parser.add_argument("--agent", default="scale")
     parser.add_argument("--generic", type=int, default=40, help="generic queries per round")
+    parser.add_argument("--write-recall", type=int, default=30, help="remember/recall pairs per write+recall round")
     parser.add_argument("--dir", help="store directory (default: a temp dir, removed afterwards)")
     parser.add_argument("--keep", action="store_true", help="keep the store directory")
     parser.add_argument("--reuse", action="store_true", help="skip the store phase; reuse --dir")

@@ -182,9 +182,10 @@ def test_unchanged_scope_skips_index_sync(tmp_path) -> None:
         pipeline._load_missing = lambda *a: calls.append(a) or original(*a)  # type: ignore[method-assign]
         memory.retrieve_sync("svc-002 patched")
         assert calls == []  # nothing changed: no O(store) work
-        memory.store_sync("svc-003 was audited")
-        memory.retrieve_sync("svc-003 audited")
-        assert len(calls) == 1
+        new = memory.store_sync("svc-003 was audited")
+        # A write since: the index follows the scope's delta, still no O(store) work.
+        assert memory.retrieve_sync("svc-003 audited").fragments[0].id == new
+        assert calls == []
 
 
 # ── vector snapshots ──────────────────────────────────────────────────────────

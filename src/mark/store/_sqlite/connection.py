@@ -139,6 +139,8 @@ class ConnectionMixin:
         """
         with self._lock:
             conn = self._conn()
+            if structural:
+                self._reset_write_notes()  # unknown change set unless the writer notes its ids
             try:
                 yield conn
                 if structural:
@@ -146,10 +148,20 @@ class ConnectionMixin:
                         "UPDATE schema_info SET value = CAST(value AS INTEGER) + 1"
                         " WHERE key = 'write_version'"
                     )
+                    # Same transaction: which fragments changed, so id caches can
+                    # apply a delta instead of rescanning (see scope_delta).
+                    self._log_structural_write(conn)
             except BaseException:
                 conn.rollback()
                 raise
             conn.commit()
+
+    # Overridden by ScopeCacheMixin (write log for incremental id caches).
+    def _reset_write_notes(self) -> None:
+        pass
+
+    def _log_structural_write(self, conn: sqlite3.Connection) -> None:
+        pass
 
     def _fetchall(self, sql: str, params: Iterable[object] = ()) -> list[sqlite3.Row]:
         with self._reading() as conn:

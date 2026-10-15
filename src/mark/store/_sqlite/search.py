@@ -1,11 +1,6 @@
-"""Retrieval-facing queries: retrievable id sets and FTS5 lexical search.
+"""Retrieval-facing queries: embedding pages for bulk loads and FTS5 lexical search.
 
-``retrievable_ids`` is on the hot path of every recall, so its result is
-cached per filter set. A cache entry is valid only while all hold:
-  - the persisted ``write_version`` is unchanged (bumped by every structural
-    write, in this or any other process sharing the database file);
-  - the next TTL expiry among the agent's live fragments has not passed;
-  - it is younger than ``_IDS_CACHE_MAX_AGE`` seconds.
+The cached retrievable-id sets live in :mod:`mark.store._sqlite.scope_delta`.
 """
 from __future__ import annotations
 
@@ -13,16 +8,12 @@ import heapq
 import logging
 import re
 import sqlite3
-import time
-from operator import itemgetter
 from typing import Iterator
 
 from mark.store._sqlite import fts_query
 from mark.store._sqlite.codec import (
     _FTS_ML_TABLE,
     _FTS_TABLE,
-    _IDS_CACHE_MAX_AGE,
-    _IDS_CACHE_SIZE,
     _RETRIEVABLE_STATES,
     _RETRIEVABLE_VALUES,
     _TTL_LIVE_SQL,
@@ -34,98 +25,16 @@ from mark.store._sqlite.fts_text import (
     multilingual_phrase,
     multilingual_query_chunks,
 )
+from mark.store._sqlite.scope_delta import ScopeCacheMixin
 from mark.store._sqlite.vector_snapshot import VectorSnapshotMixin
-from mark.types import MemoryScope, MemoryTier
 
 logger = logging.getLogger("mark.store.sqlite")
 
 
-class SearchMixin(VectorSnapshotMixin):
+class SearchMixin(ScopeCacheMixin, VectorSnapshotMixin):
     """Cached retrievable-id sets, lexical (BM25) search and phrase lookup."""
 
-    _ids_cache: dict[tuple, tuple[frozenset[str], int, float]]
     _fts_enabled: bool
-
-    def retrievable_ids(
-        self,
-        agent_id: str,
-        *,
-        session_id: str | None = None,
-        session_prefix: str | None = None,
-        tags: list[str] | None = None,
-        tier: MemoryTier | None = None,
-        scope: MemoryScope | None = None,
-        block_id: str | None = None,
-        block_ids: list[str] | None = None,
-    ) -> set[str]:
-        """Return ids of every retrievable fragment matching the filters (no row limit).
-
-        Retrievable means: state in {UNVERIFIED, VERIFIED, PROMOTED}, not a
-        member of a QUARANTINED block, and not TTL-expired. Evaluated entirely
-        in SQL; no fragment rows are decoded.
-        """
-        return set(self.retrievable_id_set(
-            agent_id, session_id=session_id, session_prefix=session_prefix, tags=tags,
-            tier=tier, scope=scope, block_id=block_id, block_ids=block_ids,
-        ))
-
-    def retrievable_id_set(
-        self,
-        agent_id: str,
-        *,
-        session_id: str | None = None,
-        session_prefix: str | None = None,
-        tags: list[str] | None = None,
-        tier: MemoryTier | None = None,
-        scope: MemoryScope | None = None,
-        block_id: str | None = None,
-        block_ids: list[str] | None = None,
-    ) -> frozenset[str]:
-        """Like :meth:`retrievable_ids`, but returns the cached frozenset itself.
-
-        No copy is made, so repeated recalls against an unchanged store cost
-        nothing here even at a million memories, and callers can recognise an
-        unchanged scope by identity (``is``).
-        """
-        where, params = self._fragment_filters(
-            agent_id,
-            scope=scope,
-            states=_RETRIEVABLE_STATES,
-            tier=tier,
-            session_id=session_id,
-            session_prefix=session_prefix,
-            tags=tags,
-            block_id=block_id,
-            block_ids=block_ids,
-        )
-        key = (where, tuple(params))
-        # Read the version *before* the query: a write racing with the query
-        # then leaves a stale version in the entry, so it is simply refetched.
-        version = self._write_version()
-        cached = self._ids_cache.get(key)
-        if cached is not None and cached[1] == version and time.monotonic() < cached[2]:
-            return cached[0]
-        with self._reading() as conn:
-            cursor = conn.cursor()
-            cursor.row_factory = None  # plain tuples: ~3x faster than sqlite3.Row
-            rows = cursor.execute(f"SELECT id FROM fragments WHERE {where}{_TTL_LIVE_SQL}", params).fetchall()
-            ids = frozenset(map(itemgetter(0), rows))
-            # Seconds until the soonest live fragment of this agent expires;
-            # the cached set must not outlive that moment.
-            next_expiry = cursor.execute(
-                "SELECT MIN((julianday(created_at) - julianday('now')) * 86400.0 + ttl_seconds)"
-                " FROM fragments WHERE agent_id = ? AND ttl_seconds IS NOT NULL"
-                " AND julianday(created_at) IS NOT NULL"
-                " AND (julianday('now') - julianday(created_at)) * 86400.0 <= ttl_seconds",
-                (agent_id,),
-            ).fetchone()[0]
-        ttl_left = _IDS_CACHE_MAX_AGE if next_expiry is None else min(_IDS_CACHE_MAX_AGE, max(0.0, next_expiry))
-        with self._lock:
-            # Bounded FIFO eviction (dicts preserve insertion order).
-            if len(self._ids_cache) >= _IDS_CACHE_SIZE:
-                self._ids_cache.pop(next(iter(self._ids_cache)))
-            self._ids_cache[key] = (ids, version, time.monotonic() + ttl_left)
-        return ids
 
     def embedding_pages(self, agent_id: str, page_size: int = 20_000) -> Iterator[list[tuple]]:
         """Yield pages of (id, float32 blob, legacy JSON, rowid) for the agent's retrievable rows.
