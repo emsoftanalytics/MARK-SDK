@@ -42,6 +42,7 @@ class RetrieveMixin(HealingMixin):
         heal_gaps: bool = False,
         web_skill: Skill | None = None,
         compress: bool = False,
+        order: str = "relevance",
     ) -> RetrievalResult:
         """Retrieve memory relevant to the query.
 
@@ -65,6 +66,7 @@ class RetrieveMixin(HealingMixin):
                 heal_gaps=heal_gaps,
                 web_skill=web_skill,
                 compress=compress,
+                order=order,
             ),
         )
 
@@ -85,10 +87,20 @@ class RetrieveMixin(HealingMixin):
         web_skill: Skill | None = None,
         compress: bool = False,
         expand: bool = False,
+        order: str = "relevance",
     ) -> RetrievalResult:
-        """Synchronous variant of retrieve()."""
+        """Synchronous variant of retrieve().
+
+        ``order="chronological"`` re-sorts the *same* results oldest first by
+        event time (two-clock rule, see :mod:`mark.memory.timeline_order`);
+        the default ``"relevance"`` leaves ranking untouched.
+        """
+        from mark.memory.timeline_order import ORDERS, apply_order
+
+        if order not in ORDERS:  # validate before doing any work
+            raise ValueError(f"order must be one of {ORDERS}, got {order!r}")
         if self._middleware is not None and self._runtime is not None:
-            return self._middleware.run(
+            return apply_order(self._middleware.run(
                 "retrieve",
                 runtime=self._runtime,
                 agent_id=self.agent_id,
@@ -109,8 +121,8 @@ class RetrieveMixin(HealingMixin):
                     "expand": expand,
                 },
                 handler=lambda ctx: self._retrieve_sync_impl(**ctx.payload),
-            )
-        return self._retrieve_sync_impl(
+            ), order)
+        return apply_order(self._retrieve_sync_impl(
             query,
             policy,
             session_id=session_id,
@@ -125,7 +137,7 @@ class RetrieveMixin(HealingMixin):
             web_skill=web_skill,
             compress=compress,
             expand=expand,
-        )
+        ), order)
 
     def retrieve_many_sync(
         self,
