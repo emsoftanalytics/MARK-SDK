@@ -8,6 +8,7 @@ import hmac
 import json
 import secrets
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -84,8 +85,37 @@ def execute(db: Path, cmd: str, args: dict[str, Any], *, use_server: bool = True
         engine.close()
 
 
+def stop_server(db: Path, *, timeout: float = 10.0) -> bool:
+    """Ask the ``mark serve`` process for *db* to stop; True once it has stopped.
+
+    Returns False when no (genuine) server is running for *db*. The request
+    is authenticated like any other, so only a process that can read the
+    0600 state file can stop the server. Waits up to ``timeout`` seconds for
+    the server to finish shutting down (its state file disappears).
+    """
+    state = _state_path(db)
+    server = _live_server(state)
+    if server is None:
+        return False
+    try:
+        _call_server(server, "stop", {})
+    except (OSError, RuntimeError, ValueError):
+        pass  # it may close the connection while stopping; confirm below
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not state.exists() or _live_server(state) is None:
+            return True
+        time.sleep(0.05)
+    return False
+
+
 def _ingest_in_chunks(server: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
-    """Send large ingests as several requests, each well under the size cap."""
+    """Send large ingests as several requests, each well under the size cap.
+
+    Each chunk is one transaction on the server and idempotent (see
+    ``_Engine.cmd_ingest``): if the server dies mid-ingest, re-running the
+    same command stores the missing lines and never duplicates the rest.
+    """
     result: dict[str, Any] = {"stored": 0}
     chunk: list[str] = []
     size = 0
