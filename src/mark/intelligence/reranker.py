@@ -1,4 +1,11 @@
-"""Multi-factor reranking of retrieval candidates."""
+"""Multi-factor reranking of retrieval candidates.
+
+Relevance first, bounded priors (importance, confidence, graph weight,
+optionally recency) second, then two penalties: memories contradicted by a
+retrieved memory, and memories retired through the API (tag
+``mark:superseded`` / ``mark:resolved`` or metadata ``superseded_by`` /
+``resolved_by``) unless the query asks about the past.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -8,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from mark.index import VectorSearchResult
+from mark.intelligence.supersession import is_retired
 from mark.store.sqlite import LocalMemoryStore
 from mark.types import MemoryFragment
 
@@ -50,6 +58,8 @@ class MemoryReranker:
     _W_NODE = 0.25
     _RECENCY_HALF_LIFE_DAYS = 30.0
     _CONTRADICTION_FACTOR = 0.6
+    # A retired memory still answers "what was it before?", so it is demoted, not dropped.
+    _RETIRED_FACTOR = 0.5
 
     def __init__(self, store: LocalMemoryStore) -> None:
         self._store = store
@@ -65,11 +75,14 @@ class MemoryReranker:
         fragments: Mapping[str, MemoryFragment] | None = None,
         recency_weight: float = 0.0,
         now: datetime | None = None,
+        demote_retired: bool = True,
     ) -> list[RerankResult]:
         """Rerank candidates and return the top results.
 
         fragments       prefetched fragments by id (avoids one lookup per candidate)
         recency_weight  0.0–1.0 share of the prior given to recency (temporal queries)
+        demote_retired  halve the score of superseded / resolved memories
+                        (False for "original" / "previously" questions)
         """
         del query
         contradiction_ids = contradiction_ids or set()
@@ -91,6 +104,9 @@ class MemoryReranker:
             score = max(0.0, candidate.score) * factor
             if contradiction:
                 score *= self._CONTRADICTION_FACTOR
+            retired = demote_retired and fragment is not None and is_retired(fragment)
+            if retired:
+                score *= self._RETIRED_FACTOR
             score = round(score, 6)
             results.append(
                 RerankResult(
@@ -105,6 +121,7 @@ class MemoryReranker:
                         "recency": round(recency, 4),
                         "prior": round(prior, 4),
                         "contradiction_penalty": (1.0 - self._CONTRADICTION_FACTOR) if contradiction else 0.0,
+                        "retired_penalty": (1.0 - self._RETIRED_FACTOR) if retired else 0.0,
                         "blended": score,
                     },
                 )

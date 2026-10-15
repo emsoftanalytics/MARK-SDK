@@ -103,40 +103,16 @@ def temporal_order(
 ) -> tuple[list[MemoryFragment], list[float], list[float], TemporalIntent]:
     """Reorder results about the query's subject by event time.
 
-    For CURRENT queries the newest matching record comes first; for ORIGINAL
-    queries the oldest. Only fragments that mention every query anchor (e.g.
-    the service name) and cover the remaining query terms at least as well as
-    the best such fragment are reordered, so a newer record about a different
-    attribute never jumps ahead. Other results keep their rank. Scores are
-    re-assigned so they stay non-increasing.
+    For CURRENT queries ("now", "latest", "the last bug") the newest matching
+    record comes first; for ORIGINAL queries the oldest. Only the query's
+    "band" is reordered (see :func:`_band`), so a newer record about a
+    different attribute never jumps ahead. Other results keep their rank.
+    Scores are re-assigned so they stay non-increasing.
     """
     intent = detect_temporal_intent(query)
-    anchors = query_anchors(query)
-    if intent == TemporalIntent.NONE or not anchors or len(fragments) < 2:
+    if intent == TemporalIntent.NONE or len(fragments) < 2:
         return fragments, scores, relevances, intent
-    anchor_words = {word for anchor in anchors for word in anchor.split()}
-    attribute_terms = [t for t in _content_terms(query) if t not in anchor_words]
-    subject: list[int] = []
-    stems: dict[int, set[str]] = {}
-    for i, fragment in enumerate(fragments):
-        content_norm = _anchor_norm(fragment.content)
-        if all(_contains_anchor(content_norm, anchor) for anchor in anchors):
-            subject.append(i)
-            stems[i] = _content_stems(fragment.content)
-    if len(subject) < 2:
-        return fragments, scores, relevances, intent
-    # The band is the subject's records about the *asked* attribute: those
-    # containing every attribute term that most of the subject's records
-    # share. Incidental words ("listen" in "which port does X listen on")
-    # don't split the band, and a record about another attribute ("deploy
-    # failed") can't join it. No common term → no reordering at all.
-    if attribute_terms:
-        common = [t for t in attribute_terms if sum(t in stems[i] for i in subject) * 2 > len(subject)]
-        if not common:
-            return fragments, scores, relevances, intent
-        band = [i for i in subject if all(t in stems[i] for t in common)]
-    else:
-        band = list(subject)
+    band = _band(query, fragments)
     if len(band) < 2:
         return fragments, scores, relevances, intent
     band = _order_band(fragments, band, newest_first=intent == TemporalIntent.CURRENT)
@@ -152,6 +128,45 @@ def temporal_order(
         floor = min(floor, scores[i])
         new_scores.append(floor)
     return ([fragments[i] for i in order], new_scores, [relevances[i] for i in order], intent)
+
+
+def _band(query: str, fragments: list[MemoryFragment]) -> list[int]:
+    """Indices of the records about the asked subject and attribute.
+
+    With anchors ("Which port does atlas-core use now?") the subject is the
+    records naming every anchor, and the band those containing every
+    attribute term most of the subject's records share. Incidental words
+    ("listen" in "which port does X listen on") don't split the band, and a
+    record about another attribute ("deploy failed") can't join it. No
+    common term means no reordering at all.
+
+    Without anchors ("What was the last bug?", "Which bug did we hit most
+    recently?") the band is the records containing every query term that
+    the best match contains ("bug"): a recency tie-break among records
+    about the same thing, never a reach for unrelated news.
+    """
+    anchors = query_anchors(query)
+    if not anchors:
+        top = _content_stems(fragments[0].content)
+        terms = [t for t in _content_terms(query) if t in top]
+        if not terms:
+            return []
+        return [i for i, f in enumerate(fragments) if all(t in _content_stems(f.content) for t in terms)]
+    anchor_words = {word for anchor in anchors for word in anchor.split()}
+    attribute_terms = [t for t in _content_terms(query) if t not in anchor_words]
+    subject: list[int] = []
+    stems: dict[int, set[str]] = {}
+    for i, fragment in enumerate(fragments):
+        content_norm = _anchor_norm(fragment.content)
+        if all(_contains_anchor(content_norm, anchor) for anchor in anchors):
+            subject.append(i)
+            stems[i] = _content_stems(fragment.content)
+    if len(subject) < 2 or not attribute_terms:
+        return subject
+    common = [t for t in attribute_terms if sum(t in stems[i] for i in subject) * 2 > len(subject)]
+    if not common:
+        return []
+    return [i for i in subject if all(t in stems[i] for t in common)]
 
 
 def same_day_order(fragments: list[MemoryFragment]) -> dict[str, tuple[int, int]]:

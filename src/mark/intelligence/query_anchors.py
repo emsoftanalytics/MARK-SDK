@@ -16,8 +16,10 @@ fact subjects. Two levels:
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 
 from mark.intelligence.classifier import _STOP_WORDS
+from mark.intelligence.date_parsing import find_dates
 
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
 
@@ -76,9 +78,18 @@ def query_anchors(query: str) -> list[str]:
     which are values rather than subjects), and runs of title-case words
     with leading/trailing question words stripped ("Has Alice Smith" ->
     "alice smith"). Possessives are dropped first so "Mei Lin's" matches
-    "Mei Lin".
+    "Mei Lin", and date expressions ("third-quarter", "3rd of May") are
+    dates, not names.
     """
+    return list(_query_anchors(query))
+
+
+@lru_cache(maxsize=4096)
+def _query_anchors(query: str) -> tuple[str, ...]:
+    # Cached: one retrieval asks for the same query's anchors in several stages.
     query = _POSSESSIVE_RE.sub("", query)
+    for span in reversed(find_dates(query)):
+        query = query[: span.pos[0]] + " " + query[span.pos[1]:]
     anchors: list[str] = []
     for match in _COMPOUND_RE.findall(query):
         if _is_identifier(match) and not _BARE_NUMBER_RE.fullmatch(match):
@@ -100,7 +111,7 @@ def query_anchors(query: str) -> list[str]:
             words = words[:-1]
         if len(words) >= 2:
             anchors.append(" ".join(words))
-    return _unique_norms(anchors)
+    return tuple(_unique_norms(anchors))
 
 
 def gap_anchors(query: str) -> list[str]:
