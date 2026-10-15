@@ -9,6 +9,7 @@ from mark.embeddings import EmbeddingProvider, HashEmbeddingProvider
 from mark.index import VectorIndex
 from mark.intelligence.retrieval import GraphExpander, RetrievalPipeline
 from mark.intelligence.compressor import ContextualCompressor
+from mark.intelligence.fact_extraction import FactExtractionService, resolve_extractor
 from mark.intelligence.query_expander import QueryExpander
 from mark.middlewares.base import MarkMiddleware, MiddlewareStack
 from mark.plugins import MarkCorePlugin, PluginRegistry
@@ -38,6 +39,7 @@ class MarkRuntime:
         tracer: object | None = None,
         retrieval_top_k: int = 20,
         middleware: Iterable[MarkMiddleware] | None = None,
+        fact_extractor: object = None,
     ) -> None:
         self.store = store
         self.embedder = embedder
@@ -68,6 +70,9 @@ class MarkRuntime:
         )
         self.middleware = MiddlewareStack(middleware)
         self.middleware.bind(self)
+        # Default fact extractor for writes (None = off; background ones get a durable queue).
+        extractor = resolve_extractor(fact_extractor)
+        self.fact_extraction = FactExtractionService(store, extractor) if extractor is not None else None
 
     def _on_store_event(self, event: str, fragment_id: str) -> None:
         """Store listener: drop deleted/unretrievable fragments from the index."""
@@ -90,8 +95,9 @@ class MarkRuntime:
         tracer: object | None = None,
         retrieval_top_k: int = 20,
         middleware: Iterable[MarkMiddleware] | None = None,
+        fact_extractor: object = None,
     ) -> "MarkRuntime":
-        """Construct a local instance with default wiring."""
+        """Default local wiring; fact_extractor: None (off), "patterns" or a FactExtractor."""
         registry = PluginRegistry()
         runtime = cls(
             store=LocalMemoryStore(store_path, encryption=encryption or NoOpEncryptionProvider()),
@@ -105,6 +111,7 @@ class MarkRuntime:
             tracer=tracer,
             retrieval_top_k=retrieval_top_k,
             middleware=middleware,
+            fact_extractor=fact_extractor,
         )
         for plugin in plugins or []:
             registry.register(plugin, runtime=runtime)
@@ -144,7 +151,6 @@ class MarkRuntime:
         """Return the local runtime tracer."""
         if self._tracer is None:
             from mark.middlewares.observability import LocalTracer
-
             self._tracer = LocalTracer()
         return self._tracer
 
@@ -173,6 +179,7 @@ class MarkRuntime:
             llm=self._llm,
             middleware_stack=self.middleware,
             runtime=self,
+            fact_extraction=self.fact_extraction,
         )
 
     def global_bus(self) -> GlobalMemoryBus:
@@ -261,12 +268,7 @@ class MarkRuntime:
         return stats
 
     def run_cycle(self, agent_id: str, *, promote_threshold: float = 0.7) -> dict:
-        """
-        Full hippocampus maintenance cycle for agent_id.
-
-        Runs consolidation (working→LTM promotion + expiry) then pruning
-        (decay + edge dissolution). Returns a summary dict.
-        """
+        """Full maintenance cycle: consolidation, deduplication, pruning; returns a summary."""
         consolidation = self.consolidate(agent_id, promote_threshold=promote_threshold)
         deduplication = self.deduplicate(agent_id)
         pruning       = self.prune(agent_id)
@@ -292,5 +294,7 @@ class MarkRuntime:
 
     def shutdown(self) -> None:
         """Release resources held by the runtime."""
+        if self.fact_extraction is not None:
+            self.fact_extraction.close()  # queued jobs stay in the store
         self.executor.shutdown(wait=True)
         self.store.close()

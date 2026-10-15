@@ -7,6 +7,7 @@ behaviour is composed from focused mixins in :mod:`mark.memory.facade`:
 mixin                       responsibility
 ==========================  ==============================================
 ``WriteMixin``              store / store_sync / store_many_sync, facts
+``FactExtractionMixin``     automatic fact extraction after writes
 ``GuardMixin``              consolidation gate, quarantine, last_rejection
 ``RetrieveMixin``           retrieve / retrieve_sync / retrieve_many_sync
 ``HealingMixin``            gap healing via an explicit web lookup
@@ -84,6 +85,7 @@ class MarkMemory(
         consolidation_gate: Any = None,
         middleware_stack: MiddlewareStack | None = None,
         runtime: Any = None,
+        fact_extraction: Any = None,
     ) -> None:
         self.agent_id = agent_id
         self._store = store
@@ -96,3 +98,5 @@ class MarkMemory(
         # Middleware routing needs both the stack and the runtime it is bound to.
         self._middleware = middleware_stack
         self._runtime = runtime
+        # Default fact extraction for writes (FactExtractionService or None).
+        self._fact_extraction = fact_extraction

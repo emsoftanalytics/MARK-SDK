@@ -41,3 +41,5 @@ class MemoryCore:
     #: are routed through it so governance/redaction cannot be bypassed.
     _middleware: "MiddlewareStack | None"
     _runtime: Any
+    #: Default FactExtractionService for writes (None: extraction off).
+    _fact_extraction: Any
