@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+
 class _Engine:
     """Loads MARK lazily and executes commands against one database."""
 

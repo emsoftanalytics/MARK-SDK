@@ -20,7 +20,13 @@ import socket
 from pathlib import Path
 from typing import Any
 
-from mark._cli.config import MAX_REQUEST_BYTES, _LOOPBACK, _lock_path, _proof, _state_path
+from mark._cli.config import (
+    _LOOPBACK,
+    MAX_REQUEST_BYTES,
+    _lock_path,
+    _proof,
+    _state_path,
+)
 from mark._cli.engine import _Engine
 
 

@@ -37,14 +37,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from mark._cli.client import (  # noqa: F401
+# Everything below is re-exported: ``mark.cli.<name>`` is the historical path.
+from mark._cli.client import (
     _base_url,
     _call_server,
     _ingest_in_chunks,
     _live_server,
     execute,
 )
-from mark._cli.config import (  # noqa: F401
+from mark._cli.config import (
     _LOOPBACK,
     DEFAULT_AGENT,
     INGEST_CHUNK_BYTES,
@@ -54,9 +55,14 @@ from mark._cli.config import (  # noqa: F401
     _proof,
     _state_path,
 )
-from mark._cli.engine import _Engine, _fact_json, _result_json  # noqa: F401
-from mark._cli.server import _acquire_lock, _pid_alive, _release_lock, _write_state, serve  # noqa: F401
-
+from mark._cli.engine import _Engine, _fact_json, _result_json
+from mark._cli.server import (
+    _acquire_lock,
+    _pid_alive,
+    _release_lock,
+    _write_state,
+    serve,
+)
 
 # ── output ────────────────────────────────────────────────────────────────────
 

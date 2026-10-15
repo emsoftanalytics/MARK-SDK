@@ -17,9 +17,9 @@ from typing import Any
 
 from mark.intelligence.retrieval import RetrievalPolicy, RetrievalResult
 from mark.memory.global_bus import GlobalMemoryBus
-# Value types are re-exported: ``mark.middlewares.trust_bus.bus`` is their
-# historical import path.
-from mark.middlewares.trust_bus.messages import (  # noqa: F401
+
+# Value types are re-exported here, their historical import path.
+from mark.middlewares.trust_bus.messages import (
     _TRUST_RANK,
     _TRUST_TAG_PREFIX,
     TRUST_METADATA_KEY,

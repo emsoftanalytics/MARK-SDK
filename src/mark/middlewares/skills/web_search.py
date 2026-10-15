@@ -28,14 +28,30 @@ from .base import Skill, SkillManifest, SkillResult
 # ``_is_internal_address`` and ``_open_connection`` are deliberately looked up
 # as globals of *this* module by ``_pin_url`` / ``_safe_http_get``, so patching
 # ``web_search._is_internal_address`` / ``web_search._open_connection`` works.
-from .web_net import (  # noqa: F401
-    _MAX_PAGE_CHARS, _MAX_REDIRECTS, _MAX_RESPONSE_BYTES, _NAT64_NETWORKS, _REDIRECT_STATUSES,
-    _TIMEOUT_MS, _USER_AGENT, FetchBlocked, _embedded_ipv4, _is_internal_address,
-    _open_connection, _PinnedHTTPConnection, _PinnedHTTPSConnection, _PinnedTarget,
+from .web_net import (
+    _MAX_PAGE_CHARS,
+    _MAX_REDIRECTS,
+    _MAX_RESPONSE_BYTES,
+    _NAT64_NETWORKS,
+    _REDIRECT_STATUSES,
+    _TIMEOUT_MS,
+    _USER_AGENT,
+    FetchBlocked,
+    _embedded_ipv4,
+    _is_internal_address,
+    _open_connection,
+    _PinnedHTTPConnection,
+    _PinnedHTTPSConnection,
+    _PinnedTarget,
 )
-from .web_sources import (  # noqa: F401
-    _HAS_ATTRIBUTION, SourceAttribution, SourceCredibility, build_search_result,
-    ddg_text_search, page_text, wiki_summary,
+from .web_sources import (
+    _HAS_ATTRIBUTION,
+    SourceAttribution,
+    SourceCredibility,
+    build_search_result,
+    ddg_search,
+    page_text,
+    wiki_search,
 )
 
 logger = logging.getLogger(__name__)
@@ -251,30 +267,10 @@ class WebSearchSkill(Skill):
         return []
 
     async def _ddg_search(self, query: str) -> List[Dict[str, str]]:
-        try:
-            from duckduckgo_search import DDGS  # type: ignore[import]
-        except ImportError:
-            return []
-
-        try:
-            return await asyncio.get_running_loop().run_in_executor(
-                None, ddg_text_search, DDGS, query, self.num_results
-            )
-        except Exception:
-            return []
+        return await ddg_search(query, self.num_results)
 
     async def _wiki_search(self, query: str) -> List[Dict[str, str]]:
-        try:
-            import wikipediaapi  # type: ignore[import]
-        except ImportError:
-            return []
-
-        try:
-            return await asyncio.get_running_loop().run_in_executor(
-                None, wiki_summary, wikipediaapi, query
-            )
-        except Exception:
-            return []
+        return await wiki_search(query)
 
     async def _fetch_page(self, url: str) -> str:
         # Validation (and DNS pinning) happens inside _safe_http_get for every hop.

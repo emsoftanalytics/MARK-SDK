@@ -31,14 +31,14 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-from mark.middlewares.skills.contracts import (  # noqa: F401
+from mark.middlewares.skills.contracts import (
     Skill,
     SkillContext,
     SkillInput,
     SkillManifest,
     SkillResult,
 )
-from mark.middlewares.skills.markdown_skill import MarkdownSkill, _parse_frontmatter  # noqa: F401
+from mark.middlewares.skills.markdown_skill import MarkdownSkill, _parse_frontmatter
 
 logger = logging.getLogger(__name__)
 

@@ -12,8 +12,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from mark.middlewares.skills.contracts import Skill, SkillContext, SkillInput, SkillManifest, SkillResult
-
+from mark.middlewares.skills.contracts import (
+    Skill,
+    SkillContext,
+    SkillInput,
+    SkillManifest,
+    SkillResult,
+)
 
 # ── Frontmatter parser ────────────────────────────────────────────────────────
 

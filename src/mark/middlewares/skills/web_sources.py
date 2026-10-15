@@ -2,14 +2,15 @@
 # Copyright (c) 2025 MARK Contributors
 """Search backends and result shaping for :class:`WebSearchSkill`.
 
-Blocking DuckDuckGo / Wikipedia calls (run by the skill in an executor), HTML
-to text extraction for fetched pages, and conversion of raw hits into a
+DuckDuckGo / Wikipedia lookups (blocking calls run in the default executor,
+failures degrade to no results), HTML to text extraction for fetched pages, and conversion of raw hits into a
 :class:`~mark.middlewares.skills.contracts.SkillResult` whose fragments carry
 source attribution. No network safety logic lives here: page fetches go
 through ``web_search._safe_http_get``.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any, Dict, List
 
@@ -55,6 +56,36 @@ def wiki_summary(wikipediaapi: Any, query: str) -> List[Dict[str, str]]:
             "source": "wikipedia",
         }
     ]
+
+
+async def ddg_search(query: str, num_results: int) -> List[Dict[str, str]]:
+    """DuckDuckGo search off the event loop; ``[]`` when unavailable or failing."""
+    try:
+        from duckduckgo_search import DDGS  # type: ignore[import]
+    except ImportError:
+        return []
+
+    try:
+        return await asyncio.get_running_loop().run_in_executor(
+            None, ddg_text_search, DDGS, query, num_results
+        )
+    except Exception:
+        return []
+
+
+async def wiki_search(query: str) -> List[Dict[str, str]]:
+    """Wikipedia lookup off the event loop; ``[]`` when unavailable or failing."""
+    try:
+        import wikipediaapi  # type: ignore[import]
+    except ImportError:
+        return []
+
+    try:
+        return await asyncio.get_running_loop().run_in_executor(
+            None, wiki_summary, wikipediaapi, query
+        )
+    except Exception:
+        return []
 
 
 def page_text(raw: bytes) -> str:
