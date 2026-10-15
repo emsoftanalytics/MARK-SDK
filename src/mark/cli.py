@@ -117,6 +117,10 @@ def _parser() -> argparse.ArgumentParser:
     p = fact.add_parser("history")
     p.add_argument("subject")
     p.add_argument("attribute")
+    p = fact.add_parser("retract", help="retract facts recorded by mistake (kept for audit)")
+    p.add_argument("subject")
+    p.add_argument("attribute", nargs="?")
+    p.add_argument("--value", help="only retract this value")
     sub.add_parser("stats", help="count memories and facts")
     p = sub.add_parser("serve", help="keep MARK warm for fast calls")
     p.add_argument("--host", default="127.0.0.1")
@@ -182,6 +186,8 @@ def _request(args: argparse.Namespace, agent: str) -> tuple[str, dict[str, Any]]
                            correction=args.correction)
         else:
             payload["attribute"] = args.attribute
+            if args.fact_cmd == "retract":
+                payload["value"] = args.value
     else:
         cmd, payload = "stats", {"agent": agent}
     return cmd, payload
@@ -196,6 +202,8 @@ def _print_result(args: argparse.Namespace, cmd: str, result: dict[str, Any]) ->
         for result_item in result["results"]:
             print(f"### {result_item['query']}")
             _print_recall(result_item)
+    elif cmd == "fact-retract":
+        print(f"retracted {result['retracted']} fact(s)")
     elif cmd.startswith("fact-"):
         facts = [result["fact"]] if "fact" in result else result["facts"]
         for fact in facts:

@@ -101,6 +101,12 @@ class FactsView:
         row = self._store.fact_as_of(self._agent_id, subject, attribute, moment)
         return None if row is None else _fact(row)
 
+    def retract(self, subject: str, attribute: str | None = None, *, value: Any = None) -> int:
+        """Retract facts recorded by mistake (kept for audit); returns how many."""
+        return self._store.fact_retract(
+            self._agent_id, subject, attribute, value=None if value is None else str(value),
+        )
+
     def subjects(self) -> list[str]:
         """Normalised subjects that have facts."""
         return self._store.fact_subjects(self._agent_id)

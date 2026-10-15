@@ -132,6 +132,33 @@ class FactMixin:
         )
         return None if row is None else self._row_to_fact(row)
 
+    def fact_retract(
+        self, agent_id: str, subject: str, attribute: str | None = None, *, value: str | None = None,
+    ) -> int:
+        """Retract facts recorded by mistake; returns how many rows were retracted.
+
+        Rows are kept (``retracted_at`` set) for audit and drop out of current
+        values and history. ``attribute``/``value`` narrow what is retracted.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        sql = ("SELECT id, attribute_key, value FROM facts WHERE agent_id = ? AND subject_key = ?"
+               " AND retracted_at IS NULL")
+        params: list[object] = [agent_id, _fact_key(subject)]
+        if attribute is not None:
+            sql += " AND attribute_key = ?"
+            params.append(_fact_key(attribute))
+        with self._writing(structural=False) as conn:
+            rows = [
+                row for row in conn.execute(sql, params).fetchall()
+                if value is None or self.encryption.decrypt_str(row["value"]) == str(value)
+            ]
+            for row in rows:
+                conn.execute("UPDATE facts SET retracted_at = ? WHERE id = ?", (now, row["id"]))
+            # Neighbouring values take over the retracted intervals.
+            for attribute_key in {str(row["attribute_key"]) for row in rows}:
+                self._rechain_facts(conn, agent_id, _fact_key(subject), attribute_key)
+        return len(rows)
+
     def fact_subjects(self, agent_id: str) -> list[str]:
         """Normalised subject keys that have at least one fact."""
         rows = self._fetchall(
