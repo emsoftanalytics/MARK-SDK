@@ -66,7 +66,12 @@ pip install "mark-sdk[langchain]"   # LangChain tools + agent middleware
 pip install "mark-sdk[mcp]"        # MCP server over MARK memory
 pip install "mark-sdk[adapters]"   # both of the above
 pip install "mark-sdk[middleware]" # all local middleware batteries
+pip install "mark-sdk[fast]"       # numpy-vectorised search (recommended)
 ```
+
+The core package depends only on `pydantic`. Without numpy, vector search runs
+in pure Python; with `mark-sdk[fast]` it uses one vectorised scan (about 1 ms at
+10k memories, 7 ms at 100k).
 
 Specific middleware install targets are also available, for example
 `mark-sdk[middleware-governance]`, `mark-sdk[middleware-trust-bus]`,
@@ -188,8 +193,7 @@ from mark.adapters.langchain.middleware import MarkAgentMiddleware
 
 with Mark.local(".") as mark:
     middleware = MarkAgentMiddleware(
-        backend=LocalMarkBackend(mark, default_agent_id="coder"),
-        agent_id="coder",
+        backend=LocalMarkBackend(mark),
         max_context_chars=1400,     # context budget injected per model call
         write_outcomes=True,        # archive AI reasoning steps
         observe_tool_results=True,  # archive tool outputs as they happen
@@ -197,7 +201,18 @@ with Mark.local(".") as mark:
 
     agent = create_agent(model, tools, middleware=[middleware])
     result = agent.invoke({"messages": [("user", "Fix the failing build.")]})
+    # or: await agent.ainvoke(...) / agent.astream(...)
 ```
+
+The middleware is safe to share across concurrent runs: per-run memory state is
+isolated, every model call in a run receives memory, and memory failures are
+logged and degrade gracefully instead of breaking the agent. Gap healing
+(`auto_heal=True`) is opt-in because it can reach the network.
+
+MARK adapters default to the `__mark__` namespace used by `mark.memory`, so
+memory written with `mark.memory.block(...).write(...)` is recalled
+automatically. Pass `agent_id=` / `default_agent_id=` only for a separate
+namespace, and write into it with `mark.runtime.memory("<id>")`.
 
 Prefer explicit control? `create_mark_tools` exposes memory as ordinary
 LangChain tools the model calls itself. The tools support both sync `invoke()`
@@ -207,10 +222,7 @@ running event loop:
 ```python
 from mark.adapters.langchain import create_mark_tools
 
-tools = create_mark_tools(
-    LocalMarkBackend(mark, default_agent_id="coder"),
-    default_agent_id="coder",
-)
+tools = create_mark_tools(LocalMarkBackend(mark))
 agent = create_agent(model, [*tools, *my_other_tools])
 ```
 
@@ -225,9 +237,14 @@ And `mark.adapters.mcp` serves the same memory to any MCP-compatible client:
 from mark.adapters.backend import LocalMarkBackend
 from mark.adapters.mcp import create_mark_mcp_server
 
-server = create_mark_mcp_server(LocalMarkBackend(mark))
+server = create_mark_mcp_server(
+    LocalMarkBackend(mark),
+    allowed_agent_ids={"__mark__"},  # optional: restrict client-selected namespaces
+)
 server.run()  # stdio MCP server
 ```
+
+The adapter supports both `mcp` 2.x (`MCPServer`) and 1.x (`FastMCP`).
 
 The full middleware walkthrough — the same agent run with and without MARK,
 side by side — lives in the tutorial notebook under
@@ -248,6 +265,32 @@ with Mark.local(".") as mark:
     for fact in facts:
         print(fact.content)
 ```
+
+### 7. Use any local embedding model
+
+The zero-dependency default (`HashEmbeddingProvider`) needs no model download.
+For semantic recall, plug in any local model server or in-process model:
+
+```python
+from mark import Mark
+from mark.embeddings import (
+    OllamaEmbeddingProvider,            # Ollama: batch /api/embed
+    OpenAICompatibleEmbeddingProvider,  # llama.cpp server, LM Studio, vLLM, LocalAI
+    FastEmbedProvider,                  # ONNX, no torch:   mark-sdk[fastembed]
+    Model2VecProvider,                  # static, numpy:    mark-sdk[model2vec]
+)
+
+embedder = OpenAICompatibleEmbeddingProvider(
+    base_url="http://localhost:1234/v1",   # LM Studio
+    model="nomic-embed-text-v1.5",
+)
+with Mark.local(".", embedder=embedder) as mark:
+    ...
+```
+
+HTTP providers batch requests, use connect/read timeouts, and retry transient
+failures with jittered backoff. MARK records each embedder's fingerprint, so
+switching models re-embeds existing memory instead of mixing vector spaces.
 
 ## Comparative Samples
 
@@ -272,8 +315,11 @@ in `mark-sdk`.
   lifecycle maintenance, observability, and sync envelope preparation.
 - **Structured memory:** fragments, sessions, graph nodes, graph edges,
   world-bible facts, and graph-scoped blocks.
-- **Retrieval pipeline:** local vector retrieval with graph expansion, scoring,
-  gap reporting, optional query expansion, and optional contextual compression.
+- **Hybrid retrieval:** SQLite FTS5 (BM25) lexical search and vector search
+  fused with Reciprocal Rank Fusion, so exact identifiers, names, and
+  paraphrases all hit. Agent- and session-scoped filters are applied before
+  scoring, graph expansion is damped per hop, and gap reports are calibrated on
+  real query evidence. No LLM calls on the write or read hot path.
 - **Creative continuity:** session prefixes, tags, scopes, world-bible facts,
   and blocks make it natural to track characters, objects, locations, shots,
   styles, and generated artifacts.
@@ -289,6 +335,18 @@ in `mark-sdk`.
   and middleware observation of reasoning/tool outcomes.
 
 Everything in this package runs locally under the Apache-2.0 license.
+
+## Performance
+
+Measured with `benchmarks/bench_runtime.py` (offline, default configuration,
+SQLite on disk, numpy installed):
+
+| Memories | Store | Retrieve p50 | Retrieve p95 | hit@1 / hit@5 |
+| --- | --- | --- | --- | --- |
+| 2,000 | 0.6 ms | 12.5 ms | 23 ms | 14/14 / 14/14 |
+| 10,000 | 0.7 ms | 32 ms | 81 ms | 14/14 / 14/14 |
+
+Reproduce with `uv run --extra fast python benchmarks/bench_runtime.py`.
 
 ## MARK Cloud — coming soon
 

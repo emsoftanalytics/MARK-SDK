@@ -282,3 +282,42 @@ def test_exact_identifiers_rank_first(runtime) -> None:
 
     for query, gold in [("INV-2024-0087", 2), ("JIRA-4521", 11), ("A7731", 26)]:
         assert _rank(mem.retrieve_sync(query), ids[gold]) == 1, query
+
+
+def test_unknown_dimension_fingerprint_does_not_force_reembedding(tmp_path: Path) -> None:
+    """HTTP embedders learn their dimension on first call; a fresh process must not re-embed."""
+
+    class LazyDimEmbedder(HashEmbeddingProvider):
+        calls = 0
+
+        def __init__(self) -> None:
+            super().__init__(dim=64)
+            self._known = False
+
+        @property
+        def fingerprint(self) -> str:
+            return f"lazy-model:{64 if self._known else None}"
+
+        def embed(self, text):
+            self._known = True
+            LazyDimEmbedder.calls += 1
+            return super().embed(text)
+
+        def embed_batch(self, texts):
+            return [self.embed(text) for text in texts]
+
+    path = tmp_path / "lazy.db"
+    first = MarkRuntime.local(store_path=path, embedder=LazyDimEmbedder())
+    mem = first.memory("lazy")
+    for i in range(5):
+        mem.store_sync(f"Lazy dimension fact {i}.")
+    mem.retrieve_sync("lazy dimension")
+    first.shutdown()
+
+    LazyDimEmbedder.calls = 0
+    second = MarkRuntime.local(store_path=path, embedder=LazyDimEmbedder())
+    result = second.memory("lazy").retrieve_sync("lazy dimension fact")
+    second.shutdown()
+
+    assert result.fragments
+    assert LazyDimEmbedder.calls == 1  # the query only; stored vectors reused

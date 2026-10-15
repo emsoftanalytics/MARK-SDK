@@ -681,7 +681,11 @@ class RetrievalPipeline:
             return
         key = f"{self.EMBEDDER_META_KEY}:{agent_id}"
         stored = get_meta(key)
-        if stored == fingerprint:
+        if stored is not None and _same_embedding_space(stored, fingerprint):
+            return
+        if fingerprint.endswith(":None"):
+            # Dimension not known until the first embed call: never persist a
+            # partial fingerprint (it would force a re-embed on every restart).
             return
         if stored is not None:
             logger.info("embedder changed for agent %r (%s -> %s); re-embedding", agent_id, stored, fingerprint)
@@ -865,6 +869,15 @@ class RetrievalPipeline:
                 pass
         for fid in ids:
             self._index.remove(fid)
+
+
+def _same_embedding_space(stored: str, current: str) -> bool:
+    """Fingerprints match, or match on model identity when a dimension is unknown."""
+    if stored == current:
+        return True
+    stored_model, _, stored_dim = stored.rpartition(":")
+    current_model, _, current_dim = current.rpartition(":")
+    return stored_model == current_model and "None" in {stored_dim, current_dim}
 
 
 # ── Lexical evidence helpers ──────────────────────────────────────────────────
