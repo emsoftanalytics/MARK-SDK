@@ -50,7 +50,6 @@ class GraphExpander:
                     best[node.id] = score
                     heapq.heappush(frontier, (-score, node.id, 0))
 
-        expansive = [rel for rel in EdgeRelation if rel.is_expansive]
         supports_incoming = hasattr(self._store, "edges_to_node")
         expanded: set[str] = set()
 
@@ -61,14 +60,14 @@ class GraphExpander:
                 continue
             expanded.add(node_id)
 
+            # Edges are filtered here rather than in SQL: custom relations
+            # ("manages") are expansive but cannot be listed up front.
             neighbor_edges: list = []
             if direction in {"outgoing", "both"}:
-                neighbor_edges += self._store.edges_from_node(node_id, relation_filter=expansive)
+                neighbor_edges += self._store.edges_from_node(node_id)
             if direction in {"incoming", "both"} and supports_incoming:
-                neighbor_edges += [
-                    e for e in self._store.edges_to_node(node_id)
-                    if e.relation in expansive
-                ]
+                neighbor_edges += self._store.edges_to_node(node_id)
+            neighbor_edges = [e for e in neighbor_edges if EdgeRelation(e.relation).is_expansive]
 
             for edge in neighbor_edges:
                 neighbor_id = edge.target_id if edge.source_id == node_id else edge.source_id
