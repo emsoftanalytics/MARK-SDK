@@ -3,7 +3,11 @@
 """Trust-aware global memory bus with subscriptions and snapshots."""
 from __future__ import annotations
 
+import hashlib
+import hmac
+import html
 import json
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -13,6 +17,12 @@ from typing import Any
 from mark.intelligence import RetrievalPolicy, RetrievalResult
 from mark.memory.global_bus import GlobalMemoryBus
 from mark.types import MemoryFragment
+
+logger = logging.getLogger(__name__)
+
+#: Reserved fragment-metadata key holding the authoritative trust record.
+TRUST_METADATA_KEY = "mark_trust"
+_TRUST_TAG_PREFIX = "trust:"
 
 
 class PublisherTrust(str, Enum):
@@ -31,6 +41,21 @@ _TRUST_RANK: dict[PublisherTrust, int] = {
     PublisherTrust.EXTERNAL:       1,
     PublisherTrust.UNKNOWN:        0,
 }
+
+
+def _lowest(levels: list[PublisherTrust]) -> PublisherTrust:
+    if not levels:
+        return PublisherTrust.UNKNOWN
+    return min(levels, key=lambda level: _TRUST_RANK[level])
+
+
+def _is_trust_tag(tag: str) -> bool:
+    return tag.strip().lower().startswith(_TRUST_TAG_PREFIX)
+
+
+def _trust_signature(key: bytes, publisher: str, trust: PublisherTrust, content: str) -> str:
+    message = json.dumps([publisher, trust.value, content], ensure_ascii=False).encode("utf-8")
+    return hmac.new(key, message, hashlib.sha256).hexdigest()
 
 
 @dataclass
@@ -119,26 +144,36 @@ class BusSnapshot:
 
     def facts_by_trust(self, trust: PublisherTrust) -> list[BusMessage]:
         """Return facts at or above the trust level."""
-        return [m for m in self.messages if m.trust == trust]
+        floor = _TRUST_RANK[trust]
+        return [m for m in self.messages if _TRUST_RANK[m.trust] >= floor]
 
     def as_context(self, max_words: int = 1500) -> str:
-        """Render as an LLM-ready context string."""
+        """Render as an LLM-ready context string.
+
+        Content and publisher are HTML-escaped so a message cannot inject its
+        own ``<fact trust="system">`` element. If the first message alone is
+        longer than ``max_words`` it is truncated rather than dropped.
+        """
         if not self.messages:
             return "<bus_context />"
         lines: list[str] = []
         words = 0
         for msg in self.messages:
-            line = (
-                f'  <fact publisher="{msg.publisher}" trust="{msg.trust.value}">'
-                f"{msg.content}</fact>"
+            content_words = msg.content.split()
+            content = msg.content
+            if words + len(content_words) > max_words:
+                if lines:
+                    break
+                content = " ".join(content_words[:max(1, max_words)]) + " …"
+                content_words = content_words[:max(1, max_words)]
+            words += len(content_words)
+            lines.append(
+                f'  <fact publisher="{html.escape(msg.publisher, quote=True)}" '
+                f'trust="{msg.trust.value}">{html.escape(content, quote=False)}</fact>'
             )
-            words += len(msg.content.split())
-            if words > max_words:
-                break
-            lines.append(line)
         body = "\n".join(lines)
         return (
-            f'<bus_context captured_at="{self.captured_at}" '
+            f'<bus_context captured_at="{html.escape(self.captured_at, quote=True)}" '
             f'count="{len(lines)}">\n{body}\n</bus_context>'
         )
 
@@ -148,8 +183,16 @@ class TrustAwareGlobalMemoryBus:
     Multi-agent memory bus with per-message trust levels.
 
     Wraps GlobalMemoryBus and adds trust filtering on publish and retrieve.
-    Trust is encoded as a tag ``trust:<level>`` so it persists through the
-    SQLite store without schema changes.
+
+    The authoritative trust level is stored in fragment metadata under
+    ``mark_trust`` (set only by this class). Caller-supplied ``trust:*`` tags
+    are stripped on publish and ignored on load, so a publisher cannot
+    promote itself by tagging. Legacy fragments without the metadata record
+    fall back to their ``trust:`` tags, taking the *lowest* level when tags
+    disagree.
+
+    Pass ``signing_key`` to HMAC-sign (publisher, trust, content); messages
+    whose signature does not verify on load are downgraded to UNKNOWN.
     """
 
     def __init__(
@@ -159,7 +202,9 @@ class TrustAwareGlobalMemoryBus:
         pipeline: Any,
         embedder: Any,
         executor: Any,
+        signing_key: bytes | None = None,
     ) -> None:
+        self._signing_key = signing_key
         self._bus = GlobalMemoryBus(
             store    = store,
             pipeline = pipeline,
@@ -173,43 +218,86 @@ class TrustAwareGlobalMemoryBus:
     def _load_existing_messages(self) -> None:
         """Rebuild message metadata from persisted global-bus fragments."""
         seen: set[str] = set()
-        for frag in self._bus.all_facts(limit=10_000):
-            msg = self._message_from_fragment(frag)
+        for frag in self._bus.all_facts(limit=None):
+            msg = self._message_from_fragment(frag, signing_key=self._signing_key)
             if msg is None or msg.id in seen:
                 continue
             self._messages.append(msg)
             seen.add(msg.id)
 
     @staticmethod
-    def _message_from_fragment(frag: MemoryFragment) -> BusMessage | None:
+    def _message_from_fragment(
+        frag: MemoryFragment,
+        *,
+        signing_key: bytes | None = None,
+    ) -> BusMessage | None:
         if "global_bus" not in frag.tags:
             return None
 
-        trust = PublisherTrust.UNKNOWN
+        tag_levels: list[PublisherTrust] = []
         tags: list[str] = []
         for tag in frag.tags:
             if tag == "global_bus":
                 continue
-            if tag.startswith("trust:"):
-                raw = tag.split(":", 1)[1]
+            if _is_trust_tag(tag):
+                raw = tag.split(":", 1)[1].strip().lower()
                 try:
-                    trust = PublisherTrust(raw)
+                    tag_levels.append(PublisherTrust(raw))
                 except ValueError:
-                    trust = PublisherTrust.UNKNOWN
+                    tag_levels.append(PublisherTrust.UNKNOWN)
                 continue
             tags.append(tag)
 
+        publisher = frag.source or str(frag.metadata.get("publisher", ""))
+        record = frag.metadata.get(TRUST_METADATA_KEY)
+        if isinstance(record, dict) and "level" in record:
+            try:
+                trust = PublisherTrust(str(record["level"]))
+            except ValueError:
+                trust = PublisherTrust.UNKNOWN
+            if signing_key is not None:
+                expected = _trust_signature(signing_key, publisher, trust, frag.content)
+                if not hmac.compare_digest(str(record.get("sig", "")), expected):
+                    logger.warning("trust bus: signature mismatch for %s; downgrading to unknown", frag.id)
+                    trust = PublisherTrust.UNKNOWN
+        else:
+            # Legacy fragment: only tags are available. Ambiguity resolves low.
+            trust = _lowest(tag_levels)
+            if signing_key is not None:
+                trust = PublisherTrust.UNKNOWN
+
+        metadata = {k: v for k, v in frag.metadata.items() if k != TRUST_METADATA_KEY}
         return BusMessage(
             id        = frag.id,
             content   = frag.content,
-            publisher = frag.source or str(frag.metadata.get("publisher", "")),
+            publisher = publisher,
             trust     = trust,
             tags      = tags,
             timestamp = frag.created_at.isoformat(),
-            metadata  = dict(frag.metadata),
+            metadata  = metadata,
         )
 
     # ── publish ───────────────────────────────────────────────────────────────
+
+    def _prepare(
+        self,
+        content: str,
+        publisher: str,
+        trust: PublisherTrust,
+        tags: list[str] | None,
+        metadata: dict[str, Any] | None,
+    ) -> tuple[list[str], list[str], dict[str, Any], dict[str, Any]]:
+        trust = PublisherTrust(trust)
+        clean_tags = [t for t in (tags or []) if not _is_trust_tag(t)]
+        if len(clean_tags) != len(tags or []):
+            logger.warning("trust bus: stripped caller-supplied trust:* tags from %r", publisher)
+        clean_meta = {k: v for k, v in (metadata or {}).items() if k != TRUST_METADATA_KEY}
+        record: dict[str, Any] = {"level": trust.value, "publisher": publisher}
+        if self._signing_key is not None:
+            record["sig"] = _trust_signature(self._signing_key, publisher, trust, content.strip())
+        stored_meta = {**clean_meta, TRUST_METADATA_KEY: record}
+        all_tags = [f"{_TRUST_TAG_PREFIX}{trust.value}", *clean_tags]
+        return all_tags, clean_tags, stored_meta, clean_meta
 
     def publish_sync(
         self,
@@ -222,22 +310,25 @@ class TrustAwareGlobalMemoryBus:
         metadata:   dict[str, Any] | None = None,
     ) -> BusMessage:
         """Synchronous variant of publish()."""
-        trust_tag  = f"trust:{trust.value}"
-        all_tags   = [trust_tag, *(tags or [])]
-        frag_id    = self._bus.publish_sync(
+        trust = PublisherTrust(trust)
+        all_tags, clean_tags, stored_meta, clean_meta = self._prepare(
+            content, publisher, trust, tags, metadata,
+        )
+        frag_id = self._bus.publish_sync(
             content,
             publisher  = publisher,
             importance = importance,
             tags       = all_tags,
+            metadata   = stored_meta,
         )
         msg = BusMessage(
             id        = frag_id,
             content   = content,
             publisher = publisher,
             trust     = trust,
-            tags      = tags or [],
+            tags      = clean_tags,
             timestamp = datetime.now(timezone.utc).isoformat(),
-            metadata  = metadata or {},
+            metadata  = clean_meta,
         )
         self._messages.append(msg)
         return msg
@@ -253,22 +344,25 @@ class TrustAwareGlobalMemoryBus:
         metadata:   dict[str, Any] | None = None,
     ) -> BusMessage:
         """Publish content onto the bus."""
-        trust_tag = f"trust:{trust.value}"
-        all_tags  = [trust_tag, *(tags or [])]
-        frag_id   = await self._bus.publish(
+        trust = PublisherTrust(trust)
+        all_tags, clean_tags, stored_meta, clean_meta = self._prepare(
+            content, publisher, trust, tags, metadata,
+        )
+        frag_id = await self._bus.publish(
             content,
             publisher  = publisher,
             importance = importance,
             tags       = all_tags,
+            metadata   = stored_meta,
         )
         msg = BusMessage(
             id        = frag_id,
             content   = content,
             publisher = publisher,
             trust     = trust,
-            tags      = tags or [],
+            tags      = clean_tags,
             timestamp = datetime.now(timezone.utc).isoformat(),
-            metadata  = metadata or {},
+            metadata  = clean_meta,
         )
         self._messages.append(msg)
         return msg

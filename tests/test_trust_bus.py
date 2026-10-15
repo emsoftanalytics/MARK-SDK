@@ -306,7 +306,8 @@ def test_snapshot_facts_by_trust(tmp_path: Path) -> None:
     sys_f = snap.facts_by_trust(PublisherTrust.SYSTEM)
     raw_f = snap.facts_by_trust(PublisherTrust.RAW_AGENT)
     assert len(sys_f) == 1
-    assert len(raw_f) == 1
+    # "at or above": RAW_AGENT floor includes the SYSTEM fact too.
+    assert len(raw_f) == 2
     runtime.shutdown()
 
 
