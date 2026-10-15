@@ -138,8 +138,11 @@ punctuation (`Atlas-Core` is `atlas core`).
 ### 4. Automatic facts and timelines
 
 With `fact_extractor="patterns"`, every write is scanned for stated changes
-("moved from port A to port B", "X is owned by Y", "status: resolved") and
-matching facts are recorded, dated by the event time. A timeline lists every
+and descriptions ("moved from port A to port B", "X is owned by Y", "X runs
+on port P", "X runs in eu-west-1", "Y owns X", "A is based in Berlin", "A
+reports to B", "status: resolved") and matching facts are recorded, dated by
+the event time. A line listing several facts about one subject ("X is owned
+by Y, listens on port P and uses PostgreSQL 15") yields one fact per clause. A timeline lists every
 fact and memory about a subject, oldest first.
 
 ```python

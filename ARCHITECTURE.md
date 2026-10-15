@@ -250,9 +250,15 @@ FactExtractionService.submit
 
 - **Pattern packs.** A `RulePack` is data: regular expressions with
   `{S}`/`{V}`/`{A}` placeholders, plus attribute mappings. The built-in
-  packs cover generic English for status, ownership, assignment, membership,
-  changes ("moved from A to B"), and key-value lines. Text is split into
-  clauses. Questions, conditionals, negations, and intentions are skipped,
+  packs cover generic English for status, ownership ("owned by", "owns"),
+  assignment, membership, changes ("moved from A to B"), present-tense
+  descriptions (port, cloud region, placement, location, reporting line,
+  datastore), and key-value lines. Vague verbs fire only when the value says
+  what it is: "uses" needs a known database product, "runs in" a cloud-region
+  id or an attribute noun ("runs in production" yields nothing). Text is split
+  into clauses (`;`, `, `, and "and" before a verb); a clause that starts with
+  a verb borrows the previous clause's subject within the same sentence.
+  Questions, conditionals, negations, and intentions are skipped,
   and a leading `[YYYY-MM-DD]` stamp or `occurred_at` dates the fact.
 - **Queue.** `fact_jobs` has one row per (fragment, extractor). Failed jobs are
   retried up to `max_attempts`. A job whose lease expired (the process died)
