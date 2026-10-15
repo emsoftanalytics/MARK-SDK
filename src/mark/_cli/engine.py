@@ -11,6 +11,25 @@ from pathlib import Path
 from typing import Any
 
 
+def protocol_fingerprint() -> str:
+    """Identity of the command interface: package version + every command's parameters.
+
+    Client and server compare it during the handshake, so a client from a
+    different build never sends arguments the server cannot accept (it runs
+    in-process instead). Computed from signatures only — MARK isn't loaded.
+    """
+    import hashlib
+    import inspect
+
+    from mark._version import __version__
+
+    parts = [__version__]
+    for name in sorted(dir(_Engine)):
+        if name.startswith("cmd_"):
+            parts.append(f"{name}{inspect.signature(getattr(_Engine, name))}")
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
+
+
 class _Engine:
     """Loads MARK lazily and executes commands against one database."""
 

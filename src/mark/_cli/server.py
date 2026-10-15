@@ -27,7 +27,7 @@ from mark._cli.config import (
     _proof,
     _state_path,
 )
-from mark._cli.engine import _Engine
+from mark._cli.engine import _Engine, protocol_fingerprint
 
 
 def serve(db: Path, host: str = "127.0.0.1", port: int = 0, *, stop_event: Any = None) -> None:
@@ -67,7 +67,7 @@ def serve(db: Path, host: str = "127.0.0.1", port: int = 0, *, stop_event: Any =
             if not self.path.startswith("/hello") or not nonce:
                 self._reply(404, {"error": "not found"})
                 return
-            self._reply(200, {"proof": _proof(token, nonce)})
+            self._reply(200, {"proof": _proof(token, nonce), "protocol": protocol_fingerprint()})
 
         def do_POST(self) -> None:  # noqa: N802 - http.server API
             supplied = self.headers.get("Authorization", "").encode("utf-8", "replace")

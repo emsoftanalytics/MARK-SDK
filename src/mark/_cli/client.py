@@ -7,13 +7,14 @@ from __future__ import annotations
 import hmac
 import json
 import secrets
+import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
 
 from mark._cli.config import INGEST_CHUNK_BYTES, _proof, _state_path
-from mark._cli.engine import _Engine
+from mark._cli.engine import _Engine, protocol_fingerprint
 
 
 def _live_server(state: Path) -> dict[str, Any] | None:
@@ -29,9 +30,16 @@ def _live_server(state: Path) -> dict[str, Any] | None:
         url = f"{_base_url(data)}/hello?nonce={nonce}"
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         with opener.open(url, timeout=1.0) as response:
-            proof = json.loads(response.read()).get("proof", "")
-        if hmac.compare_digest(str(proof), _proof(data["token"], nonce)):
-            return data
+            hello = json.loads(response.read())
+        if not hmac.compare_digest(str(hello.get("proof", "")), _proof(data["token"], nonce)):
+            return None
+        if hello.get("protocol") != protocol_fingerprint():
+            # A server from another build may not accept this client's
+            # arguments: run in-process instead of failing mid-command.
+            print("mark: server runs a different MARK build; running in-process "
+                  "(restart `mark serve` to use the server)", file=sys.stderr)
+            return None
+        return data
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         pass
     return None

@@ -107,3 +107,23 @@ def test_import_mark_is_lightweight() -> None:
     code = "import sys, mark; print(sorted(m for m in sys.modules if m.startswith('mark')))"
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout
     assert out.strip() == "['mark', 'mark._version']"
+
+
+def test_mismatched_server_build_falls_back_in_process(tmp_path: Path, monkeypatch, capsys) -> None:
+    """A client from a different build must not send arguments the server can't take."""
+    db = (tmp_path / "skew.db").resolve()
+    stop = threading.Event()
+    threading.Thread(target=cli.serve, args=(db,), kwargs={"stop_event": stop}, daemon=True).start()
+    for _ in range(100):
+        if cli._live_server(cli._state_path(db)):
+            break
+        time.sleep(0.05)
+    try:
+        import mark._cli.client as client
+
+        monkeypatch.setattr(client, "protocol_fingerprint", lambda: "other-build")
+        assert cli._live_server(cli._state_path(db)) is None
+        assert "different MARK build" in capsys.readouterr().err
+        assert cli.execute(db, "stats", {"agent": "x"})["memories"] == 0  # in-process
+    finally:
+        stop.set()
