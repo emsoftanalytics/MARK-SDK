@@ -1,0 +1,16 @@
+{
+"CU1":"Pia Achebe","CU2":"Eli Brandt","CU3":"us-west-2","CU4":"MySQL 8.0","CU5":"PostgreSQL 15",
+"CU6":"8216","CU7":"5433","CU8":"eu-west-1","CU9":"Emeka Nwosu","CU10":"7214",
+"CU11":"5810","CU12":"eu-west-1","CU13":"af-south-1","CU14":"7107","CU15":"PostgreSQL 16",
+"HIST1":"ap-southeast-1","HIST2":"af-south-1","HIST3":"ap-southeast-1","HIST4":"MongoDB 7",
+"HIST5":"MySQL 8.0","HIST6":"us-west-2","HIST7":"CockroachDB 23","HIST8":"Redis 7",
+"LONG1":"6147","LONG2":"PostgreSQL 15","LONG3":"Dalia Haddad","LONG4":"MySQL 8.0","LONG5":"Redis 7",
+"LONG6":"eu-central-1","LONG7":"PostgreSQL 14","LONG8":"us-west-2","LONG9":"7 percent",
+"LONG10":"400 days","LONG11":"halcyon-guest-7",
+"MH1":"Dalia Haddad","MH2":"Dana Brandt","MH3":"Ugo Bianchi","MH4":"Bola Brandt","MH5":"Cyrus Achebe",
+"MH6":"Data","MH7":"ML","MH8":"Observability","MH9":"Messaging","MH10":"Platform",
+"ID1":"HAL-2140","ID2":"HAL-7117","ID3":"HAL-6220","ID4":"HAL-7880","ID5":"HAL-8297","ID6":"HAL-6993",
+"ST1":"closed","ST2":"in progress","ST3":"blocked","ST4":"closed","ST5":"in progress",
+"MISC1":"Rosa Delgado","MISC2":"EUR 455,000","MISC3":"2026-04-16",
+"ABS1":"unknown","ABS2":"unknown","ABS3":"unknown"
+}
