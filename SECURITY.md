@@ -39,7 +39,10 @@ In scope:
 
 - Local memory storage and retrieval.
 - SQLite schema migrations and package artifacts.
-- Secret redaction for sync envelopes and logs.
+- Secret redaction and prompt-injection screening on memory writes, sync
+  envelopes, and logs.
+- Forgetting and erasing memory (`forget`, `secure=True`, `vacuum()`).
+- Backups (`export_jsonl` / `import_jsonl`, `mark export` / `mark import`).
 - URL validation in optional web lookup paths.
 - Optional encryption providers.
 - The `mark` command line and `mark serve`.
@@ -80,15 +83,67 @@ Out of scope for this repository:
   them (or name in `MARK_EMBEDDER`). `MARK_EMBEDDER_API_KEY` is read from
   the environment and never stored.
 
-## Secrets And Memory
+## Secrets And Untrusted Text In Memory
 
-Treat memory content as application data. Do not store credentials, private
-keys, provider tokens, passwords, or sensitive personal data unless your
-application has a clear retention and access policy.
+MARK redacts credentials before any memory is written to disk: API keys and
+tokens (OpenAI, Anthropic, Stripe, AWS, GitHub, GitLab, Slack, Google,
+Hugging Face), JWTs, private key blocks, passwords, card numbers (Luhn
+checked) and PINs. This applies to every write path: single and batched
+writes, observations, healed and quarantined memories, memory blocks, and
+caller metadata. Each value is replaced by a deterministic placeholder such
+as `[SECRET:aws_secret_access_key]`, so recall still shows that a key
+existed, and the redacted kinds are listed in
+`metadata["mark_security"]["redacted"]`.
 
-MARK includes local redaction helpers for common token patterns, but redaction
-is best-effort. It should not be treated as a complete data-loss-prevention
-system.
+Contact identifiers (emails, phone numbers, IBANs, SSNs) are kept by default
+because agents need them; pass `redact=RedactionPolicy(pii=True)` (from
+`mark.security`) to remove them too. Disable redaction only for data you
+control: `Mark.local(..., redact=False)`. Redaction is pattern-based and
+cannot recognise every secret, so do not rely on it as your only control;
+encrypt stores that may hold sensitive data (see below).
+
+Memories are later replayed into prompts, so MARK screens every write for
+prompt-injection markers: "ignore previous instructions", role or
+chat-template markers, smuggled tool calls, hidden zero-width or HTML-comment
+payloads, and "decode and run" encodings. Matching memories are tagged
+`mark:untrusted`, the reasons are recorded in
+`metadata["mark_security"]["injection"]`, and they are rendered as untrusted
+data in recall results and briefings; they are never silently dropped. Use
+`Mark.local(..., injection="quarantine")` to keep them out of retrieval
+entirely, or `injection="off"` to skip the screen. The screen is a cheap
+heuristic: treat every recalled memory that came from tools, documents or
+the web as data, not instructions.
+
+Replies written by the model are stored as low-trust context (tag
+`mark:assistant`): they rank below what the user said and never appear as
+user facts in a briefing.
+
+Error output is remembered by default so agents can learn from failures.
+Enable `ConsolidationGate(failure=FailureFilter())` (from
+`mark.middlewares.governance`) if raw tool error bodies must stay out of
+retrieval.
+
+## Forgetting And Erasing Memory
+
+- `memory.forget(id)` (or `forget(match="text")`, `mark forget`) deletes the
+  memory, its keyword-index rows and its pending extraction jobs, and retracts
+  the facts extracted from it. Retracted facts leave current values, history
+  and timelines but are kept for audit.
+- `forget(..., secure=True)` (`mark forget --secure`) overwrites the content
+  before deleting the row, hard-deletes the derived facts, and turns on
+  SQLite's `secure_delete` so freed pages are zeroed. Follow it with
+  `vacuum()` (`Mark.vacuum()` or `memory.vacuum()`), which rewrites the file
+  and truncates the write-ahead log so no copy of the text remains in the
+  database, its `-wal` or its `-shm` file.
+- `memory.facts.delete(subject, attribute)` hard-deletes facts instead of
+  retracting them.
+- Agents with 50,000 or more memories keep a vector snapshot for fast
+  reopening. A forgotten memory is never served from it, but its embedding
+  can remain in the snapshot until the snapshot is next rebuilt. Embeddings
+  are not text, but they can reveal meaning; account for this if you must
+  prove erasure.
+- Backups, copies of the database file, and filesystem snapshots are outside
+  MARK's control. Erase them separately.
 
 ## Encryption
 
@@ -107,7 +162,7 @@ os.environ.setdefault("MARK_PASSPHRASE", "example only - load this from a secret
 with TemporaryDirectory() as folder:
     encryption = FernetEncryptionProvider(passphrase=os.environ["MARK_PASSPHRASE"])
     with Mark.local(folder, encryption=encryption) as mark:
-        mark.memory.block("ops").write("The staging database is db-7.")
+        mark.memory.remember("The staging database is db-7.")
 ```
 
 `FernetEncryptionProvider` requires exactly one of `key` (a Fernet key) or
@@ -145,6 +200,26 @@ plaintext store can be opened with a provider and becomes encrypted. All
 three subclass `mark.errors.StoreEncryptionError` (also a `RuntimeError`) and
 can be imported from `mark.errors` or `mark.security`.
 
+A store written by a newer MARK whose schema this version cannot read is
+refused before anything is written (`StoreVersionError`), and rows that
+cannot be decrypted are set aside instead of failing every read.
+
+**Exports.** `export_jsonl()` writes plaintext. For an encrypted store it
+refuses unless you pass `decrypt=True` (`mark export --decrypt`) to confirm;
+keep such a file somewhere safe. Export files are created with mode `0600`.
+
+**Timelines and token sketches.** An encrypted store has no keyword index, so
+timelines use keyed token sketches (small Bloom filters keyed from the
+encryption key) to decrypt only candidate memories. By default the sketches
+live only in process memory and nothing new is written to disk.
+`mark.runtime.store.persist_token_sketches()` opts in to keeping them in the
+database so a new process starts warm. A persisted sketch reveals, to someone
+who holds the file but not the key, roughly how many distinct words each
+memory has and which memories probably share words, which over many memories
+supports frequency analysis. It does not let them test for a word without the
+key. Leave it off unless the speed matters more than that leakage. Encrypted
+stores never write vector snapshots.
+
 Keep keys and passphrases outside the repository. Use environment variables
 or your application's secret manager.
 
@@ -154,8 +229,8 @@ The CLI opens a local SQLite file and does not encrypt it (use the Python API
 for encrypted stores); it refuses to open an encrypted store and reports the
 error instead of crashing. On POSIX
 systems, a database file MARK creates is mode `0600` (its `-wal` and `-shm`
-files inherit that), and a `.mark/` (or other store) directory MARK creates
-is mode `0700`. Directories and database files that already exist keep their
+files inherit that), a `.mark/` (or other store) directory MARK creates is
+mode `0700`, and JSONL exports are `0600`. Directories and database files that already exist keep their
 permissions. This applies to the Python API as well as the CLI.
 
 `mark serve` keeps a store open for fast command-line calls. Its design:
@@ -169,9 +244,12 @@ permissions. This applies to the Python API as well as the CLI.
   random nonce to `GET /hello`. The server must answer with
   HMAC-SHA256(token, nonce). A stale state file therefore never leaks the token
   to another process that has taken the port.
-- **One server per database.** `<db>.server.lock` (created with `O_EXCL`,
-  mode `0600`) holds the owner's pid. A lock left by a dead process is
-  reclaimed.
+- **One server per database.** `<db>.server.lock` (mode `0600`) is held
+  with an OS file lock (`flock` on POSIX, `msvcrt.locking` on Windows). The
+  kernel releases it when the process exits, even on `kill -9`, so there is
+  no stale lock and no check-then-create race.
+- **Stop.** `mark serve stop` sends an authenticated stop request; only a
+  client holding the token can stop the server.
 - **Build fingerprint.** The handshake includes a fingerprint of the package
   version and command signatures. If the client and server builds differ, the
   client runs the command in-process instead of sending arguments the server
