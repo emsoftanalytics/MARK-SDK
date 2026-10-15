@@ -34,12 +34,13 @@ from mark.store._sqlite.fts_text import (
     multilingual_phrase,
     multilingual_query_chunks,
 )
+from mark.store._sqlite.vector_snapshot import VectorSnapshotMixin
 from mark.types import MemoryScope, MemoryTier
 
 logger = logging.getLogger("mark.store.sqlite")
 
 
-class SearchMixin:
+class SearchMixin(VectorSnapshotMixin):
     """Cached retrievable-id sets, lexical (BM25) search and phrase lookup."""
 
     _ids_cache: dict[tuple, tuple[frozenset[str], int, float]]
@@ -127,7 +128,7 @@ class SearchMixin:
         return ids
 
     def embedding_pages(self, agent_id: str, page_size: int = 20_000) -> Iterator[list[tuple]]:
-        """Yield pages of (id, float32 blob, legacy JSON) for the agent's retrievable-state rows.
+        """Yield pages of (id, float32 blob, legacy JSON, rowid) for the agent's retrievable rows.
 
         Raw column values in rowid order, so a vector index can be loaded in
         bulk without building a Python list per vector. Keyset pagination
@@ -135,7 +136,7 @@ class SearchMixin:
         """
         states = [state.value for state in _RETRIEVABLE_STATES]
         sql = (
-            "SELECT rowid, id, embedding_blob, embedding FROM fragments"
+            "SELECT id, embedding_blob, embedding, rowid FROM fragments"
             f" WHERE agent_id = ? AND state IN ({','.join('?' for _ in states)}) AND rowid > ?"
             " ORDER BY rowid LIMIT ?"
         )
@@ -153,8 +154,8 @@ class SearchMixin:
                     rows = cursor.execute(sql, (agent_id, *states, last, page_size)).fetchall()
                 if not rows:
                     return
-                last = int(rows[-1][0])
-                yield [row[1:] for row in rows]
+                last = int(rows[-1][3])
+                yield rows  # raw tuples: no per-row copy at a million rows
                 if len(rows) < page_size:
                     return
         finally:

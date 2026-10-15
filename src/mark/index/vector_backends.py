@@ -106,11 +106,15 @@ class _NumpyPartition:
         self._ids.append(fragment_id)
         self._pos[fragment_id] = size
 
-    def add_matrix(self, ids: list[str], matrix: Any) -> None:
-        """Append many unit-normalised rows at once (ids must not be indexed yet)."""
+    def add_matrix(self, ids: list[str], matrix: Any, expected: int = 0) -> None:
+        """Append many unit-normalised rows at once (ids must not be indexed yet).
+
+        ``expected`` sizes the matrix for a whole multi-block load up front:
+        growing block by block would copy a 1 GB matrix a dozen times.
+        """
         size = len(self._ids)
         if size + len(ids) > self._matrix.shape[0]:
-            self._grow(size + len(ids))
+            self._grow(max(size + len(ids), expected))
         self._matrix[size:size + len(ids)] = matrix
         self._ids.extend(ids)
         self._pos.update(zip(ids, range(size, size + len(ids))))
@@ -139,7 +143,7 @@ class _NumpyPartition:
         # Grow by ~1/8 for big partitions (1M x 256 floats is 1 GB: a 1.5x
         # policy would waste half a gigabyte), by doubling for small ones.
         capacity = max(16, needed + max(needed // 8, min(needed, 65_536)))
-        matrix = self._np.zeros((capacity, self._dim), dtype=self._np.float32)
+        matrix = self._np.empty((capacity, self._dim), dtype=self._np.float32)
         size = len(self._ids)
         matrix[:size] = self._matrix[:size]
         if self._dead is not None:

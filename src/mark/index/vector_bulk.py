@@ -14,7 +14,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from mark.index.vector import VectorIndex
 
 
-def _bulk_add(index: "VectorIndex", ids: list[str], embeddings: Any, agent_id: str | None) -> None:
+def _bulk_add(index: "VectorIndex", ids: list[str], embeddings: Any, agent_id: str | None, expected: int = 0) -> None:
     """Implementation of ``VectorIndex.add_many`` (takes the index lock)."""
     from mark.index import vector as vector_module
 
@@ -51,6 +51,20 @@ def _bulk_add(index: "VectorIndex", ids: list[str], embeddings: Any, agent_id: s
         if partition is None:
             partition = index._new_partition()
             index._partitions[agent_id] = partition
-        partition.add_matrix(ids, matrix)
+        partition.add_matrix(ids, matrix, expected)
         index._owner.update(dict.fromkeys(ids, agent_id))
         index.revision += 1
+
+
+def _export_rows(index: "VectorIndex", agent_id: str | None) -> tuple[list[str], Any] | None:
+    """(ids, float32 matrix) of a numpy partition's live rows, in insertion order; None otherwise."""
+    with index._lock:
+        partition = index._partitions.get(agent_id)
+        if partition is None or not hasattr(partition, "add_matrix") or not len(partition):
+            return None
+        snapshot = partition.snapshot()
+        matrix, ids, _, size, dead = snapshot
+        if dead is None:
+            return list(ids[:size]), matrix[:size]
+        keep = (~dead[:size]).nonzero()[0]
+        return [ids[int(row)] for row in keep], matrix[keep]

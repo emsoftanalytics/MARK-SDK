@@ -1,7 +1,6 @@
 """In-memory cosine vector index with agent partitions, candidate restriction, and persistence.
 
-Two interchangeable scoring backends are provided:
-
+Two interchangeable scoring backends:
 - ``numpy``: one float32 matrix per agent partition (the matrix is the
   source of truth; ``add_many`` appends whole blocks), scored with a single
   mat-vec product plus ``np.partition`` for top-k selection;
@@ -61,7 +60,6 @@ class VectorIndex:
         self._np = _load_numpy() if backend == "numpy" else None
         if backend == "numpy" and self._np is None:
             raise ImportError("VectorIndex(backend='numpy') requires numpy: install `mark-sdk[fast]`.")
-        # "auto" decides lazily: numpy only once the index is large enough.
         self._auto = backend == "auto"
         self._lock = threading.RLock()
         self._partitions: dict[str | None, _PythonPartition | _NumpyPartition] = {}
@@ -122,12 +120,14 @@ class VectorIndex:
         embeddings: Any,
         *,
         agent_id: str | None = None,
+        expected: int = 0,
     ) -> None:
         """Index many embeddings (vectors or a 2-D array) of one agent, without contents.
 
-        Same result as :meth:`add` per id; with numpy it is one block append.
+        Same as :meth:`add` per id; with numpy one block append. ``expected``
+        (total rows a load will add) pre-sizes the matrix once.
         """
-        _bulk_add(self, list(fragment_ids), embeddings, agent_id)
+        _bulk_add(self, list(fragment_ids), embeddings, agent_id, expected)
 
     def remove(self, fragment_id: str) -> None:
         """Drop a fragment from the index (no-op when absent)."""

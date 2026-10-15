@@ -184,3 +184,42 @@ def test_unchanged_scope_skips_index_sync(tmp_path) -> None:
         memory.store_sync("svc-003 was audited")
         memory.retrieve_sync("svc-003 audited")
         assert len(calls) == 1
+
+
+# ── vector snapshots ──────────────────────────────────────────────────────────
+
+def test_vector_snapshot_round_trip_with_dirty_rows(tmp_path, monkeypatch) -> None:
+    pytest.importorskip("numpy")
+    from mark.store._sqlite import vector_snapshot
+
+    monkeypatch.setattr(vector_module, "AUTO_NUMPY_THRESHOLD", 100)
+    monkeypatch.setattr(vector_snapshot, "MIN_ROWS", 200)
+    monkeypatch.setattr(vector_snapshot, "PART_ROWS", 128)  # several parts
+    texts = _corpus(400) + ["NEEDLE: the vault code for site 9 is 7009."]
+    with Mark.local(tmp_path) as mark:
+        ids = mark.runtime.memory(AGENT).store_many_sync(texts)
+    reads: list[str] = []
+    original = LocalMemoryStore.embedding_pages
+
+    def counting(self, agent_id, page_size=20_000):
+        reads.append(agent_id)
+        return original(self, agent_id, page_size)
+
+    monkeypatch.setattr(LocalMemoryStore, "embedding_pages", counting)
+    with Mark.local(tmp_path) as mark:  # first cold start: rows, then a snapshot is saved
+        memory = mark.runtime.memory(AGENT)
+        first = [f.id for f in memory.retrieve_sync("vault code for site 9").fragments]
+        assert reads == [AGENT]
+        assert mark.runtime.store._fetchall("SELECT count FROM vector_snapshot_meta")[0][0] == len(ids)
+        mark.runtime.store.delete(ids[1])
+        mark.runtime.store.update_embedding(ids[2], [1.0] + [0.0] * 255)  # dirty: re-read from its row
+        memory.store_sync("svc-999 was restarted for the needle test")
+    with Mark.local(tmp_path) as mark:  # second: snapshot, dirty rows read individually
+        memory = mark.runtime.memory(AGENT)
+        assert [f.id for f in memory.retrieve_sync("vault code for site 9").fragments] == first
+        assert reads == [AGENT]
+        index = mark.runtime.index
+        assert ids[1] not in index and ids[-1] in index
+        assert index.get(ids[2])[0] == pytest.approx(1.0)
+        assert index.count(AGENT) == len(mark.runtime.store.retrievable_ids(AGENT))
+        assert memory.retrieve_sync("svc-999 restarted needle test").fragments[0].content.startswith("svc-999")

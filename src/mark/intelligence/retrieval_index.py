@@ -22,7 +22,10 @@ import logging
 from typing import Iterable
 
 from mark.index import VectorSearchResult
-from mark.intelligence.index_bulk_load import _same_embedding_space, bulk_index, changed_ids, scope_ids, wants_numpy
+from mark.intelligence.index_bulk_load import (
+    _same_embedding_space, bulk_index, changed_ids, index_each, restore_snapshot, save_snapshot, scope_ids,
+    wants_numpy,
+)
 from mark.intelligence.retrieval_policy import _RETRIEVABLE_STATES, SessionFilter
 from mark.types import MemoryFragment
 
@@ -128,25 +131,21 @@ class _IndexSyncMixin:
             find_missing(allowed_ids, agent_id) if find_missing else allowed_ids - self._index_ids(agent_id))
         if not missing:
             return True
-        pages = getattr(self._store, "embedding_pages", None)
-        add_many = getattr(self._index, "add_many", None)
-        to_embed: list[str] = []
+        # Large cold start: snapshot first; (re)save one after a full row load.
+        missing, before, snapshot_due, version = restore_snapshot(
+            self._store, self._index, self._embedder, agent_id, missing, before)
+        pages, add_many = getattr(self._store, "embedding_pages", None), getattr(self._index, "add_many", None)
         if pages is not None and add_many is not None and before is not None and len(missing) > 256:
             numpy = wants_numpy(self._index, before + len(missing))
             to_embed = bulk_index(pages(agent_id), missing, getattr(self._embedder, "dim", None), add_many, agent_id, numpy)
             if count(agent_id) - before + len(to_embed) != len(missing):
                 # Some ids were not in embedding_pages (state changed meanwhile).
                 to_embed = list(missing - self._index_ids(agent_id))
-        else:
-            # Small gaps (or legacy stores/indexes): per-vector path.
-            embeddings = self._stored_embeddings(agent_id, set(missing))
-            dim = getattr(self._embedder, "dim", None)
-            for fragment_id in missing:
-                vector = embeddings.get(fragment_id)
-                if vector and (dim is None or len(vector) == dim):
-                    self._index_add(fragment_id, vector, "", agent_id)
-                else:
-                    to_embed.append(fragment_id)
+            if snapshot_due and not to_embed:
+                save_snapshot(self._store, self._index, self._embedder, agent_id, version)
+        else:  # small gaps (or legacy stores/indexes): per-vector path
+            stored = self._stored_embeddings(agent_id, set(missing))
+            to_embed = index_each(stored, missing, getattr(self._embedder, "dim", None), self._index_add, agent_id)
         if to_embed:
             self._embed_and_index(agent_id, to_embed)
         return not to_embed or set(to_embed) <= self._index_ids(agent_id)
@@ -203,7 +202,7 @@ class _IndexSyncMixin:
 
     def _stored_embeddings(self, agent_id: str, ids: set[str] | None) -> dict[str, list[float] | None]:
         fetch = getattr(self._store, "embeddings_for_agent", None)
-        if fetch is not None:
+        if fetch is not None and (ids is None or len(ids) > 2_000):  # a few ids: read just their rows
             rows = fetch(agent_id)
             return {fid: vec for fid, vec in rows if ids is None or fid in ids}
         if ids is None:
