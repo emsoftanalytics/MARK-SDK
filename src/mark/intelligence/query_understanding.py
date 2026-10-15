@@ -94,8 +94,16 @@ def detect_temporal_intent(query: str) -> TemporalIntent:
 
 
 def is_blank_query(query: str) -> bool:
-    """True for empty, whitespace-only or punctuation-only queries (nothing to search for)."""
-    return not _TOKEN_RE.search(query or "")
+    """True for empty, whitespace-only or punctuation-only queries (nothing to search for).
+
+    Emoji and other non-ASCII symbols are searchable content ("🦉"), not punctuation.
+    """
+    text = query or ""
+    if _TOKEN_RE.search(text):
+        return False
+    from mark.embeddings.segments import is_symbol
+
+    return not any(is_symbol(char) for char in text)
 
 
 @lru_cache(maxsize=65536)

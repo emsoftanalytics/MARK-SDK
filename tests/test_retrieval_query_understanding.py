@@ -66,6 +66,6 @@ def test_temporal_intent(query: str, intent: TemporalIntent) -> None:
     assert detect_temporal_intent(query) == intent
 
 
-@pytest.mark.parametrize("query, blank", [("", True), ("   ", True), ("?!...", True), ("ok", False), ("上海", False)])
+@pytest.mark.parametrize("query, blank", [("", True), ("   ", True), ("?!...", True), ("ok", False), ("上海", False), ("🦉", False)])
 def test_blank_queries(query: str, blank: bool) -> None:
     assert is_blank_query(query) is blank

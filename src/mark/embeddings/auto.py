@@ -19,7 +19,7 @@ Invariants (each one is tested):
   ``prefer="openai:<base_url>|<model>"``, or the same string in the
   ``MARK_EMBEDDER`` environment variable.
 - **Nothing installed, no env var => exactly the hash embedder** (same
-  ``mark.hash-v2:256`` fingerprint as the historical default).
+  ``mark.hash-v3:256`` fingerprint as the historical default).
 - **Lazy.** This module imports only the standard library and the embeddings
   base at import time; optional packages are imported inside candidate builders.
 
