@@ -24,7 +24,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Iterable, Sequence
 
 # _dot and _sumprod are not used here; they stay importable from this module.
 from mark.index.vector_backends import _dot, _load_numpy, _normalize, _NumpyPartition, _PythonPartition, _sumprod
@@ -58,17 +58,15 @@ class VectorIndex:
     def __init__(self, *, backend: str = "auto") -> None:
         if backend not in {"auto", "numpy", "python"}:
             raise ValueError("backend must be 'auto', 'numpy', or 'python'")
-        np = _load_numpy() if backend == "numpy" else None
-        if backend == "numpy" and np is None:
+        self._np = _load_numpy() if backend == "numpy" else None
+        if backend == "numpy" and self._np is None:
             raise ImportError("VectorIndex(backend='numpy') requires numpy: install `mark-sdk[fast]`.")
-        self._np = np
         # "auto" decides lazily: numpy only once the index is large enough.
         self._auto = backend == "auto"
         self._lock = threading.RLock()
         self._partitions: dict[str | None, _PythonPartition | _NumpyPartition] = {}
         self._owner: dict[str, str | None] = {}
-        # Only non-empty contents are kept: the retrieval pipeline indexes
-        # without content, and a million empty strings still cost memory.
+        # Only non-empty contents are kept (the pipeline indexes without content).
         self._content: dict[str, str] = {}
         self._dim: int | None = None
         # Bumped by every mutation, so callers can cache "already in sync".
@@ -166,6 +164,12 @@ class VectorIndex:
             partition = self._partitions.get(agent_id)
             return 0 if partition is None else len(partition)
 
+    def missing(self, fragment_ids: Iterable[str], agent_id: str | None = None) -> set[str]:
+        """The given ids that are not indexed under *agent_id* (one C-level set difference)."""
+        with self._lock:
+            partition = self._partitions.get(agent_id)
+            return set(fragment_ids).difference(partition.keys() if partition is not None else ())
+
     def clear(self, agent_id: str | None = None) -> None:
         """Remove every vector, or only one agent's when agent_id is given."""
         with self._lock:
@@ -194,15 +198,11 @@ class VectorIndex:
         include_ids: set[str] | None = None,
         agent_id: str | None = None,
     ) -> list[VectorSearchResult]:
-        """Search the index.
+        """Search the index (only *agent_id*'s vectors, only *include_ids*, when given).
 
-        agent_id    — when provided, only that agent's vectors are scored.
-        include_ids — when provided, only fragments in this set are scored.
-        Use these to pre-restrict vector search to an agent, session, or tag
-        scope so unrelated memories cannot crowd relevant ones out of the top-k.
-
-        Raises DimensionMismatchError when the query dimension differs from
-        the index dimension.
+        Pre-restricting to an agent/session/tag scope keeps unrelated memories
+        from crowding the top-k. Raises DimensionMismatchError on a query of
+        another dimension.
         """
         if top_k <= 0 or (include_ids is not None and not include_ids):
             return []

@@ -38,6 +38,9 @@ class _PythonPartition:
     def ids(self) -> list[str]:
         return list(self.vectors)
 
+    def keys(self) -> Any:
+        return self.vectors.keys()
+
     def snapshot(self) -> Any:
         # Vectors are never mutated in place, so a shallow copy is consistent.
         return list(self.vectors.items())
@@ -85,6 +88,9 @@ class _NumpyPartition:
 
     def ids(self) -> list[str]:
         return list(self._pos)
+
+    def keys(self) -> Any:
+        return self._pos.keys()
 
     def add(self, fragment_id: str, vector: Any) -> None:
         row = self._pos.get(fragment_id)

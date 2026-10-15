@@ -93,10 +93,8 @@ class _IndexSyncMixin:
     def _sync_index(self, agent_id: str, allowed_ids: set[str]) -> set[str]:
         """Make sure every allowed fragment is indexed with the current embedder.
 
-        Returns the agent's indexed ids after syncing — ``allowed_ids`` itself
-        when the two are equal, so the pipeline's equality check is O(1). An
-        unchanged scope and index (same objects, same index revision) skip
-        the work entirely.
+        Returns the indexed ids — ``allowed_ids`` itself when equal, so the
+        pipeline's equality check is O(1). Unchanged scope + index revision: no work.
         """
         with self._sync_lock:
             if agent_id not in self._verified_agents:
@@ -120,13 +118,14 @@ class _IndexSyncMixin:
     def _load_missing(self, agent_id: str, allowed_ids: set[str]) -> bool:
         """Index every allowed id the index lacks: stored vectors in bulk, re-embed the rest.
 
-        Returns True when every allowed id is indexed afterwards. Set
-        operations over a million ids cost ~0.1 s each, so an empty index
-        (the cold start) skips them and counts are compared instead.
+        Returns True when every allowed id is indexed afterwards. An empty
+        index (cold start) skips set operations (~0.1 s each at 1M ids).
         """
         count = getattr(self._index, "count", None)
         before = count(agent_id) if count is not None else None
-        missing = allowed_ids if before == 0 else allowed_ids - self._index_ids(agent_id)
+        find_missing = getattr(self._index, "missing", None)  # C-level set difference
+        missing = allowed_ids if before == 0 else (
+            find_missing(allowed_ids, agent_id) if find_missing else allowed_ids - self._index_ids(agent_id))
         if not missing:
             return True
         pages = getattr(self._store, "embedding_pages", None)

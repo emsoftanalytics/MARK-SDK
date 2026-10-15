@@ -120,6 +120,7 @@ def test_add_many_matches_add(backend: str) -> None:
         one.add(f"f{i}", vec, agent_id="a")
     many.add_many([f"f{i}" for i in range(300)], vectors, agent_id="a")
     assert many.count("a") == 300 and many.ids("a") == one.ids("a")
+    assert many.missing({"f1", "f2", "zz"}, "a") == {"zz"} and many.missing({"f1"}, "b") == {"f1"}
     for _ in range(5):
         query = [rng.uniform(-1, 1) for _ in range(16)]
         assert [h.fragment_id for h in many.search(query, top_k=7)] == [h.fragment_id for h in one.search(query, top_k=7)]
