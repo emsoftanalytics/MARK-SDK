@@ -25,7 +25,10 @@ class SentenceTransformerEmbeddingProvider(EmbeddingProvider):
         self.batch_size = batch_size
         self.model = SentenceTransformer(model_name, **model_kwargs)
         self._dim: int | None = None
-        get_dim = getattr(self.model, "get_sentence_embedding_dimension", None)
+        # sentence-transformers >= 6 renamed the method; older releases only have the long name.
+        get_dim = getattr(self.model, "get_embedding_dimension", None) or getattr(
+            self.model, "get_sentence_embedding_dimension", None
+        )
         if callable(get_dim):
             dim = get_dim()
             self._dim = int(dim) if dim else None
