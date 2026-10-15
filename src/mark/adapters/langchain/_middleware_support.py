@@ -190,3 +190,12 @@ class _RunState:
     # Queries whose prewarm retrieval timed out (or is still running): skipped
     # once so a step never waits two full timeouts, retried on the next step.
     timed_out: set[str] = field(default_factory=set)
+    # Anticipatory context (ContextWatch) for this run and how many messages it has seen.
+    watch: Any = None
+    watch_seen: int = 0
+
+    def close(self) -> None:
+        """Release resources owned by the run (the watch's worker thread)."""
+        if self.watch is not None:
+            self.watch.close()
+            self.watch = None

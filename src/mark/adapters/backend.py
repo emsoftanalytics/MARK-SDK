@@ -103,6 +103,10 @@ class LocalMarkBackend:
         self.mark = mark
         self.default_agent_id = default_agent_id
 
+    def memory_for(self, agent_id: str | None = None) -> Any:
+        """The ``MarkMemory`` for an agent namespace (used for anticipatory context)."""
+        return self._memory(agent_id or self.default_agent_id)
+
     # ── async protocol (off-loop) ─────────────────────────────────────────
 
     async def retrieve(self, query: str, **options: Any) -> BackendResult:

@@ -130,11 +130,15 @@ class _LifecycleHooksMixin:
                     run.timed_out.add(human_query)
 
             tool_query, tool_hash = self._latest_tool_trigger(state)
+            # Anticipatory briefing (subjects in play, corrections, unknowns).
+            # It is part of the cache key: a correction triggered by the model's
+            # own last message must reach the next call even if nothing else changed.
+            briefing = await self._anticipated_briefing(run, state)
 
             # Skip re-retrieval when neither the user goal nor the triggers have
             # changed since the last model call of this run.
             ai_trigger = ai_query if self._should_think(ai_query) else ""
-            inject_key = f"{human_query}||{ai_trigger}||{tool_hash}"
+            inject_key = f"{human_query}||{ai_trigger}||{tool_hash}||{self._hash(briefing)}"
             if inject_key == run.last_injected_key:
                 cached = run.last_context
                 return {
@@ -155,6 +159,8 @@ class _LifecycleHooksMixin:
             )
             if refresh_tool:
                 run.last_tool_trigger_hash = tool_hash
+            if briefing:
+                combined = f"{briefing}\n\n{combined}" if combined else briefing
 
             # Thinking mode — secondary LLM when the query has planning triggers.
             # Computed once per run, injected alongside MARK memory and archived.

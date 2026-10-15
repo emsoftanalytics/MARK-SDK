@@ -80,6 +80,7 @@ from mark.adapters.langchain._middleware_hooks import _LifecycleHooksMixin
 from mark.adapters.langchain._middleware_memory import MarkMemoryMiddleware
 from mark.adapters.langchain._middleware_retrieval import _RetrievalMixin
 from mark.adapters.langchain._middleware_runs import _RunsMixin
+from mark.adapters.langchain._middleware_watch import _AnticipationMixin
 from mark.adapters.langchain._middleware_support import (
     _BG_DRAIN_TIMEOUT_S,
     _DEFAULT_RUN_ID,
@@ -116,6 +117,7 @@ from mark.adapters.langchain._middleware_support import (
 # base's defaults; LangChain detects implemented hooks by comparing
 # ``type(mw).<hook>`` with ``AgentMiddleware.<hook>``, which follows the MRO.
 class MarkAgentMiddleware(  # type: ignore[misc]
+    _AnticipationMixin,
     _LifecycleHooksMixin,
     _CallWrappersMixin,
     _RetrievalMixin,
@@ -204,6 +206,7 @@ class MarkAgentMiddleware(  # type: ignore[misc]
         include_skill: bool = True,
         thinking_model: "Any | None" = None,
         thinking_budget_tokens: int = 2000,
+        anticipate: bool = True,
     ) -> None:
         """
         Args:
@@ -220,6 +223,10 @@ class MarkAgentMiddleware(  # type: ignore[misc]
                 ``BaseChatModel`` instance.  Default ``None`` - disabled.
             thinking_budget_tokens: Maximum tokens in the thinking output (default 2000).
                 Only used when ``thinking_model`` is set.
+            anticipate: Follow the conversation with a ContextWatch and inject
+                its briefing (facts about subjects in play, corrections of
+                outdated values the agent states, "not in memory" notices).
+                Needs a backend with ``memory_for``; default ``True``.
         """
         if not _LANGCHAIN_AVAILABLE:
             raise ImportError(
@@ -239,6 +246,7 @@ class MarkAgentMiddleware(  # type: ignore[misc]
         self._include_skill = include_skill
         self._skill_text: str | None = None  # lazy-loaded packaged skill
         self._thinking_budget = thinking_budget_tokens
+        self._anticipate = anticipate
 
         # Per-run state, keyed by the ``mark_run_id`` stored in graph state.
         self._runs: OrderedDict[str, _RunState] = OrderedDict()

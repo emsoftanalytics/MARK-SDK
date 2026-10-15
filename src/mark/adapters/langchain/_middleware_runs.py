@@ -83,7 +83,8 @@ class _RunsMixin:
                 run = _RunState()
                 self._runs[run_id] = run
                 while len(self._runs) > _MAX_RUNS:
-                    evicted, _ = self._runs.popitem(last=False)
+                    evicted, evicted_run = self._runs.popitem(last=False)
+                    evicted_run.close()
                     self._record("run_evicted", run_id=evicted)
             else:
                 self._runs.move_to_end(run_id)
@@ -91,7 +92,10 @@ class _RunsMixin:
 
     def _pop_run(self, run_id: str) -> _RunState | None:
         with self._runs_lock:
-            return self._runs.pop(run_id, None)
+            run = self._runs.pop(run_id, None)
+        if run is not None:
+            run.close()  # stops the run's ContextWatch worker
+        return run
 
     def _on_run_error(self, state: Any, exc: BaseException) -> None:
         """Release per-run state when a model/tool call raises.
