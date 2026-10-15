@@ -79,8 +79,8 @@ This project follows semantic versioning for public package releases.
 - Hybrid retrieval adapts to the embedder: lexical embedders keep rank
   fusion, and semantic models use score fusion (`FusionConfig`, set through
   `RetrievalPipeline(fusion=...)` or `pipeline.configure_fusion()`;
-  `EmbeddingProvider.semantic` marks the kind). On a 60-query paraphrase
-  evaluation, hybrid hit@1 rose from 44 to 51 (potion-base-8M), 45 to 54
+  `EmbeddingProvider.semantic` marks the kind). On a 60-query evaluation
+  (paraphrase, synonym, identifier, and name queries), hybrid hit@1 rose from 44 to 51 (potion-base-8M), 45 to 54
   (potion-retrieval-32M), 48 to 59 (bge-small), and 49 to 58 (MiniLM); the
   default hash embedder is unchanged.
 - The default embedder is still the deterministic hash embedder; semantic
