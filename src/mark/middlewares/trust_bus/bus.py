@@ -1,181 +1,39 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
-"""Trust-aware global memory bus with subscriptions and snapshots."""
+"""Trust-aware global memory bus with subscriptions and snapshots.
+
+:class:`TrustAwareGlobalMemoryBus` layers per-message trust on top of
+:class:`~mark.memory.global_bus.GlobalMemoryBus`: it stamps the authoritative
+trust record on publish, rebuilds (and re-verifies) it on load, and filters
+retrieval by trust. Value types live in :mod:`.messages`.
+"""
 from __future__ import annotations
 
-import hashlib
 import hmac
-import html
-import json
 import logging
 import uuid
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from enum import Enum
 from typing import Any
 
 from mark.intelligence.retrieval import RetrievalPolicy, RetrievalResult
 from mark.memory.global_bus import GlobalMemoryBus
+# Value types are re-exported: ``mark.middlewares.trust_bus.bus`` is their
+# historical import path.
+from mark.middlewares.trust_bus.messages import (  # noqa: F401
+    _TRUST_RANK,
+    _TRUST_TAG_PREFIX,
+    TRUST_METADATA_KEY,
+    BusMessage,
+    BusSnapshot,
+    BusSubscription,
+    PublisherTrust,
+    _is_trust_tag,
+    _lowest,
+    _trust_signature,
+)
 from mark.types import MemoryFragment
 
 logger = logging.getLogger(__name__)
-
-#: Reserved fragment-metadata key holding the authoritative trust record.
-TRUST_METADATA_KEY = "mark_trust"
-_TRUST_TAG_PREFIX = "trust:"
-
-
-class PublisherTrust(str, Enum):
-    """Trust levels assigned to bus publishers."""
-    SYSTEM         = "system"
-    VERIFIED_AGENT = "verified_agent"
-    RAW_AGENT      = "raw_agent"
-    EXTERNAL       = "external"
-    UNKNOWN        = "unknown"
-
-
-_TRUST_RANK: dict[PublisherTrust, int] = {
-    PublisherTrust.SYSTEM:         4,
-    PublisherTrust.VERIFIED_AGENT: 3,
-    PublisherTrust.RAW_AGENT:      2,
-    PublisherTrust.EXTERNAL:       1,
-    PublisherTrust.UNKNOWN:        0,
-}
-
-
-def _lowest(levels: list[PublisherTrust]) -> PublisherTrust:
-    if not levels:
-        return PublisherTrust.UNKNOWN
-    return min(levels, key=lambda level: _TRUST_RANK[level])
-
-
-def _is_trust_tag(tag: str) -> bool:
-    return tag.strip().lower().startswith(_TRUST_TAG_PREFIX)
-
-
-def _trust_signature(key: bytes, publisher: str, trust: PublisherTrust, content: str) -> str:
-    message = json.dumps([publisher, trust.value, content], ensure_ascii=False).encode("utf-8")
-    return hmac.new(key, message, hashlib.sha256).hexdigest()
-
-
-@dataclass
-class BusMessage:
-    """Envelope for one trust-tagged bus message."""
-    id:        str
-    content:   str
-    publisher: str
-    trust:     PublisherTrust
-    tags:      list[str]
-    timestamp: str
-    metadata:  dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize to a plain dictionary."""
-        return {
-            "id":        self.id,
-            "content":   self.content,
-            "publisher": self.publisher,
-            "trust":     self.trust.value,
-            "tags":      self.tags,
-            "timestamp": self.timestamp,
-            "metadata":  self.metadata,
-        }
-
-    @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "BusMessage":
-        """Construct an instance from a plain dictionary."""
-        return cls(
-            id        = d["id"],
-            content   = d["content"],
-            publisher = d["publisher"],
-            trust     = PublisherTrust(d["trust"]),
-            tags      = d.get("tags", []),
-            timestamp = d["timestamp"],
-            metadata  = d.get("metadata", {}),
-        )
-
-
-@dataclass
-class BusSubscription:
-    """Topic/tag/trust filter that selects bus messages for a consumer."""
-    topics:    list[str] | None    = None
-    tags:      list[str] | None    = None
-    min_trust: PublisherTrust      = PublisherTrust.UNKNOWN
-
-    def matches(self, msg: BusMessage) -> bool:
-        """Return True when the message passes this filter."""
-        if self.topics:
-            if not any(t in msg.tags for t in self.topics):
-                return False
-        if self.tags:
-            if not all(t in msg.tags for t in self.tags):
-                return False
-        if _TRUST_RANK[msg.trust] < _TRUST_RANK[self.min_trust]:
-            return False
-        return True
-
-
-@dataclass
-class BusSnapshot:
-    """Serializable snapshot of bus messages for export, diff, and context."""
-    messages:    list[BusMessage]
-    captured_at: str
-
-    def to_json(self) -> str:
-        """Serialize to a JSON string."""
-        return json.dumps({
-            "captured_at": self.captured_at,
-            "messages":    [m.to_dict() for m in self.messages],
-        })
-
-    @classmethod
-    def from_json(cls, data: str) -> "BusSnapshot":
-        """Construct an instance from a JSON string."""
-        d = json.loads(data)
-        return cls(
-            messages    = [BusMessage.from_dict(m) for m in d.get("messages", [])],
-            captured_at = d.get("captured_at", ""),
-        )
-
-    def diff(self, other: "BusSnapshot") -> list[BusMessage]:
-        """Return messages present in this snapshot but absent in *other*."""
-        other_ids = {m.id for m in other.messages}
-        return [m for m in self.messages if m.id not in other_ids]
-
-    def facts_by_trust(self, trust: PublisherTrust) -> list[BusMessage]:
-        """Return facts at or above the trust level."""
-        floor = _TRUST_RANK[trust]
-        return [m for m in self.messages if _TRUST_RANK[m.trust] >= floor]
-
-    def as_context(self, max_words: int = 1500) -> str:
-        """Render as an LLM-ready context string.
-
-        Content and publisher are HTML-escaped so a message cannot inject its
-        own ``<fact trust="system">`` element. If the first message alone is
-        longer than ``max_words`` it is truncated rather than dropped.
-        """
-        if not self.messages:
-            return "<bus_context />"
-        lines: list[str] = []
-        words = 0
-        for msg in self.messages:
-            content_words = msg.content.split()
-            content = msg.content
-            if words + len(content_words) > max_words:
-                if lines:
-                    break
-                content = " ".join(content_words[:max(1, max_words)]) + " …"
-                content_words = content_words[:max(1, max_words)]
-            words += len(content_words)
-            lines.append(
-                f'  <fact publisher="{html.escape(msg.publisher, quote=True)}" '
-                f'trust="{msg.trust.value}">{html.escape(content, quote=False)}</fact>'
-            )
-        body = "\n".join(lines)
-        return (
-            f'<bus_context captured_at="{html.escape(self.captured_at, quote=True)}" '
-            f'count="{len(lines)}">\n{body}\n</bus_context>'
-        )
 
 
 class TrustAwareGlobalMemoryBus:
@@ -231,6 +89,14 @@ class TrustAwareGlobalMemoryBus:
         *,
         signing_key: bytes | None = None,
     ) -> BusMessage | None:
+        """Rebuild a :class:`BusMessage` from a persisted global-bus fragment.
+
+        Trust authority: only the ``mark_trust`` metadata record (written by
+        this class) is believed. ``trust:*`` tags are never copied into the
+        message, and are consulted only for legacy fragments without a
+        record. With a signing key, a bad signature or a missing record
+        downgrades the message to UNKNOWN.
+        """
         if "global_bus" not in frag.tags:
             return None
 
@@ -287,6 +153,10 @@ class TrustAwareGlobalMemoryBus:
         tags: list[str] | None,
         metadata: dict[str, Any] | None,
     ) -> tuple[list[str], list[str], dict[str, Any], dict[str, Any]]:
+        """Return ``(stored_tags, public_tags, stored_meta, public_meta)``.
+
+        Caller ``trust:*`` tags and ``mark_trust`` metadata are dropped: the only
+        trust record is the one stamped (and optionally signed) here."""
         trust = PublisherTrust(trust)
         clean_tags = [t for t in (tags or []) if not _is_trust_tag(t)]
         if len(clean_tags) != len(tags or []):
