@@ -102,6 +102,7 @@ class Mark(MarkDataMixin, MarkConfigureMixin):
         retrieval_top_k: int = 20,
         middleware:      list["MarkMiddleware"] | None = None,
         fact_extractor:  object | None = None,
+        fact_job_lease:  float = 300.0,
     ) -> "Mark":
         """
         Create a local Mark instance backed by SQLite.
@@ -128,6 +129,8 @@ class Mark(MarkDataMixin, MarkConfigureMixin):
             fact_extractor:  Extract facts from every write: None (off, default),
                              "patterns" (built-in rule packs, inline) or any
                              FactExtractor (e.g. LLMFactExtractor, queued).
+            fact_job_lease:  Seconds a queued extraction job may run before
+                             another worker may take it over (default 300).
 
         The .mark/ directory is created under project_path if it does not
         exist (mode 0700 on POSIX). SQLite database is at .mark/memory.db
@@ -151,6 +154,7 @@ class Mark(MarkDataMixin, MarkConfigureMixin):
             retrieval_top_k      = retrieval_top_k,
             middleware           = middleware,
             fact_extractor       = fact_extractor,
+            fact_job_lease       = fact_job_lease,
         )
 
         # One-time migration: if a legacy memory.json exists, import it into SQLite

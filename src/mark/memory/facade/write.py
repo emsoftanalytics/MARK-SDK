@@ -1,12 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
-"""Write path of MarkMemory: store, store_sync, store_many_sync.
+"""Write path of MarkMemory: store, store_sync (and store_many_sync via write_batch).
 
 Routing invariant: when a middleware stack *and* a runtime are attached,
 public writes go through ``middleware.run("store", ...)`` and only the
 handler at the bottom of the stack calls :meth:`WriteMixin._store_sync_impl`.
 The async :meth:`WriteMixin.store` simply runs :meth:`store_sync` on the
 executor, so async callers get exactly the same governance/redaction path.
+
+Input is validated before anything else runs (see ``write_validation``): bad
+content, metadata, tags or options raise :class:`mark.errors.InvalidMemoryError`
+— never a raw pydantic/JSON/Unicode error — and nothing is written.
 """
 from __future__ import annotations
 
@@ -15,15 +19,26 @@ import functools
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
+
+from mark.errors import InvalidMemoryError
 from mark.memory.facade.fact_extraction import FactExtractionMixin
+from mark.memory.facade.write_batch import BatchWriteMixin
 from mark.memory.facade.write_guard import GuardMixin, _with_occurred_at
-from mark.types import MemoryFragment, MemoryScope, MemoryState
+from mark.memory.facade.write_validation import (
+    DEFAULT_MAX_MEMORY_BYTES,
+    check_content,
+    check_metadata,
+    check_number,
+    check_tags,
+)
+from mark.types import MemoryScope, MemoryState
 
 if TYPE_CHECKING:
     from mark.memory.facts import FactsView
 
 
-class WriteMixin(FactExtractionMixin, GuardMixin):
+class WriteMixin(BatchWriteMixin, FactExtractionMixin, GuardMixin):
     """Persisting new memories, singly or in batches."""
 
     async def store(
@@ -91,7 +106,16 @@ class WriteMixin(FactExtractionMixin, GuardMixin):
                        True: extract (built-in patterns when none configured);
                        False: don't. Runs on the memory as stored and never
                        makes the write fail (see facade.fact_extraction).
+
+        Raises :class:`mark.errors.InvalidMemoryError` (also a ValueError) for
+        content that is not non-blank text, invalid Unicode, larger than
+        ``max_memory_bytes`` (``MemoryTooLargeError``), non-JSON metadata,
+        non-string tags or out-of-range importance/confidence.
         """
+        content = check_content(content, self._max_memory_bytes())
+        metadata, tags = check_metadata(metadata), check_tags(tags)
+        check_number("importance", importance)
+        check_number("confidence", confidence)
         fragment_id = self._store_sync_routed(
             content, importance=importance, scope=scope, tags=tags, source=source, state=state,
             confidence=confidence, session_id=session_id, ttl_seconds=ttl_seconds,
@@ -114,11 +138,19 @@ class WriteMixin(FactExtractionMixin, GuardMixin):
         ttl_seconds: int | None,
         metadata: dict[str, Any] | None,
         occurred_at: "datetime | str | None",
+        fragment_id: str | None = None,
     ) -> str:
-        """store_sync without fact extraction: middleware routing, then the guarded write."""
+        """store_sync without fact extraction: middleware routing, then the guarded write.
+
+        ``fragment_id`` (idempotent bulk writes) fixes the new memory's id; it
+        is applied below the middleware, which never sees it.
+        """
         # Normalise before middleware sees the payload, so middleware works
         # on the same metadata that ends up persisted.
-        metadata = _with_occurred_at(metadata, occurred_at)
+        try:
+            metadata = _with_occurred_at(metadata, occurred_at)
+        except ValueError as exc:
+            raise InvalidMemoryError(str(exc), reason="occurred_at") from None
         if self._middleware is not None and self._runtime is not None:
             return self._middleware.run(
                 "store",
@@ -136,7 +168,7 @@ class WriteMixin(FactExtractionMixin, GuardMixin):
                     "ttl_seconds": ttl_seconds,
                     "metadata": metadata,
                 },
-                handler=lambda ctx: self._store_sync_impl(**ctx.payload),
+                handler=lambda ctx: self._store_sync_impl(**ctx.payload, fragment_id=fragment_id),
             )
         return self._store_sync_impl(
             content,
@@ -149,7 +181,12 @@ class WriteMixin(FactExtractionMixin, GuardMixin):
             session_id=session_id,
             ttl_seconds=ttl_seconds,
             metadata=metadata,
+            fragment_id=fragment_id,
         )
+
+    def _max_memory_bytes(self) -> int | None:
+        """Per-memory size limit: the runtime's ``max_memory_bytes`` (None = unlimited)."""
+        return getattr(self._runtime, "max_memory_bytes", DEFAULT_MAX_MEMORY_BYTES)
 
     @property
     def facts(self) -> "FactsView":
@@ -157,67 +194,6 @@ class WriteMixin(FactExtractionMixin, GuardMixin):
         from mark.memory.facts import FactsView
 
         return FactsView(self._store, self.agent_id, extraction=self._fact_service(None))
-
-    def store_many_sync(
-        self,
-        contents: list[str],
-        *,
-        importance: float = 0.5,
-        scope: MemoryScope = MemoryScope.AGENT,
-        tags: list[str] | None = None,
-        source: str | None = None,
-        state: MemoryState = MemoryState.UNVERIFIED,
-        confidence: float = 1.0,
-        session_id: str | None = None,
-        ttl_seconds: int | None = None,
-        metadata: dict[str, Any] | None = None,
-        occurred_at: "list[datetime | str | None] | None" = None,
-        extract_facts: bool | None = None,
-    ) -> list[str]:
-        """Store many memories; returns their ids in input order.
-
-        Without registered middleware, embeddings are computed in one batch and
-        rows are written in one transaction. With middleware, every item goes
-        through the full middleware path (governance, redaction, ...) exactly
-        like store_sync, because batching must never skip those checks.
-        ``extract_facts`` works as in store_sync, once for the whole batch.
-        """
-        if occurred_at is not None and len(occurred_at) != len(contents):
-            raise ValueError("occurred_at must have one entry per content item")
-        when = occurred_at or [None] * len(contents)
-        options = dict(
-            importance=importance, scope=scope, tags=tags, source=source, state=state,
-            confidence=confidence, session_id=session_id, ttl_seconds=ttl_seconds,
-        )
-        # Fallback: any registered middleware disables the batch fast path
-        # (checked on the stack contents, not on whether a runtime is bound).
-        if self._middleware is not None and self._middleware.list():
-            ids = [
-                self.store_sync(content, metadata=metadata, occurred_at=at, extract_facts=False, **options)
-                for content, at in zip(contents, when)
-            ]
-            self._extract_stored(ids, extract_facts)
-            return ids
-        accepted: list[MemoryFragment] = []
-        rejected: list[MemoryFragment] = []
-        order: list[MemoryFragment] = []
-        for content, at in zip(contents, when):
-            fragment, ok = self._guarded_fragment(
-                content, metadata=_with_occurred_at(metadata, at), **options,
-            )
-            (accepted if ok else rejected).append(fragment)
-            order.append(fragment)
-        # Rejected/quarantined fragments are persisted for audit but never
-        # indexed; accepted ones are embedded and written in one batch.
-        if rejected:
-            self._store.store_many(rejected) if hasattr(self._store, "store_many") else [
-                self._store.store(fragment) for fragment in rejected
-            ]
-        if accepted:
-            self._pipeline.index_fragments(accepted)
-        ids = [fragment.id for fragment in order]
-        self._extract_stored(ids, extract_facts)
-        return ids
 
     def _store_sync_impl(
         self,
@@ -232,20 +208,28 @@ class WriteMixin(FactExtractionMixin, GuardMixin):
         session_id: str | None = None,
         ttl_seconds: int | None = None,
         metadata: dict[str, Any] | None = None,
+        fragment_id: str | None = None,
     ) -> str:
         """Middleware-free write: guard, then store (audit) or index (accepted)."""
-        fragment, accepted = self._guarded_fragment(
-            content,
-            importance=importance,
-            scope=scope,
-            tags=tags,
-            source=source,
-            state=state,
-            confidence=confidence,
-            session_id=session_id,
-            ttl_seconds=ttl_seconds,
-            metadata=metadata,
-        )
+        try:
+            fragment, accepted = self._guarded_fragment(
+                content,
+                importance=importance,
+                scope=scope,
+                tags=tags,
+                source=source,
+                state=state,
+                confidence=confidence,
+                session_id=session_id,
+                ttl_seconds=ttl_seconds,
+                metadata=metadata,
+            )
+        except ValidationError as exc:
+            # e.g. middleware blanked the content, or an invalid scope/state value.
+            raise InvalidMemoryError(f"invalid memory: {exc.errors()[0].get('msg', exc)}",
+                                     reason="invalid_option") from None
+        if fragment_id is not None:
+            fragment = fragment.model_copy(update={"id": fragment_id})
         if not accepted:
             return self._store.store(fragment)
         return self._pipeline.index_fragment(fragment).id

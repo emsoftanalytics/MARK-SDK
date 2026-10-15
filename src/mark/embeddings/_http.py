@@ -1,4 +1,11 @@
-"""Stdlib-only JSON-over-HTTP helper with timeouts and bounded retries."""
+"""Stdlib-only JSON-over-HTTP helper with timeouts and bounded retries.
+
+Embedding requests are pure reads, so every transient failure is retried
+with exponential backoff and full jitter, up to ``max_attempts``: connection
+errors, read timeouts and HTTP 429/5xx. Other HTTP errors (bad key, unknown
+model) fail at once. The final error is an :class:`EmbeddingHTTPError` —
+a :class:`mark.errors.MarkError` — naming the endpoint and the attempts made.
+"""
 from __future__ import annotations
 
 import http.client
@@ -9,10 +16,12 @@ import time
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
+from mark.errors import MarkError
+
 _RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 
 
-class EmbeddingHTTPError(RuntimeError):
+class EmbeddingHTTPError(MarkError, RuntimeError):
     """An embedding server request failed (status is None for transport errors)."""
 
     def __init__(self, message: str, *, status: int | None = None, body: str = "") -> None:
@@ -40,10 +49,11 @@ def post_json(
 ) -> Any:
     """POST JSON and return the decoded JSON response.
 
-    Retries (exponential backoff with full jitter) only on connection errors
-    and HTTP 429/5xx; a read timeout or any other HTTP error raises
-    EmbeddingHTTPError immediately. Header values (e.g. API keys) are never
-    included in error messages.
+    Retries (exponential backoff with full jitter) on connection errors, read
+    timeouts and HTTP 429/5xx; any other HTTP error raises EmbeddingHTTPError
+    immediately. After the last attempt the error names the endpoint and the
+    number of attempts. Header values (e.g. API keys) are never included in
+    error messages.
     """
     parts = urlsplit(url)
     if parts.scheme not in {"http", "https"} or not parts.hostname:
@@ -70,10 +80,12 @@ def post_json(
                 "Is the server running and reachable?"
             )
             continue
-        except socket.timeout as exc:
-            raise EmbeddingHTTPError(
+        except socket.timeout:
+            # A slow or overloaded server (e.g. a model still loading): retry.
+            last_error = EmbeddingHTTPError(
                 f"Embedding server at {safe_url} did not respond within {read_timeout:g}s."
-            ) from exc
+            )
+            continue
         except (http.client.HTTPException, OSError) as exc:
             last_error = EmbeddingHTTPError(f"Connection to embedding server at {safe_url} failed: {exc}")
             continue
@@ -93,6 +105,8 @@ def post_json(
             raise error
         last_error = error
     assert last_error is not None
+    if attempts > 1:
+        last_error.args = (f"{last_error} (gave up after {attempts} attempts)",)
     raise last_error
 
 

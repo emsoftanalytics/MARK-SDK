@@ -1,4 +1,10 @@
-"""Framework-neutral backend protocol for MARK adapters."""
+"""Framework-neutral backend protocol for MARK adapters.
+
+Blocking memory calls from async adapters run on one lazily created,
+process-wide offload pool (threads named ``mark-backend_*``).
+:func:`shutdown_offload_pool` retires it — ``MarkRuntime.shutdown()`` calls
+it — and the next async call simply creates a fresh pool.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +17,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
+
+from mark.adapters._feedback import _feedback_fragment_ids, _feedback_score
 
 
 _OFFLOAD_EXECUTOR: ThreadPoolExecutor | None = None
@@ -27,6 +35,20 @@ def _offload_executor() -> ThreadPoolExecutor:
                     thread_name_prefix="mark-backend",
                 )
     return _OFFLOAD_EXECUTOR
+
+
+def shutdown_offload_pool(wait: bool = False) -> None:
+    """Retire the shared offload pool so its threads exit once idle.
+
+    Calls already queued still run (other runtimes in the process may own
+    them), but no thread outlives its last task. ``wait=True`` also blocks
+    until they finish.
+    """
+    global _OFFLOAD_EXECUTOR
+    with _OFFLOAD_LOCK:
+        executor, _OFFLOAD_EXECUTOR = _OFFLOAD_EXECUTOR, None
+    if executor is not None:
+        executor.shutdown(wait=wait)
 
 
 async def run_off_loop(fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
@@ -76,17 +98,6 @@ class MarkBackend(Protocol):
     async def feedback(self, **payload: Any) -> BackendResult:
         """Submit a feedback signal."""
         ...
-
-
-#: Default feedback score per agent outcome when the caller omits ``score``.
-_OUTCOME_SCORES: dict[str, float] = {
-    "completed": 1.0,
-    "success": 1.0,
-    "accepted": 1.0,
-    "partial": 0.5,
-    "failed": -1.0,
-    "rejected": -1.0,
-}
 
 
 class LocalMarkBackend:
@@ -263,24 +274,3 @@ async def call_backend_off_loop(backend: Any, endpoint: str, *args: Any, **kwarg
     if inspect.isawaitable(result):
         return await result
     return result
-
-
-def _feedback_fragment_ids(payload: dict[str, Any]) -> list[str]:
-    ids: list[str] = []
-    raw = payload.get("fragment_ids")
-    if raw:
-        ids.extend(str(item) for item in raw if item)
-    for key in ("fragment_id", "record_id"):
-        value = payload.get(key)
-        if value:
-            ids.append(str(value))
-    return list(dict.fromkeys(ids))
-
-
-def _feedback_score(payload: dict[str, Any]) -> float | None:
-    score = payload.get("score")
-    if score is None:
-        score = _OUTCOME_SCORES.get(str(payload.get("outcome", "")).lower())
-    if score is None:
-        return None
-    return max(-1.0, min(1.0, float(score)))

@@ -1,7 +1,7 @@
 """Maintenance operations for :class:`~mark.memory.runtime.MarkRuntime`.
 
-Consolidation, deduplication and pruning live here so the runtime module stays
-focused on wiring. The mixin relies on the runtime's ``store``, ``tracer()``
+Consolidation, deduplication, pruning and index warm-up live here so the
+runtime module stays focused on wiring. The mixin relies on the runtime's ``store``, ``tracer()``
 and ``governance_audit_log()``; heavy modules are imported on first use.
 """
 from __future__ import annotations
@@ -15,7 +15,32 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 
 class MaintenanceMixin:
-    """Memory hygiene: promote, merge duplicates, decay and prune."""
+    """Memory hygiene: promote, merge duplicates, decay and prune; warm the index."""
+
+    def warm_up(self, agent_ids: "list[str] | None" = None) -> int:
+        """Do now the work the first recall would do; returns the vectors indexed.
+
+        Loads the embedder (one probe embedding) and, for every agent (or
+        just ``agent_ids``), the stored vectors into the in-memory index and
+        the retrievable-id cache. Read-only: unlike a dummy recall it does not
+        bump access counts. Long-running hosts (``mark serve``, MCP servers)
+        call it at start so the first real recall is fast.
+        """
+        from mark.intelligence.retrieval_policy import SessionFilter
+
+        self.embedder.embed("warm-up")
+        if agent_ids is None:
+            rows = self.store._fetchall("SELECT DISTINCT agent_id FROM fragments")
+            agent_ids = [str(row[0]) for row in rows]
+        pipeline = self.pipeline
+        allowed_ids = getattr(pipeline, "_allowed_ids", None)
+        sync_index = getattr(pipeline, "_sync_index", None)
+        if allowed_ids is None or sync_index is None:  # custom pipeline: nothing to preload
+            return 0
+        indexed = 0
+        for agent_id in agent_ids:
+            indexed += len(sync_index(agent_id, allowed_ids(agent_id, SessionFilter())))
+        return indexed
 
     def consolidate(self, agent_id: str, *, promote_threshold: float = 0.7) -> "ConsolidationResult":
         """Promote high-importance working memory to LTM; delete expired fragments."""
