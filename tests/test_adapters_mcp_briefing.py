@@ -133,8 +133,8 @@ def test_allowed_agent_ids_are_enforced(mark) -> None:
         LocalMarkBackend(mark, default_agent_id=AGENT), default_agent_id=AGENT,
         allowed_agent_ids=[], briefing=True,
     )
-    denied = _call(server, {"text": "SECRET-77?", "agent_id": "other"})
-    assert denied.startswith("MARK briefing failed") and "not allowed" in denied
+    with pytest.raises(Exception, match="MARK briefing failed: agent_id 'other' is not allowed"):
+        _call(server, {"text": "SECRET-77?", "agent_id": "other"})   # an isError result
     assert len(server.mark_briefing_sessions) == 0       # no state created for denied calls
 
 
@@ -146,16 +146,18 @@ def test_resource_reads_without_creating_sessions(mark) -> None:
     assert (AGENT, "unknown") not in server.mark_briefing_sessions.keys()
 
 
-def test_bad_input_and_unsupported_backends_never_raise(mark) -> None:
+def test_bad_input_and_unsupported_backends_are_tool_errors(mark) -> None:
     server = _server(mark)
-    assert "role must be" in _call(server, {"text": "x", "role": "system"})
+    with pytest.raises(Exception, match="role must be"):
+        _call(server, {"text": "x", "role": "system"})
     assert _call(server, {"text": "", "session_id": "empty"}).startswith("<mark_briefing>")
 
     class RemoteOnly:  # a backend without memory_for cannot anticipate
         async def retrieve(self, *a, **k): ...
 
     remote = create_mark_mcp_server(RemoteOnly(), briefing=True)
-    assert "unavailable" in _call(remote, {"text": "HAL-4433"})
+    with pytest.raises(Exception, match="unavailable"):
+        _call(remote, {"text": "HAL-4433"})
 
 
 def test_briefing_does_not_block_the_event_loop(mark) -> None:

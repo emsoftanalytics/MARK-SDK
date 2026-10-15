@@ -196,14 +196,24 @@ print(skill.run_sync({"action": "retrieve", "query": "persistence decisions"}, {
 
 ### MARK As MCP
 
-`mark.adapters.mcp.create_mark_mcp_server(LocalMarkBackend(mark))` serves
-memory to MCP clients over stdio with these tools:
+`python -m mark.adapters.mcp --db .mark/memory.db` (the same file the CLI's
+`--db` uses) or `mark.adapters.mcp.create_mark_mcp_server(LocalMarkBackend(mark))`
+serves memory to MCP clients over stdio with these tools:
 
 ```text
-mark_retrieve(query, agent_id?, session_id?, session_prefix?, tags?, block_id?, block_ids?)
+mark_retrieve(query, agent_id?, max_results?, budget_tokens?, session_id?, session_prefix?, tags?, block_id?, block_ids?)
 mark_write(content, agent_id?, session_id?, tags?, source?, importance?, canonical?)
 mark_observe(content, agent_id?, session_id?, tags?, source?, importance?)
+mark_fact(action=get|set|history|list, subject?, attribute?, value?, valid_from?, agent_id?)
+mark_timeline(subject, attribute?, limit?, since?, until?, agent_id?)
+mark_brief(budget_tokens?, focus?, agent_id?)
+mark_forget(memory_id, agent_id?)
 ```
+
+Start a session with `mark_brief` (facts, open TODOs, decisions, bugs). Use
+`mark_fact set` for values that change, and prefix notes with `DECISION:`,
+`TODO:`, `BUG:` or `FIX:` so the brief can list them. A failed call returns
+an error result with the reason; fix the argument and retry.
 
 Pass `allowed_agent_ids` when clients should not choose any namespace. With
 `briefing=True` the server also offers a push-style briefing for the current
