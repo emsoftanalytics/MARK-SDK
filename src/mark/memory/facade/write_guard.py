@@ -7,6 +7,14 @@ builds its fragment through :meth:`GuardMixin._guarded_fragment`, which
 decides whether the fragment may be *indexed* (become retrievable) or must
 only be *stored* for audit as QUARANTINED. Also home to the ``occurred_at``
 normaliser shared by the store paths.
+
+Before any of that, the write-time security policy
+(:class:`mark.security.WritePolicy`) runs on every write, including
+quarantined ones: secrets are redacted by default and instruction-like text
+is tagged ``mark:untrusted``. The policy comes from ``self._write_policy``
+when set, else from the bound runtime's ``write_policy`` attribute, else
+:data:`mark.security.DEFAULT_WRITE_POLICY` — so redaction is on even for
+runtimes that never heard of it, and ``redact=False`` is an explicit opt-out.
 """
 from __future__ import annotations
 
@@ -15,6 +23,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from mark.memory.facade.core import MemoryCore
+from mark.security.write_policy import DEFAULT_WRITE_POLICY, WritePolicy
 from mark.types import MemoryFragment, MemoryScope, MemoryState
 
 
@@ -67,6 +76,9 @@ class GuardMixin(MemoryCore):
         Quarantined fragments remain inspectable through the store but are not
         indexed into retrieval and cannot become continuity/context by accident.
         """
+        # Quarantined text is still stored: redact it like any other write.
+        decision = self._write_policy_in_effect().apply(content, metadata=metadata, tags=tags)
+        content, metadata, tags = decision.content, decision.metadata, decision.tags
         meta = {
             **(metadata or {}),
             "mark_guard": {
@@ -102,6 +114,13 @@ class GuardMixin(MemoryCore):
             states=[MemoryState.QUARANTINED],
             limit=limit,
         )
+
+    def _write_policy_in_effect(self) -> WritePolicy:
+        """Return the write policy for this memory (see module docstring)."""
+        policy = self.__dict__.get("_write_policy")
+        if policy is None:
+            policy = getattr(getattr(self, "_runtime", None), "write_policy", None)
+        return policy if isinstance(policy, WritePolicy) else DEFAULT_WRITE_POLICY
 
     def _fragment(
         self,
@@ -159,7 +178,32 @@ class GuardMixin(MemoryCore):
           truncation in ``metadata["mark_guard"]``;
         * gate rejects: store as QUARANTINED with the reason, and remember it
           as :attr:`last_rejection`.
+
+        The write policy runs first: content/metadata are redacted and
+        instruction-like text tagged; in strict injection mode the write is
+        turned into a QUARANTINED one and reported via :attr:`last_rejection`.
         """
+        decision = self._write_policy_in_effect().apply(content, metadata=metadata, tags=tags)
+        content, metadata, tags = decision.content, decision.metadata, decision.tags
+        if decision.quarantine and state != MemoryState.QUARANTINED:
+            fragment = self._fragment(
+                content,
+                importance=0.0,
+                scope=scope,
+                tags=[*(tags or []), "mark:quarantined"],
+                source=source,
+                state=MemoryState.QUARANTINED,
+                confidence=0.0,
+                session_id=session_id,
+                ttl_seconds=ttl_seconds,
+                metadata={**(metadata or {}), "mark_guard": {
+                    "passed": False, "reason": decision.reason,
+                    "original_importance": importance, "requested_state": state.value,
+                }},
+            )
+            self._last_rejection = MemoryWriteRejection(fragment.id, decision.reason, content)
+            return fragment, False
+
         if self._consolidation_gate is None:
             self._last_rejection = None
             # A QUARANTINED write (e.g. from governance middleware) is stored
