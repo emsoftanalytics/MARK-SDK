@@ -65,16 +65,29 @@ class _Engine:
         )
         return {"id": fid}
 
-    def cmd_recall(self, agent: str, query: str, k: int = 10) -> dict[str, Any]:
-        return self.cmd_recall_many(agent, [query], k)["results"][0]
+    def cmd_recall(self, agent: str, query: str, k: int = 10,
+                   order: str = "relevance") -> dict[str, Any]:
+        return self.cmd_recall_many(agent, [query], k, order)["results"][0]
 
-    def cmd_recall_many(self, agent: str, queries: list[str], k: int = 10) -> dict[str, Any]:
+    def cmd_recall_many(self, agent: str, queries: list[str], k: int = 10,
+                        order: str = "relevance") -> dict[str, Any]:
         from mark.intelligence.retrieval import RetrievalPolicy
+        from mark.memory.timeline_order import apply_order
 
         k = max(1, min(int(k), 15))
         policy = RetrievalPolicy.DEEP if k > 10 else RetrievalPolicy.BALANCED
         results = self._memory(agent).retrieve_many_sync(list(queries), policy=policy)
-        return {"results": [_result_json(result, k) for result in results]}
+        # Chronological order re-sorts the shown top-k, never widens it.
+        return {"results": [_result_json(result, k, order) for result in results]}
+
+    def cmd_timeline(self, agent: str, subject: str, attribute: str | None = None,
+                     limit: int | None = None, since: str | None = None,
+                     until: str | None = None) -> dict[str, Any]:
+        timeline = self._memory(agent).timeline(subject, attribute, limit=limit,
+                                                since=since, until=until)
+        payload = timeline.to_dict()
+        payload["text"] = timeline.as_text()
+        return payload
 
     def cmd_fact_set(self, agent: str, subject: str, attribute: str, value: str,
                      valid_from: str | None = None, correction: bool = False) -> dict[str, Any]:
@@ -106,10 +119,15 @@ def _fact_json(fact: Any) -> dict[str, Any]:
     }
 
 
-def _result_json(result: Any, k: int) -> dict[str, Any]:
+def _result_json(result: Any, k: int, order: str = "relevance") -> dict[str, Any]:
     from mark.intelligence.temporal_order import same_day_order
+    from mark.memory.timeline_order import fragment_order
 
     shown = list(zip(result.fragments, result.scores))[:k]
+    if order == "chronological":
+        shown = [shown[i] for i, _ in fragment_order([fragment for fragment, _ in shown])]
+    elif order != "relevance":
+        raise ValueError(f"order must be 'relevance' or 'chronological', got {order!r}")
     same_day = same_day_order([fragment for fragment, _ in shown])
     return {
         "query": result.query,
