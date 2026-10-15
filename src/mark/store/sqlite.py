@@ -43,6 +43,7 @@ from mark.store._sqlite.codec import (  # noqa: F401 - re-exported for compatibi
     _unpack_embedding,
 )
 from mark.store._sqlite.connection import ConnectionMixin
+from mark.store._sqlite.document_index import DocumentIndexMixin
 from mark.store._sqlite.encryption_guard import EncryptionGuardMixin
 from mark.store._sqlite.events import EventMixin
 from mark.store._sqlite.fact_jobs import FactJobMixin
@@ -67,6 +68,7 @@ class LocalMemoryStore(
     MentionMixin,
     BlockMixin,
     GraphMixin,
+    DocumentIndexMixin,
     FactMixin,
     FactJobMixin,
     EventMixin,

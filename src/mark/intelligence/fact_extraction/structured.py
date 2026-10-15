@@ -74,8 +74,17 @@ def usable_key(key: str) -> bool:
     return 0 < len(words) <= 4 and attribute_key(key) not in _PROSE_KEYS and not _ID_KEY.search(key)
 
 
+def _field_value(value: str) -> bool:
+    """A field value is short and not prose ("Standup: Dana moved the deploy. X runs ..." is prose)."""
+    return len(value.split()) <= 8 and not re.search(r"[.!?]\s+\S", value)
+
+
 def _header_subject(text: str) -> str | None:
-    """Subject named by a heading or "Header:" line, or None for generic sections."""
+    """Subject named by a heading or "Header:" line, or None for generic sections.
+
+    A document chunk's heading path ("Guide › billing-api") names its last part.
+    """
+    text = text.split(" › ")[-1]
     text = re.sub(r"^\d+[.)]\s*", "", text.strip()).strip("*_` ")
     text = re.sub(r"\s*\([^)]*\)\s*$", "", text)
     for_match = re.search(r"\b(?:for|of)\s+(?:the\s+)?(?P<s>[^\W_][\w.@/-]*)$", text)
@@ -180,7 +189,7 @@ def _line_records(lines: list[str], used: set[int]) -> Iterator[Triple]:
             yield from _pair_line(index, line, pairs, heading, used)
             continue
         kv = _KV.match(line)
-        if kv is None or (kv.group("value") and not usable_key(kv.group("key"))):
+        if kv is None or (kv.group("value") and not (usable_key(kv.group("key")) and _field_value(kv.group("value")))):
             yield from flush()
             continue
         indent = len(kv.group("indent").expandtabs(4))

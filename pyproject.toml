@@ -66,6 +66,10 @@ vision = [
 model2vec = [
   "model2vec>=0.4",
 ]
+# PDF text for memory.store_document / memory.remember_file.
+pdf = [
+  "pypdf>=4.0",
+]
 web = [
   "duckduckgo-search>=6.0",
   "beautifulsoup4>=4.12",
@@ -127,6 +131,7 @@ all = [
   "python-dotenv>=1.0",
   "pyarrow>=14.0",
   "numpy>=1.26",
+  "pypdf>=4.0",
 ]
 
 [tool.hatch.build.targets.wheel]
