@@ -20,6 +20,7 @@ from functools import lru_cache
 
 from mark.intelligence.classifier import _STOP_WORDS
 from mark.intelligence.date_parsing import find_dates
+from mark.embeddings.segments import CJK_RUN
 
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
 
@@ -177,8 +178,35 @@ def _anchor_norm(text: str) -> str:
 
 
 def _contains_anchor(content_norm: str, anchor: str) -> bool:
-    """Whole-token match of a normalised anchor ("atlas core" never matches "atlas cored")."""
-    return re.search(rf"(?<!\w){re.escape(anchor)}(?!\w)", content_norm) is not None
+    """Whole-token match of a normalised anchor ("atlas core" never matches "atlas cored").
+
+    CJK-aware: Chinese and Japanese are written without spaces (and Korean
+    attaches particles to names), so an anchor edge that is a CJK character
+    needs no boundary ("王小明" is in "王小明搬到了上海"), and a CJK character
+    next to a Latin edge counts as one ("acme" is in "我在acme工作").
+    """
+    if not anchor or (anchor.isascii() and content_norm.isascii()):
+        return re.search(rf"(?<!\w){re.escape(anchor)}(?!\w)", content_norm) is not None
+    # A scan instead of a regex: a pattern with the CJK class costs ~3 ms to
+    # compile, and every query and timeline brings new anchors.
+    free_left, free_right = _is_cjk(anchor[0]), _is_cjk(anchor[-1])
+    start = content_norm.find(anchor)
+    while start != -1:
+        end = start + len(anchor)
+        if (free_left or start == 0 or not _extends_word(content_norm[start - 1])) and (
+                free_right or end == len(content_norm) or not _extends_word(content_norm[end])):
+            return True
+        start = content_norm.find(anchor, start + 1)
+    return False
+
+
+def _is_cjk(char: str) -> bool:
+    return CJK_RUN.match(char) is not None
+
+
+def _extends_word(char: str) -> bool:
+    """A word character (as ``\\w``) that is not CJK: it would continue a token across the edge."""
+    return (char.isalnum() or char == "_") and not _is_cjk(char)
 
 
 def anchor_present(content_norm: str, anchor: str) -> bool:
