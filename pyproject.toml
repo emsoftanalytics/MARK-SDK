@@ -59,6 +59,10 @@ fast = [
 fastembed = [
   "fastembed>=0.5",
 ]
+# CLIP image embeddings for mark.media (image decoding libraries stay optional).
+vision = [
+  "fastembed>=0.5",
+]
 model2vec = [
   "model2vec>=0.4",
 ]

@@ -14,6 +14,7 @@ EXAMPLES = [
     "05_context_watch.py",
     "06_safe_sync.py",
     "07_briefing_any_loop.py",
+    "08_visual_continuity.py",
 ]
 
 if __name__ == "__main__":

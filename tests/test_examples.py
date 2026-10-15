@@ -29,6 +29,7 @@ def test_live_example_runner_imports_all_examples():
         "05_context_watch.py",
         "06_safe_sync.py",
         "07_briefing_any_loop.py",
+        "08_visual_continuity.py",
     ]
 
     assert module.EXAMPLES == expected
