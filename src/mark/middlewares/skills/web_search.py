@@ -5,94 +5,40 @@
 #
 # Local MARK intentionally does not launch Playwright. LLM-guided browser lookup,
 # source credibility scoring, and automatic self-healing belong in registered extensions.
-"""Lightweight explicit web lookup skill (DuckDuckGo, Wikipedia, fetch)."""
+"""Lightweight explicit web lookup skill (DuckDuckGo, Wikipedia, fetch).
+
+Holds :class:`WebSearchSkill` and the SSRF-guarded fetch path: URL
+validation with DNS pinning (:func:`_pin_url`) and a redirect-revalidating
+GET (:func:`_safe_http_get`). Network primitives live in :mod:`.web_net`,
+search backends and result shaping in :mod:`.web_sources`; both are
+re-exported here, the historical import path.
+"""
 from __future__ import annotations
 
 import asyncio
-import http.client
 import ipaddress
 import logging
-import re
 import socket
-import ssl
 import time
-from dataclasses import dataclass
 from typing import Any, Dict, List
 from urllib.parse import urljoin, urlparse
 
-from mark.types import MemoryFragment, MemoryScope, MemoryState
-
 from .base import Skill, SkillManifest, SkillResult
 
-try:
-    from mark.types import SourceAttribution, SourceCredibility
-    _HAS_ATTRIBUTION = True
-except ImportError:
-    _HAS_ATTRIBUTION = False
-    SourceAttribution = None   # type: ignore[assignment,misc]
-    SourceCredibility = None   # type: ignore[assignment,misc]
-
-logger = logging.getLogger(__name__)
-
-_USER_AGENT = "Mozilla/5.0 (compatible; MARK/1.0)"
-_TIMEOUT_MS = 15_000
-_MAX_PAGE_CHARS = 8_000
-_MAX_RESPONSE_BYTES = _MAX_PAGE_CHARS * 4
-_MAX_REDIRECTS = 5
-_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
-
-
-class FetchBlocked(Exception):
-    """Raised when a fetch (or one of its redirect hops) fails URL validation."""
-
-
-@dataclass(frozen=True)
-class _PinnedTarget:
-    """A validated fetch target: the hostname plus the single IP it is pinned to."""
-    scheme: str
-    host: str
-    port: int
-    ip: str
-    path: str
-
-
-def _is_internal_address(address: ipaddress._BaseAddress) -> bool:
-    """Anything that is not globally routable is internal.
-
-    ``is_global`` excludes loopback, RFC1918 private ranges, link-local,
-    CGNAT (100.64.0.0/10), reserved, documentation, and unspecified ranges;
-    multicast is checked explicitly. IPv4-mapped IPv6 addresses are unwrapped.
-    """
-    for embedded in _embedded_ipv4(address):
-        if _is_internal_address(embedded):
-            return True
-    return (not address.is_global) or address.is_multicast or address.is_reserved
-
-
-_NAT64_NETWORKS = (
-    ipaddress.ip_network("64:ff9b::/96"),    # RFC 6052 well-known prefix
-    ipaddress.ip_network("64:ff9b:1::/48"),  # RFC 8215 local-use prefix
+# ``_is_internal_address`` and ``_open_connection`` are deliberately looked up
+# as globals of *this* module by ``_pin_url`` / ``_safe_http_get``, so patching
+# ``web_search._is_internal_address`` / ``web_search._open_connection`` works.
+from .web_net import (  # noqa: F401
+    _MAX_PAGE_CHARS, _MAX_REDIRECTS, _MAX_RESPONSE_BYTES, _NAT64_NETWORKS, _REDIRECT_STATUSES,
+    _TIMEOUT_MS, _USER_AGENT, FetchBlocked, _embedded_ipv4, _is_internal_address,
+    _open_connection, _PinnedHTTPConnection, _PinnedHTTPSConnection, _PinnedTarget,
+)
+from .web_sources import (  # noqa: F401
+    _HAS_ATTRIBUTION, SourceAttribution, SourceCredibility, build_search_result,
+    ddg_text_search, page_text, wiki_summary,
 )
 
-
-def _embedded_ipv4(address: ipaddress._BaseAddress) -> list[ipaddress.IPv4Address]:
-    """IPv4 addresses an IPv6 address tunnels to (mapped, NAT64, 6to4, Teredo).
-
-    Python reports several of these translation ranges as globally routable,
-    so the embedded IPv4 destination must be checked as well.
-    """
-    if not isinstance(address, ipaddress.IPv6Address):
-        return []
-    found: list[ipaddress.IPv4Address] = []
-    if address.ipv4_mapped is not None:
-        found.append(address.ipv4_mapped)
-    if any(address in network for network in _NAT64_NETWORKS):
-        found.append(ipaddress.IPv4Address(int(address) & 0xFFFFFFFF))
-    if address.sixtofour is not None:
-        found.append(address.sixtofour)
-    if address.teredo is not None:
-        found.extend(address.teredo)
-    return found
+logger = logging.getLogger(__name__)
 
 
 def _pin_url(url: str) -> tuple[_PinnedTarget | None, str | None]:
@@ -131,6 +77,9 @@ def _pin_url(url: str) -> tuple[_PinnedTarget | None, str | None]:
             return None, "Refusing to fetch private/loopback/link-local addresses"
         return _PinnedTarget(parsed.scheme, host, port, str(literal), path), None
 
+    # Resolve once and pin the first address: every resolved address must be
+    # public (one private answer rejects the host), and the connection later
+    # dials exactly the pinned IP, so a second DNS answer can never be used.
     try:
         infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except (OSError, UnicodeError) as exc:
@@ -160,37 +109,6 @@ def _validate_fetch_url(url: str) -> str | None:
     gap healing from probing internal services.
     """
     return _pin_url(url)[1]
-
-
-class _PinnedHTTPConnection(http.client.HTTPConnection):
-    """HTTP connection to a pre-validated IP; ``Host`` still carries the hostname."""
-
-    def __init__(self, target: _PinnedTarget, timeout: float) -> None:
-        super().__init__(target.host, target.port, timeout=timeout)
-        self._pinned_ip = target.ip
-
-    def connect(self) -> None:
-        self.sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
-
-
-class _PinnedHTTPSConnection(http.client.HTTPSConnection):
-    """HTTPS connection to a pre-validated IP; SNI and certificate checks use the hostname."""
-
-    def __init__(self, target: _PinnedTarget, timeout: float) -> None:
-        context = ssl.create_default_context()
-        super().__init__(target.host, target.port, timeout=timeout, context=context)
-        self._pinned_ip = target.ip
-        self._ssl_context = context
-
-    def connect(self) -> None:
-        sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
-        self.sock = self._ssl_context.wrap_socket(sock, server_hostname=self.host)
-
-
-def _open_connection(target: _PinnedTarget, timeout: float) -> http.client.HTTPConnection:
-    if target.scheme == "https":
-        return _PinnedHTTPSConnection(target, timeout)
-    return _PinnedHTTPConnection(target, timeout)
 
 
 def _safe_http_get(
@@ -338,20 +256,10 @@ class WebSearchSkill(Skill):
         except ImportError:
             return []
 
-        def _sync() -> List[Dict[str, str]]:
-            with DDGS() as ddgs:
-                return [
-                    {
-                        "title": r.get("title", ""),
-                        "snippet": r.get("body", ""),
-                        "url": r.get("href", ""),
-                        "source": "duckduckgo",
-                    }
-                    for r in ddgs.text(query, max_results=self.num_results)
-                ]
-
         try:
-            return await asyncio.get_running_loop().run_in_executor(None, _sync)
+            return await asyncio.get_running_loop().run_in_executor(
+                None, ddg_text_search, DDGS, query, self.num_results
+            )
         except Exception:
             return []
 
@@ -361,41 +269,17 @@ class WebSearchSkill(Skill):
         except ImportError:
             return []
 
-        def _sync() -> List[Dict[str, str]]:
-            wiki = wikipediaapi.Wikipedia(language="en", user_agent="MARK/1.0")
-            page = wiki.page(query)
-            if not page.exists():
-                return []
-            snippet = ". ".join(page.summary.split(". ")[:5])
-            return [
-                {
-                    "title": page.title,
-                    "url": page.fullurl,
-                    "snippet": snippet,
-                    "source": "wikipedia",
-                }
-            ]
-
         try:
-            return await asyncio.get_running_loop().run_in_executor(None, _sync)
+            return await asyncio.get_running_loop().run_in_executor(
+                None, wiki_summary, wikipediaapi, query
+            )
         except Exception:
             return []
 
     async def _fetch_page(self, url: str) -> str:
         # Validation (and DNS pinning) happens inside _safe_http_get for every hop.
         def _sync() -> str:
-            raw = _safe_http_get(url, timeout=max(1.0, self.timeout_ms / 1000))
-            html = raw.decode("utf-8", errors="ignore")
-            try:
-                from bs4 import BeautifulSoup  # type: ignore[import]
-
-                soup = BeautifulSoup(html, "html.parser")
-                for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form"]):
-                    tag.decompose()
-                text = soup.get_text(separator=" ", strip=True)
-            except Exception:
-                text = re.sub(r"<[^>]+>", " ", html)
-            return re.sub(r"\s{2,}", " ", text)[:_MAX_PAGE_CHARS]
+            return page_text(_safe_http_get(url, timeout=max(1.0, self.timeout_ms / 1000)))
 
         try:
             return await asyncio.get_running_loop().run_in_executor(None, _sync)
@@ -413,56 +297,4 @@ class WebSearchSkill(Skill):
         agent_id: str,
         mode: str,
     ) -> SkillResult:
-        attributions: List[Any] = []
-        fragments: List[Any] = []
-        lines = [f"Web search results for: {query!r} [mode={mode}]"]
-
-        for item in raw:
-            url = item.get("url", "")
-            title = item.get("title", "Result")
-            snippet = item.get("snippet", "")
-            source = item.get("source", "web")
-
-            if _HAS_ATTRIBUTION:
-                credibility = (
-                    SourceCredibility.VERIFIED  # type: ignore[union-attr]
-                    if source == "wikipedia"
-                    else SourceCredibility.WEB  # type: ignore[union-attr]
-                )
-                attr: Any = SourceAttribution(  # type: ignore[misc]
-                    source_url=url,
-                    source_title=title,
-                    snippet=snippet,
-                    credibility=credibility,
-                    via=f"web_search:{source}",
-                )
-            else:
-                attr = {"url": url, "title": title, "snippet": snippet, "source": source}
-
-            attributions.append(attr)
-            lines.append(f"- [{source}] {title}: {snippet} ({url})")
-            frag_kwargs: Dict[str, Any] = {
-                "content": f"{title}: {snippet}",
-                "agent_id": agent_id,
-                "scope": MemoryScope.AGENT,
-                "importance": 0.6 if source == "wikipedia" else 0.4,
-                "state": MemoryState.UNVERIFIED,
-                "source": url,
-                "tags": ["web_search", f"source:{source}", "auto_acquired"],
-            }
-            if _HAS_ATTRIBUTION:
-                frag_kwargs["attribution"] = attr
-            fragments.append(MemoryFragment(**frag_kwargs))
-
-        return SkillResult(
-            content="\n".join(lines) if raw else f"No results for {query!r}",
-            attributions=attributions,
-            fragments=fragments,
-            success=True,
-            metadata={
-                "query": query,
-                "mode": mode,
-                "result_count": len(raw),
-                "agent_id": agent_id,
-            },
-        )
+        return build_search_result(query, raw, agent_id, mode)
