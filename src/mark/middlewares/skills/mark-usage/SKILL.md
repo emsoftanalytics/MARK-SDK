@@ -5,251 +5,233 @@ description: Use when an agent should adopt MARK as its persistent memory, conte
 
 # MARK Usage Skill
 
-Use MARK as your persistent cognitive companion. MARK is not a tool you occasionally call after you get lost. MARK is the memory and continuity layer you lean on before planning, during reasoning, after action, before action, and when resuming future work.
+MARK is your persistent memory. Use it before you plan, while you work, and
+before you finish, so later turns and later agents continue from what you
+learned instead of starting blank.
 
-When this skill is active, behave as a MARK-aware agent:
+When this skill is active:
 
-- wake up by loading relevant MARK context,
+- load relevant MARK memory, or read the injected briefing, before planning,
 - ground your plan in remembered facts and current evidence,
-- act with the memory of previous decisions,
-- reflect on what changed,
+- act with the memory of earlier decisions,
 - write durable outcomes back to MARK,
-- resume later from stored continuity instead of starting blank.
+- say so when memory reports that a subject is not in memory.
 
 ## When To Use
 
-Use this skill when the user asks you to build, debug, review, research, plan, continue, document, or operate an agent that should have continuity.
+Use this skill when you build, debug, review, research, plan, continue, or
+document work that needs continuity, and when the user asks to:
 
-Also use it when the user asks to:
-
-- add MARK to an agent,
-- compare an agent with MARK versus without MARK,
-- expose MARK as a tool,
-- use MARK through MCP,
-- wrap an agent with MARK middleware,
-- persist or retrieve agent memory,
-- build examples, notebooks, or documentation that teach MARK usage.
-
-## Operating Posture
-
-Treat MARK as an extension of your working memory.
-
-Before you plan, ask MARK what should be remembered.
-
-Before you decide, compare the current task with stored context.
-
-Before you finish, decide what future agents should inherit.
-
-Do not make MARK noisy. Store durable, reusable, verified information. Do not store every intermediate thought.
+- add MARK to an agent, or compare an agent with and without MARK,
+- expose MARK as tools, through MCP, or as middleware,
+- store, recall, or inspect agent memory.
 
 ## Cognitive Loop
 
-Follow this loop naturally when MARK is available:
-
 ```text
-1. Recall
-   Retrieve project, user, task, procedure, and decision memory relevant to the request.
-
-2. Ground
-   Compare retrieved memory with the current repository, current user instruction, and visible evidence.
-
-3. Plan
-   Build a plan that uses remembered constraints, prior decisions, and known project structure.
-
-4. Act
-   Execute the task using MARK context as background memory, not as a separate chore.
-
-5. Reflect
-   Identify what was learned, decided, fixed, rejected, or verified.
-
-6. Remember
-   Write only durable outcomes back to MARK.
-
-7. Resume
-   On later turns, retrieve the previous continuity instead of rediscovering it.
+1. Recall    Retrieve project, task, decision, and procedure memory for the request,
+             or read the [MARK project memory] / <mark_briefing> block if one is injected.
+2. Ground    Compare memory with the repository, the user's instruction, and tool output.
+3. Plan      Use remembered constraints, decisions, and structure.
+4. Act       Do the work with MARK context in mind.
+5. Reflect   Identify what was learned, decided, fixed, rejected, or verified.
+6. Remember  Write only durable outcomes back to MARK. Record changing values as facts.
+7. Resume    On later turns, recall the earlier continuity instead of rediscovering it.
 ```
 
 ## Core MARK Setup
 
-Create a local MARK runtime:
-
 ```python
 from mark import Mark
 
-mark = Mark.local(project_path=".")
+mark = Mark.local(".")          # SQLite store at ./.mark/memory.db
 ```
 
-Create memory blocks for durable context. Prefer stable block labels so agents can reuse memory across workflows:
+`mark.memory` stores everything in the default agent namespace `"__mark__"`,
+which the LangChain, MCP, and CLI integrations also use. Use stable block
+labels so memory can be reused across workflows:
 
 ```python
 project = mark.memory.block("project", kind="project_context")
 decisions = mark.memory.block("decisions", kind="procedures")
-session = mark.memory.block("session", kind="task_state")
-```
 
-Retrieve memory before an agent acts:
-
-```python
 context = mark.memory.retrieve(
-    "What should I remember before doing this task?",
-    blocks=["project", "decisions", "session"],
+    "What should I remember before changing the persistence layer?",
+    blocks=["project", "decisions"],
     top_k=5,
 )
-```
+print(context.as_text())
 
-Write memory after the agent has a durable outcome:
-
-```python
 decisions.write(
-    "Use repository classes for persistence instead of direct database calls in route handlers.",
+    "Use repository classes for persistence instead of database calls in route handlers.",
     importance=0.85,
     confidence=0.9,
 )
+```
+
+### Facts that change over time
+
+Record a value that changes (a port, an owner, a ticket status) as a fact.
+The newest value by `valid_from` is current; history is kept.
+
+```python
+facts = mark.runtime.memory("__mark__").facts
+facts.set("payments-api", "owner", "dana", valid_from="2026-03-01")
+facts.set("payments-api", "owner", "eli", valid_from="2026-04-01")
+
+print(facts.get("payments-api", "owner").value)                       # eli
+print([f.value for f in facts.history("payments-api", "owner")])      # ['dana', 'eli']
+```
+
+Use `correction=True` to fix a wrong value and `facts.retract(...)` to
+withdraw one recorded by mistake.
+
+### Recall results
+
+`mark.runtime.memory(agent_id).retrieve_sync(query)` returns a result with
+`fragments`, `facts` for the subjects in the query, `temporal_intent`
+(`"current"`, `"original"`, or `"none"`), and `missing_anchors`: names in the
+query that occur nowhere in memory. When `missing_anchors` is not empty, tell
+the user that memory has nothing on those subjects instead of guessing.
+
+```python
+result = mark.runtime.memory("__mark__").retrieve_sync("Who owns payments-api now?")
+print([f.as_text() for f in result.facts], result.missing_anchors)
 ```
 
 ## Natural Integration Modes
 
 ### MARK As Direct Runtime
 
-Use direct runtime access when application code owns the agent loop. The agent should start by retrieving memory and should finish by writing durable outcomes.
+Application code owns the loop: recall first, write durable outcomes last.
 
 ```python
-agent = mark.wrap_agent(llm, blocks=["project"], policy="coding-agent")
-result = await agent.run("Implement the task status endpoint.")
+import asyncio
+
+def llm(prompt: str) -> str:            # any callable that takes a prompt
+    return "Plan: follow the stored persistence decision."
+
+agent = mark.wrap_agent(llm, blocks=["project", "decisions"], policy="coding-agent")
+result = asyncio.run(agent.run("Implement the task status endpoint."))
+print(result.output)
 ```
+
+### MARK As Briefing
+
+`ContextWatch` follows the conversation and prepares memory before each model
+call: current facts for the subjects in play, corrections of outdated values,
+and subjects that are not in memory.
+
+```python
+from mark import ContextWatch
+
+with ContextWatch(mark.runtime.memory("__mark__")) as watch:
+    watch.observe("Who should review the payments-api change?", role="user")
+    system_prompt = "You are a coding agent.\n" + watch.briefing(wait=1.0).text
+```
+
+Feed it user messages, your replies (`role="assistant"`), and tool results
+(`role="tool"`).
 
 ### MARK As Tool
 
-Use tool mode when the agent framework calls named tools. The tool should feel like memory access, not a search gimmick.
+Expose recall and writes as tools when the model should decide when to use
+memory. With LangChain, `create_mark_tools(LocalMarkBackend(mark))` returns
+`mark_retrieve`, `mark_write`, and `mark_observe`. A plain function works too:
 
 ```python
 def mark_retrieve(query: str) -> str:
     return mark.memory.retrieve(query, blocks=["project"], top_k=5).as_text()
 ```
 
-Expose `mark_retrieve` as a LangChain tool, OpenAI tool, framework tool, or custom callable. Encourage the agent to call it before planning and after uncertainty appears.
-
 ### MARK As Skill
 
-Use skill mode when an agent supports portable `SKILL.md` capabilities. This skill teaches the agent the MARK habit: recall first, act with context, remember useful outcomes.
-
-The executable operation is still the MARK SDK:
+This file is the portable skill. The executable operation is the SDK's
+`mark_memory` skill:
 
 ```python
 skill = mark.skills.get("mark_memory")
-memory = skill.run({"action": "retrieve", "query": "project architecture"}, {})
+print(skill.run_sync({"action": "retrieve", "query": "persistence decisions"}, {}).content)
 ```
 
 ### MARK As MCP
 
-Use MCP mode when MARK should be available to external agent clients through a protocol boundary. Expose at least:
+`mark.adapters.mcp.create_mark_mcp_server(LocalMarkBackend(mark))` serves
+memory to MCP clients over stdio with these tools:
 
 ```text
-mark.retrieve(query, blocks?, top_k?)
-mark.write(block, content, importance?, confidence?, metadata?)
-mark.list_blocks()
+mark_retrieve(query, agent_id?, session_id?, session_prefix?, tags?, block_id?, block_ids?)
+mark_write(content, agent_id?, session_id?, tags?, source?, importance?, canonical?)
+mark_observe(content, agent_id?, session_id?, tags?, source?, importance?)
 ```
 
-MCP servers should expose MARK as the agent's memory service. Keep credentials out of MARK memory and apply redaction before sync.
+Pass `allowed_agent_ids` when clients should not choose any namespace.
 
 ### MARK As Middleware
 
-Use middleware mode when MARK should become second nature to the agent. Middleware is the preferred mode for deep fusion because the agent receives relevant memory before it decides what to do.
+For LangChain v1 agents, `MarkAgentMiddleware(backend=LocalMarkBackend(mark))`
+injects a `[MARK project memory]` block and the briefing before each model
+call and records useful model and tool output afterwards. For other loops,
+the same pattern by hand:
 
 ```python
 def mark_middleware(prompt: str, call_next):
     context = mark.memory.retrieve(prompt, blocks=["project"], top_k=5).as_text()
     return call_next(f"{context}\n\nTask:\n{prompt}")
+
+print(mark_middleware("Add pagination to the tasks endpoint.", lambda text: text[:60]))
 ```
 
-Middleware should retrieve context before the model call and write durable outcomes after the task is accepted.
+### MARK From The Command Line
+
+```bash
+mark store "payments-api uses Postgres 16" --occurred-at 2026-04-02
+mark fact set payments-api owner eli --valid-from 2026-04-01
+mark recall "Who owns payments-api now?"
+```
 
 ## Memory Blocks To Prefer
 
-Use block labels consistently:
-
 - `project`: architecture, files, frameworks, conventions, constraints.
-- `decisions`: accepted technical decisions and rejected alternatives.
-- `procedures`: repeated workflows, commands, release steps, review checklists.
+- `decisions`: accepted decisions and rejected alternatives.
+- `procedures`: repeated workflows, commands, release steps, checklists.
 - `session`: current task state, progress, blockers, pending verification.
-- `user`: stable user preferences and collaboration style.
-- `tools`: available tool capabilities, limits, and integration notes.
+- `user`: stable user preferences.
+- `tools`: tool capabilities, limits, and integration notes.
 
 ## What To Remember
 
-Store:
+Store durable project facts, user-approved decisions, tested procedures,
+verified bug causes and fixes, known constraints, and handoff summaries.
 
-- durable project facts,
-- user-approved decisions,
-- tested procedures,
-- verified bug causes and fixes,
-- integration patterns,
-- known constraints,
-- handoff summaries.
-
-Do not store:
-
-- secrets, credentials, private keys, or tokens,
-- hidden chain-of-thought,
-- temporary guesses,
-- unsupported claims,
-- large copied source files,
-- information the user asked not to persist.
+Do not store secrets, credentials, private keys, tokens, hidden reasoning,
+temporary guesses, unsupported claims, large copied source files, or anything
+the user asked not to keep.
 
 ## Usage Rules
 
-- Treat MARK as cognitive infrastructure, not as the final application UI.
-- Retrieve before planning, tool execution, review, or continuation.
-- Store durable facts, decisions, preferences, procedures, and verified outcomes.
-- Do not store secrets, credentials, private keys, tokens, or hidden chain-of-thought.
-- If MARK memory conflicts with the repository or current user instruction, trust the current source and update MARK.
-- Prefer the public MARK SDK APIs for developer workflows.
-- Use `mark-adapters` for LangChain, MCP, LangGraph, and framework integrations when those packages exist.
+- Recall before planning, tool execution, review, or continuation.
+- Store durable facts, decisions, preferences, procedures, and verified
+  outcomes. Use facts for values that change over time.
+- If memory conflicts with the repository or the user's instruction, trust
+  the current source and update MARK (a fact with `correction=True`, or a new
+  memory).
+- If memory reports a subject as not in memory, say so rather than guessing.
+- Do not store secrets or hidden reasoning.
+- Use the public SDK API. Integrations live in `mark.adapters` inside
+  `mark-sdk` (install the `langchain` or `mcp` extra).
 
 ## Response Shape When MARK Is Active
 
-Do not loudly announce every MARK call unless the user needs the detail. MARK should feel natural.
-
-For implementation work, internally follow:
-
-```text
-Recall: relevant MARK memory.
-Plan: actions grounded in memory and current evidence.
-Act: code, tool, or reasoning step.
-Reflect: what changed and what was learned.
-Remember: durable memory writes for future work.
-```
-
-In the final user-facing response, include only useful outcomes:
-
-- what changed,
-- what was verified,
-- any important memory saved,
-- any unresolved risk.
+Do not announce every MARK call. Internally follow Recall, Plan, Act,
+Reflect, Remember. In the final response, include what changed, what was
+verified, any important memory saved, and any unresolved risk.
 
 ## Benchmarking MARK
 
-When demonstrating MARK, compare the same agent task with and without MARK:
-
-```text
-without MARK:
-- no persisted memory,
-- generic planning,
-- weaker recall,
-- less architectural continuity.
-
-with MARK:
-- retrieved project facts,
-- plan grounded in existing context,
-- reasoning cites stored constraints,
-- durable outcome can be written back.
-```
-
-Track at least:
+To demonstrate MARK, run the same task without and with MARK and compare:
 
 - recall: did the agent use stored facts?
 - planning: did the plan match the project structure?
-- reasoning: did the answer justify decisions from context?
-- continuity: did the task produce memory useful to future agents?
-
-The best MARK demonstration should make the agent feel less amnesic, less generic, and less brittle across turns.
+- reasoning: did the answer cite stored constraints?
+- continuity: did the task leave memory useful to future agents?
