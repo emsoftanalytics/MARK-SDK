@@ -1,22 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
 #
-# Mark — the single public entrypoint for the local MARK SDK.
-#
-# Mark.local() composes the full SQLite-backed MarkRuntime engine and
-# exposes two surfaces:
-#
-#   Simple path (small projects, notebooks, scripts):
-#       mark.memory.block("project").write("FastAPI is used.", importance=0.9)
-#       bundle = mark.memory.retrieve("Which framework?")
-#
-#   Advanced path (multi-agent, full pipeline, explicit agent IDs):
-#       agent  = mark.runtime.memory("coding-agent")
-#       bus    = mark.runtime.global_bus()
-#       store  = mark.runtime.store
-#       plugins = mark.runtime.plugins
-#
-# MarkRuntime is the engine. Mark is the brand and the developer API.
+# Mark — the single public entrypoint for the local MARK SDK. Mark.local()
+# composes the SQLite-backed MarkRuntime engine; mark.memory is the simple
+# surface and mark.runtime.memory(agent_id) the per-agent one. Both offer the
+# same verbs (remember / recall / forget / list / ...; a-prefix = async).
 """Mark: the public local entrypoint wiring runtime, memory, skills, and agents.
 
 ``MarkConfig`` and the late-binding ``configure_*`` hooks live in
@@ -35,6 +23,7 @@ from mark.policies import PolicyRegistry
 from mark.middlewares.base import MarkMiddleware
 from mark.middlewares.skills import SkillRegistry
 from mark.runtime_config import MarkConfig, MarkConfigureMixin
+from mark.runtime_data import MarkDataMixin, resolve_store_location
 
 if TYPE_CHECKING:
     from mark.middlewares.media_continuity.world_bible import WorldBibleMemory
@@ -42,17 +31,21 @@ if TYPE_CHECKING:
     from mark.middlewares import MarkMiddleware
 
 
-class Mark(MarkConfigureMixin):
+class Mark(MarkDataMixin, MarkConfigureMixin):
     """
     Primary local MARK runtime entrypoint.
 
     Use Mark.local() to create an instance. All data stays local unless
     you explicitly register a HOOK_SYNC plugin.
 
-    Simple API (mark.memory):
-        mark.memory.block("project").write("...")
-        mark.memory.retrieve("query").as_text()
-        mark.memory.list_blocks()
+    Memory API — identical on mark.memory and mark.runtime.memory("agent-id"):
+        id = mark.memory.remember("We chose SQLite.", kind="decision")
+        mark.memory.recall("database choice").as_context()
+        mark.memory.forget(id) / supersede / resolve / list / get / facts / timeline
+        await mark.memory.arecall(...)    # a-prefix = async twin
+
+    Store-wide: mark.agents(), mark.export_jsonl(path), mark.import_jsonl(path),
+    mark.vacuum(), mark.embedder_info().
 
     Advanced API (mark.runtime):
         mark.runtime.memory("agent-id")   → MarkMemory (full pipeline)
@@ -114,8 +107,9 @@ class Mark(MarkConfigureMixin):
         Create a local Mark instance backed by SQLite.
 
         Args:
-            project_path: Root directory of your project (default: cwd).
-            store_path:   Override the .mark/ directory location.
+            project_path: Root directory of your project (default: cwd), or a
+                          database file (``"notes.db"``), as for ``mark --db``.
+            store_path:   Override the .mark/ directory location (or a .db file).
             embedder:     EmbeddingProvider, or a spec string: "auto" (best local
                           model, else hash), "hash", "ollama:<model>", ...
                           Default: HashEmbeddingProvider, or MARK_EMBEDDER if set.
@@ -142,11 +136,8 @@ class Mark(MarkConfigureMixin):
         from mark._private_fs import ensure_private_dir
         from mark.memory.runtime import MarkRuntime
 
-        project  = Path(project_path).expanduser().resolve()
-        mark_dir = (Path(store_path).expanduser().resolve()
-                    if store_path else project / ".mark")
+        project, mark_dir, db_path = resolve_store_location(project_path, store_path)
         ensure_private_dir(mark_dir)  # 0700 when MARK creates it; existing dirs untouched
-        db_path = mark_dir / "memory.db"
 
         runtime = MarkRuntime.local(
             store_path           = db_path,
@@ -170,7 +161,7 @@ class Mark(MarkConfigureMixin):
 
         memory = SimpleMemory(runtime)
 
-        return cls(
+        instance = cls(
             config          = MarkConfig(project_path=project, store_path=mark_dir),
             memory          = memory,
             policies        = PolicyRegistry.with_builtins(),
@@ -178,22 +169,19 @@ class Mark(MarkConfigureMixin):
             context_builder = ContextBuilder(),
             _runtime        = runtime,
         )
+        instance.db_path = db_path
+        return instance
+
+    #: The SQLite database file (set by ``Mark.local``).
+    db_path: Path | None = None
 
     @property
     def world_bible(self) -> "WorldBibleMemory":
         """Canonical facts store — writes are immediately PROMOTED (never decay).
 
-        Use this for any ground-truth facts your agent should never forget or
-        contradict: character traits, physical laws, world history, system
-        invariants, domain axioms. Works for any long-running project.
-
-        Example::
-
-            mark.world_bible.remember("Elena is left-handed.", tags=["character:elena"])
-            mark.world_bible.remember("The warehouse was destroyed in Phase 2.")
-
-            # Local continuity pre-check:
-            conflicts = mark.world_bible.check("Elena uses her right hand.")
+        For ground truth an agent must never forget or contradict, e.g.
+        ``mark.world_bible.remember("Elena is left-handed.")`` then
+        ``mark.world_bible.check("Elena uses her right hand.")``.
         """
         if self._world_bible is None:
             from mark.middlewares.media_continuity.world_bible import WorldBibleMemory
@@ -216,17 +204,8 @@ class Mark(MarkConfigureMixin):
     ) -> "ObserveResult":
         """Top-level observe — routes to the named agent's memory.
 
-        Equivalent to mark.runtime.memory(agent_id).observe(...). Use this
-        when working with multiple agents from the same Mark instance.
-
-        Example::
-
-            mark.observe(
-                "Elena enters the North Warehouse wearing the red scarf.",
-                agent_id    = "video-agent",
-                session_id  = "season-01/ep-02/scene-04",
-                memory_type = "scene",
-            )
+        Equivalent to mark.runtime.memory(agent_id).observe(...), for working
+        with several agents from one Mark instance.
         """
         mem = self._runtime_engine.memory(agent_id)  # type: ignore[union-attr]
         return mem.observe(
@@ -252,12 +231,20 @@ class Mark(MarkConfigureMixin):
     ) -> MarkAgent:
         """Wrap an LLM callable with MARK memory, policies, and skills.
 
+        The returned agent is callable both ways: ``agent("prompt")`` /
+        ``agent.invoke("prompt")`` synchronously, ``await agent.ainvoke(...)``
+        (alias ``run``) asynchronously; each returns an AgentResult.
+
         Note: ``agent_id`` defaults to ``"mark-agent"``, unlike the
         ``"__mark__"`` default used elsewhere (``observe``, the CLI). It
         labels the agent in middleware and skill contexts and in the
         ``agent:<id>`` tag on stored outputs; memory is still read from and
         written to ``self.memory``. Pass ``agent_id="__mark__"`` to match.
         """
+        # Blocks named here are known even before their first write, so
+        # retrieval scoped to an empty block is not an "unknown block" error.
+        for label in blocks or []:
+            self.memory.block(label)
         skill_prompt = ""
         runtime_skill_prompt = getattr(self.runtime, "skill_prompt", None)
         if callable(runtime_skill_prompt):

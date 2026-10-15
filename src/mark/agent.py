@@ -98,6 +98,33 @@ class MarkAgent(AgentMiddlewareMixin, AgentStepsMixin):
         )
         return await self._run_with_middleware(request)
 
+    # ── one call convention for every entry point ────────────────────────────
+    # Plain = sync, a-prefix = async (as on every memory object). ``run`` is
+    # the historical async name and stays.
+
+    async def ainvoke(self, prompt: str | AgentRun, **options: Any) -> AgentResult:
+        """Async run (same arguments as :meth:`run`)."""
+        return await self.run(prompt, **options)
+
+    def invoke(self, prompt: str | AgentRun, **options: Any) -> AgentResult:
+        """Run synchronously (same arguments as :meth:`run`).
+
+        Raises :class:`mark.errors.MarkError` inside a running event loop,
+        where blocking would stall the loop — use ``await agent.ainvoke(...)``.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.run(prompt, **options))
+        from mark.errors import MarkError
+
+        raise MarkError("MarkAgent.invoke() was called inside a running event loop; "
+                        "use `await agent.ainvoke(...)` (or `await agent.run(...)`) there")
+
+    def __call__(self, prompt: str | AgentRun, **options: Any) -> AgentResult:
+        """``agent("prompt")`` — same as :meth:`invoke`."""
+        return self.invoke(prompt, **options)
+
     def available_skills(self) -> list[str]:
         """Return registered skill names."""
         return self._skills.names()
