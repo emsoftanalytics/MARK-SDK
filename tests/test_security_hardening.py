@@ -493,6 +493,7 @@ def test_sync_output_has_no_plain_content_hash(tmp_path: Path) -> None:
 # ── 6. encryption ─────────────────────────────────────────────────────────────
 
 def test_fernet_requires_key_source() -> None:
+    pytest.importorskip("cryptography")
     from mark.security import FernetEncryptionProvider
 
     with pytest.raises(ValueError):
@@ -504,6 +505,7 @@ def test_fernet_requires_key_source() -> None:
 
 
 def test_passphrase_key_derivation_is_cached(monkeypatch) -> None:
+    pytest.importorskip("cryptography")
     from mark.security import FernetEncryptionProvider
 
     provider = FernetEncryptionProvider(passphrase="correct horse")
@@ -520,6 +522,7 @@ def test_passphrase_key_derivation_is_cached(monkeypatch) -> None:
 
 
 def test_content_digest_is_keyed_when_encrypted() -> None:
+    pytest.importorskip("cryptography")
     import hashlib
 
     from mark.security import ContentHasher, FernetEncryptionProvider, NoOpEncryptionProvider

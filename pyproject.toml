@@ -29,6 +29,9 @@ dependencies = [
   "pydantic>=2.0",
 ]
 
+[project.scripts]
+mark = "mark.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/emsoftanalytics/MARK-SDK"
 Repository = "https://github.com/emsoftanalytics/MARK-SDK.git"
