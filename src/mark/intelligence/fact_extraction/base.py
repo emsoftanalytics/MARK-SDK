@@ -12,7 +12,11 @@ Invariants shared by every extractor:
   - it returns candidates in text order; when one text changes the same
     (subject, attribute) twice, the later candidate is the newer value;
   - ``valid_from`` is only set when the text itself says when the change
-    happened; otherwise the service uses the memory's event time.
+    happened; otherwise the service uses the memory's event time;
+  - ``extract`` returns assertions only (values that hold). Extractors that
+    also understand retractions ("no longer runs on port 8080") offer
+    ``extract_changes``, which interleaves ``retract=True`` candidates; a
+    consumer that cannot apply them simply keeps calling ``extract``.
 """
 from __future__ import annotations
 
@@ -33,6 +37,15 @@ class FactCandidate:
     source_fragment_id: str | None = None
     #: Which rule pack (or extractor) produced the candidate, for auditing.
     rule: str = ""
+    #: The text says this value no longer holds (or never did): withdraw it
+    #: if it is the current value. Only ``extract_changes`` returns these.
+    retract: bool = False
+    #: The text corrects an earlier statement ("Correction: X is actually Y"):
+    #: the current value it replaces was wrong, not merely superseded.
+    correction: bool = False
+    #: Kinds of note the value came from ("decision", "todo", "bug", ...),
+    #: read from line labels such as "DECISION:"; for memory kinds and audit.
+    tags: tuple[str, ...] = ()
 
     def with_source(self, fragment_id: str) -> "FactCandidate":
         """Copy linked to the memory it was extracted from."""
@@ -70,8 +83,14 @@ def runs_in_background(extractor: object) -> bool:
 #: are a bare article left when "The office is ..." splits as subject + noun).
 _PRONOUNS = frozenset(
     "it its he she they them we i you this that these those which who there here someone everyone"
-    " the a an".split()
+    " the a an me my mine your yours his her hers our ours their theirs i'm i've i'd i'll myself"
+    " yourself himself herself itself ourselves themselves us one other another".split()
 )
+# A subject may not *start* with a possessive or a referring word either:
+# "her other", "my sister", "their team" name something only in context.
+_REFERRING_START = re.compile(
+    r"^(?:my|your|his|her|its|our|their|this|that|these|those|other|another|some|any|each|every)\b",
+    re.IGNORECASE)
 _MAX_SUBJECT_CHARS = 80
 _MAX_VALUE_CHARS = 120
 _MAX_VALUE_WORDS = 10
@@ -103,7 +122,7 @@ def valid_candidate(candidate: FactCandidate) -> bool:
     subject, attribute, value = candidate.subject, candidate.attribute, candidate.value
     if not (subject and attribute and value):
         return False
-    if subject.lower() in _PRONOUNS or len(subject) > _MAX_SUBJECT_CHARS:
+    if subject.lower() in _PRONOUNS or _REFERRING_START.match(subject) or len(subject) > _MAX_SUBJECT_CHARS:
         return False
     if not re.search(r"[^\W_]", subject) or not re.search(r"[^\W_]", attribute):
         return False

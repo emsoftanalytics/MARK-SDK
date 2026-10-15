@@ -37,6 +37,7 @@ from typing import Any
 
 from mark.embeddings import EmbeddingProvider
 from mark.intelligence.retrieval import RetrievalPipeline
+from mark.memory.facade.documents import DocumentsMixin
 from mark.memory.facade.graph_ops import _NODE_TYPE_ALIASES, GraphMixin, _resolve_node_type  # noqa: F401
 from mark.memory.facade.lifecycle import LifecycleMixin
 from mark.memory.facade.observing import ObserveMixin
@@ -82,6 +83,7 @@ class MarkMemory(
     LifecycleMixin,
     ViewsMixin,
     GraphMixin,
+    DocumentsMixin,
     WriteMixin,
     GuardMixin,
 ):

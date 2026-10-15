@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import urllib.request
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 
@@ -30,10 +31,13 @@ _SYSTEM_PROMPT = (
     "You extract facts that a text states as true. A fact is the CURRENT value of an attribute of a "
     "subject after the event described, e.g. 'atlas-core moved from port 9239 to port 4444' -> "
     '{"subject": "atlas-core", "attribute": "port", "value": "4444"}. '
+    "For statements in the first person (I, me, my) use the subject \"user\". "
     "Ignore questions, negations, plans, hypotheticals and old values. Use short lower-case attribute "
     "names (port, owner, team, status, region, ...). If the text gives the date the change took effect, "
     'add "valid_from" as YYYY-MM-DD. Reply with JSON only: {"facts": [...]} (an empty list if none).'
 )
+
+_FIRST_PERSON = frozenset({"i", "me", "my", "myself", "user", "the user", "speaker", "the speaker"})
 
 # Field aliases models commonly use instead of the requested names.
 _ALIASES = {
@@ -58,6 +62,7 @@ class LLMFactExtractor:
         timeout: float = 60.0,
         temperature: float = 0.0,
         min_confidence: float = 0.5,
+        user_subject: str = "user",
     ) -> None:
         self.model = model
         self.base_url = base_url.rstrip("/")
@@ -65,13 +70,16 @@ class LLMFactExtractor:
         self.timeout = timeout
         self.temperature = temperature
         self.min_confidence = min_confidence
+        #: Subject for first-person facts; the model is asked to answer "user".
+        self.user_subject = user_subject
 
     def extract(self, text: str, *, occurred_at: datetime | None = None) -> list[FactCandidate]:
         """Call the model and parse its reply; raises on transport errors."""
         if not (text or "").strip():
             return []
         reply = self._chat(text, occurred_at)
-        return parse_fact_reply(reply, occurred_at=occurred_at, min_confidence=self.min_confidence)
+        return parse_fact_reply(reply, occurred_at=occurred_at, min_confidence=self.min_confidence,
+                                user_subject=self.user_subject)
 
     def _chat(self, text: str, occurred_at: datetime | None) -> str:
         """One chat completion; returns the assistant message content."""
@@ -97,9 +105,13 @@ class LLMFactExtractor:
 
 
 def parse_fact_reply(
-    reply: str, *, occurred_at: datetime | None = None, min_confidence: float = 0.0,
+    reply: str, *, occurred_at: datetime | None = None, min_confidence: float = 0.0, user_subject: str = "user",
 ) -> list[FactCandidate]:
-    """Model reply -> candidates. Never raises; invalid items are dropped one by one."""
+    """Model reply -> candidates. Never raises; invalid items are dropped one by one.
+
+    First-person subjects a model may still write ("I", "me", "the user")
+    become *user_subject*; other pronouns are dropped by the hygiene checks.
+    """
     items = _fact_items(reply)
     found: list[FactCandidate] = []
     for item in items:
@@ -111,15 +123,20 @@ def parse_fact_reply(
         confidence = _coerce_confidence(item.get("confidence"))
         if confidence < min_confidence:
             continue
+        subject = clean_text(fields["subject"])
+        if subject.lower() in _FIRST_PERSON:
+            subject = user_subject
         candidate = FactCandidate(
-            subject=clean_text(fields["subject"]),
+            subject=subject,
             attribute=clean_text(fields["attribute"]).lower(),
             value=clean_text(fields["value"]),
             valid_from=_date(item.get("valid_from")) or occurred_at,
             confidence=confidence,
             rule="llm",
         )
-        if valid_candidate(candidate):
+        # The user subject may be a word hygiene rejects elsewhere ("me"): check the rest.
+        check = replace(candidate, subject="user") if subject == user_subject else candidate
+        if valid_candidate(check):
             found.append(candidate)
     return found
 

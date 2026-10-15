@@ -35,6 +35,7 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+from mark.intelligence.fact_extraction.apply import candidates_for, record_candidate
 from mark.intelligence.fact_extraction.base import FactExtractor, extractor_name, runs_in_background
 from mark.intelligence.fact_extraction.patterns import PatternFactExtractor
 from mark.intelligence.fact_extraction.service_queue import DEFAULT_WAIT_SECONDS, JobQueueMixin  # noqa: F401
@@ -138,7 +139,7 @@ class FactExtractionService(JobQueueMixin):
             return []
         event = declared_event_time(fragment)
         default_when = event or _aware(fragment.created_at)
-        candidates = self.extractor.extract(fragment.content, occurred_at=event)
+        candidates = candidates_for(self.extractor, fragment.content, occurred_at=event)
         written: list[dict[str, Any]] = []
         text_hash = hashlib.sha256(" ".join(fragment.content.split()).encode("utf-8")).hexdigest()
         for candidate in candidates:
@@ -150,10 +151,8 @@ class FactExtractionService(JobQueueMixin):
             metadata = {"extracted_by": self.name, "rule": candidate.rule,
                         "confidence": round(float(candidate.confidence), 3)}
             try:
-                fact = self.store.fact_set_extracted(
-                    agent_id, key, candidate.subject, candidate.attribute, candidate.value,
-                    valid_from=valid_from, source_fragment_id=fragment.id, metadata=metadata,
-                )
+                fact = record_candidate(self.store, agent_id, candidate, key=key, valid_from=valid_from,
+                                        source_fragment_id=fragment.id, metadata=metadata)
             except ValueError:
                 logger.debug("rejected fact candidate %r", candidate)
                 continue

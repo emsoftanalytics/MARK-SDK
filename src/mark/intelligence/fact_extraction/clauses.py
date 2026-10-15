@@ -23,7 +23,9 @@ from mark.intelligence.fact_extraction.rules import _TOKEN
 _CONTINUATION_VERBS = (
     r"(?:now\s+|also\s+|currently\s+)?(?:is|are|was|were|has|have|listens|runs|serves|uses|relies|reports"
     r"|works|working|lives|living|based|located|hosted|deployed|owned|maintained|managed|assigned"
-    r"|reassigned|moved|switched|migrated|transferred|relocated|joined|owns|maintains|leads)\b"
+    r"|reassigned|moved|switched|migrated|transferred|relocated|joined|owns|maintains|leads"
+    # Base forms continue a first-person clause: "I live in Lagos and work at Seefar".
+    r"|work|live|own|lead|use|prefer|like|love|hate|enjoy|speak|drive|weigh|weighs)\b"
 )
 # Clause boundaries: ";" and ", " (an "and" after the comma is dropped), plus a
 # bare "and" when a continuation verb follows ("... in Berlin and reports to Ana").
