@@ -137,12 +137,16 @@ class FragmentWriteMixin:
             self._emit("unretrievable", [fragment_id])
 
     def update_embedding(self, fragment_id: str, embedding: list[float]) -> None:
-        """Persist a fragment's embedding (float32 blob)."""
+        """Persist a fragment's embedding (float32 blob); a vector snapshot stops serving the old one."""
         with self._writing(structural=False) as conn:
+            # No RETURNING: it needs SQLite 3.35, older than some supported Pythons ship.
+            row = conn.execute("SELECT agent_id FROM fragments WHERE id = ?", (fragment_id,)).fetchone()
             conn.execute(
                 "UPDATE fragments SET embedding_blob = ?, embedding = NULL WHERE id = ?",
                 (_pack_embedding(embedding), fragment_id),
             )
+            if row is not None:
+                self._mark_vector_dirty(conn, str(row[0]), fragment_id)
 
     def delete(self, fragment_id: str) -> bool:
         """Delete by id; returns True when a row was removed."""
