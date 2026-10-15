@@ -449,7 +449,10 @@ class RetrievalPipeline:
         allowed_ids = self._allowed_ids(agent_id, sf)
         if not allowed_ids:
             return self._empty_result(query, policy, spec, analysis)
-        self._sync_index(agent_id, allowed_ids)
+        indexed_ids = self._sync_index(agent_id, allowed_ids)
+        # Unfiltered whole-agent search: skip per-id filtering (one matvec, no
+        # id-set intersection) when the index partition is exactly the allowed set.
+        scope_ids = None if indexed_ids == allowed_ids else allowed_ids
 
         # When an LLM compressor is active and compression is requested, fetch a
         # larger candidate pool so the compressor has more to work with.
@@ -466,8 +469,8 @@ class RetrievalPipeline:
         cosine: dict[str, float] = {}
         channels = {"vector": 0, "lexical": 0}
         for q_text in query_texts:
-            vector_hits = self._vector_search(q_text, agent_id, allowed_ids, depth)
-            lexical_hits = self._lexical_search(q_text, agent_id, allowed_ids, depth)
+            vector_hits = self._vector_search(q_text, agent_id, allowed_ids, scope_ids, depth)
+            lexical_hits = self._lexical_search(q_text, agent_id, allowed_ids, scope_ids, depth)
             channels["vector"] += len(vector_hits)
             channels["lexical"] += len(lexical_hits)
             for rank, hit in enumerate(vector_hits, 1):
@@ -643,8 +646,11 @@ class RetrievalPipeline:
             rows = self._store.list_by_agent(agent_id, states=_RETRIEVABLE_STATES, limit=1_000_000, **kwargs)
         return {fragment.id for fragment in rows if not fragment.is_expired()}
 
-    def _sync_index(self, agent_id: str, allowed_ids: set[str]) -> None:
-        """Make sure every allowed fragment is indexed with the current embedder."""
+    def _sync_index(self, agent_id: str, allowed_ids: set[str]) -> set[str]:
+        """Make sure every allowed fragment is indexed with the current embedder.
+
+        Returns the agent's indexed ids after syncing.
+        """
         with self._sync_lock:
             if agent_id not in self._verified_agents:
                 self._verify_embedder(agent_id)
@@ -652,7 +658,7 @@ class RetrievalPipeline:
             indexed = self._index_ids(agent_id)
             missing = allowed_ids - indexed
             if not missing:
-                return
+                return indexed
             embeddings = self._stored_embeddings(agent_id, missing)
             to_embed: list[str] = []
             dim = getattr(self._embedder, "dim", None)
@@ -664,6 +670,7 @@ class RetrievalPipeline:
                     to_embed.append(fragment_id)
             if to_embed:
                 self._embed_and_index(agent_id, to_embed)
+            return self._index_ids(agent_id)
 
     def _verify_embedder(self, agent_id: str) -> None:
         """Re-embed an agent's memories when the embedder changed since they were stored."""
@@ -712,27 +719,27 @@ class RetrievalPipeline:
         return {fid: f.embedding for fid, f in found.items()}
 
     def _vector_search(
-        self, text: str, agent_id: str, allowed_ids: set[str], depth: int,
+        self, text: str, agent_id: str, allowed_ids: set[str], scope_ids: set[str] | None, depth: int,
     ) -> list[VectorSearchResult]:
         q_vec = self._embedder.embed(text)
         try:
-            return self._index_search(q_vec, agent_id, allowed_ids, depth)
+            return self._index_search(q_vec, agent_id, scope_ids, depth, allowed_ids)
         except ValueError as exc:  # DimensionMismatchError subclasses ValueError
             logger.warning("vector search failed (%s); rebuilding index for agent %r", exc, agent_id)
             with self._sync_lock:
                 ids = list(allowed_ids)
                 self._remove_agent_from_index(agent_id, ids)
                 self._embed_and_index(agent_id, ids)
-            return self._index_search(q_vec, agent_id, allowed_ids, depth)
+            return self._index_search(q_vec, agent_id, allowed_ids, depth, allowed_ids)
 
     def _lexical_search(
-        self, text: str, agent_id: str, allowed_ids: set[str], depth: int,
+        self, text: str, agent_id: str, allowed_ids: set[str], scope_ids: set[str] | None, depth: int,
     ) -> list[tuple[str, float]]:
         search = getattr(self._store, "lexical_search", None)
         if search is None:
             return []
         try:
-            hits = search(agent_id, text, limit=depth, include_ids=allowed_ids)
+            hits = search(agent_id, text, limit=depth, include_ids=scope_ids)
         except Exception as exc:  # lexical channel is best-effort; vector still answers
             logger.warning("lexical search failed: %s", exc)
             return []
@@ -835,11 +842,17 @@ class RetrievalPipeline:
         return {fid for fid in getattr(self._index, "_vectors", {})}
 
     def _index_search(
-        self, q_vec: list[float], agent_id: str, allowed_ids: set[str], depth: int,
+        self,
+        q_vec: list[float],
+        agent_id: str,
+        scope_ids: set[str] | None,
+        depth: int,
+        allowed_ids: set[str],
     ) -> list[VectorSearchResult]:
         try:
-            return self._index.search(q_vec, top_k=depth, include_ids=allowed_ids, agent_id=agent_id)
+            return self._index.search(q_vec, top_k=depth, include_ids=scope_ids, agent_id=agent_id)
         except TypeError:
+            # Legacy index without agent partitions: always restrict to the agent's ids.
             return self._index.search(q_vec, top_k=depth, include_ids=allowed_ids)
 
     def _remove_agent_from_index(self, agent_id: str, ids: Iterable[str]) -> None:

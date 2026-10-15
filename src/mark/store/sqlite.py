@@ -7,6 +7,7 @@ import re
 import sqlite3
 import sys
 import threading
+import time
 import uuid
 from array import array
 from collections import Counter
@@ -35,6 +36,11 @@ _SQL_CHUNK = 900
 
 # A fragment row is live unless a TTL is set and has elapsed. Rows whose
 # created_at cannot be parsed by SQLite are kept (fail open, like is_expired).
+# retrievable_ids() cache bounds: entries are also invalidated by write_version
+# and by the next TTL expiry among the agent's live fragments.
+_IDS_CACHE_SIZE = 64
+_IDS_CACHE_MAX_AGE = 300.0
+
 _TTL_LIVE_SQL = (
     " AND (ttl_seconds IS NULL OR julianday(created_at) IS NULL"
     " OR (julianday('now') - julianday(created_at)) * 86400.0 <= ttl_seconds)"
@@ -282,6 +288,7 @@ class LocalMemoryStore:
         self._generation = 0
         self._conns: list[sqlite3.Connection] = []
         self._listeners: list[ListenerCallback] = []
+        self._ids_cache: dict[tuple, tuple[frozenset[str], int, float]] = {}
         self._fts_supported = False
         self._fts_enabled = False
         self._shared_conn: sqlite3.Connection | None = None
@@ -337,7 +344,7 @@ class LocalMemoryStore:
 
     def set_meta(self, key: str, value: str) -> None:
         """Upsert a value in the schema_info key/value table."""
-        with self._writing() as conn:
+        with self._writing(structural=False) as conn:
             conn.execute(
                 "INSERT INTO schema_info (key, value) VALUES (?, ?)"
                 " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -522,8 +529,36 @@ class LocalMemoryStore:
             block_id=block_id,
             block_ids=block_ids,
         )
-        rows = self._fetchall(f"SELECT id FROM fragments WHERE {where}{_TTL_LIVE_SQL}", params)
-        return {str(row[0]) for row in rows}
+        key = (where, tuple(params))
+        version = self._write_version()
+        cached = self._ids_cache.get(key)
+        if cached is not None and cached[1] == version and time.monotonic() < cached[2]:
+            return set(cached[0])
+        with self._reading() as conn:
+            cursor = conn.cursor()
+            cursor.row_factory = None  # plain tuples: ~3x faster than sqlite3.Row
+            ids = frozenset(
+                row[0] for row in cursor.execute(
+                    f"SELECT id FROM fragments WHERE {where}{_TTL_LIVE_SQL}", params
+                )
+            )
+            next_expiry = cursor.execute(
+                "SELECT MIN((julianday(created_at) - julianday('now')) * 86400.0 + ttl_seconds)"
+                " FROM fragments WHERE agent_id = ? AND ttl_seconds IS NOT NULL"
+                " AND julianday(created_at) IS NOT NULL"
+                " AND (julianday('now') - julianday(created_at)) * 86400.0 <= ttl_seconds",
+                (agent_id,),
+            ).fetchone()[0]
+        ttl_left = _IDS_CACHE_MAX_AGE if next_expiry is None else min(_IDS_CACHE_MAX_AGE, max(0.0, next_expiry))
+        with self._lock:
+            if len(self._ids_cache) >= _IDS_CACHE_SIZE:
+                self._ids_cache.pop(next(iter(self._ids_cache)))
+            self._ids_cache[key] = (ids, version, time.monotonic() + ttl_left)
+        return set(ids)
+
+    def _write_version(self) -> int:
+        row = self._fetchone("SELECT value FROM schema_info WHERE key = 'write_version'")
+        return int(row[0]) if row is not None else -1
 
     def embeddings_for_agent(self, agent_id: str) -> list[tuple[str, list[float] | None]]:
         """Return (id, embedding-or-None) for every retrievable-state fragment of an agent.
@@ -620,7 +655,7 @@ class LocalMemoryStore:
 
     def update_embedding(self, fragment_id: str, embedding: list[float]) -> None:
         """Persist a fragment's embedding (float32 blob)."""
-        with self._writing() as conn:
+        with self._writing(structural=False) as conn:
             conn.execute(
                 "UPDATE fragments SET embedding_blob = ?, embedding = NULL WHERE id = ?",
                 (_pack_embedding(embedding), fragment_id),
@@ -1018,12 +1053,24 @@ class LocalMemoryStore:
             yield self._conn()
 
     @contextmanager
-    def _writing(self) -> Iterator[sqlite3.Connection]:
-        """Yield a connection inside one serialised transaction (commit or rollback)."""
+    def _writing(self, *, structural: bool = True) -> Iterator[sqlite3.Connection]:
+        """Yield a connection inside one serialised transaction (commit or rollback).
+
+        Structural writes (anything that can change which fragments are
+        retrievable) bump the persisted ``write_version`` in the same
+        transaction, so caches in this or any other process can validate
+        cheaply. Access/importance/edge-weight/event writes pass
+        ``structural=False``.
+        """
         with self._lock:
             conn = self._conn()
             try:
                 yield conn
+                if structural:
+                    conn.execute(
+                        "UPDATE schema_info SET value = CAST(value AS INTEGER) + 1"
+                        " WHERE key = 'write_version'"
+                    )
             except BaseException:
                 conn.rollback()
                 raise
@@ -1061,7 +1108,7 @@ class LocalMemoryStore:
         if not updates:
             return
         now = datetime.now(timezone.utc).isoformat()
-        with self._writing() as conn:
+        with self._writing(structural=False) as conn:
             conn.executemany(
                 "UPDATE fragments SET importance = ?, updated_at = ? WHERE id = ?",
                 [
@@ -1080,7 +1127,7 @@ class LocalMemoryStore:
         if not counts:
             return
         now = datetime.now(timezone.utc).isoformat()
-        with self._writing() as conn:
+        with self._writing(structural=False) as conn:
             updates: list[tuple[str, str, str, str]] = []
             for chunk in _chunks(list(counts), _SQL_CHUNK):
                 placeholders = ",".join("?" for _ in chunk)
@@ -1110,7 +1157,7 @@ class LocalMemoryStore:
 
     def update_edge_weight(self, edge_id: str, weight: float) -> None:
         """Update the weight of an edge, clamped to [0, 1]."""
-        with self._writing() as conn:
+        with self._writing(structural=False) as conn:
             conn.execute(
                 "UPDATE edges SET weight = ? WHERE id = ?",
                 (max(0.0, min(1.0, weight)), edge_id),
@@ -1173,7 +1220,7 @@ class LocalMemoryStore:
         """Record a session event. Returns the new event id."""
         event_id = str(uuid.uuid4())
         now      = datetime.now(timezone.utc).isoformat()
-        with self._writing() as conn:
+        with self._writing(structural=False) as conn:
             conn.execute(
                 "INSERT INTO session_events VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (event_id, agent_id, session_id, event_type, fragment_id, query,
@@ -1242,6 +1289,7 @@ class LocalMemoryStore:
             # columns (e.g. edges.block_id) can be built on upgraded databases.
             for index in self._INDEXES:
                 conn.execute(index)
+            conn.execute("INSERT OR IGNORE INTO schema_info VALUES ('write_version', '0')")
             self._init_fts(conn)
 
     def _init_fts(self, conn: sqlite3.Connection) -> None:
