@@ -81,9 +81,13 @@ class RetrievalResult:
         if not self.fragments and not self.facts:
             lines.append("  [No relevant memory found]")
         words = 0
+        from mark.intelligence.temporal_order import same_day_order
+
+        same_day = same_day_order(self.fragments)
         for fragment, score in zip(self.fragments, self.scores):
             source = f" | source: {_xml_escape(fragment.source)}" if fragment.source else ""
-            line = f"  [{score:.3f}|{fragment.state.value}{source}] {_xml_escape(fragment.content)}"
+            order = f" | same day {same_day[fragment.id][0]}/{same_day[fragment.id][1]}" if fragment.id in same_day else ""
+            line = f"  [{score:.3f}|{fragment.state.value}{source}{order}] {_xml_escape(fragment.content)}"
             words += len(line.split())
             if words > max_words:
                 lines.append("  [... truncated for token budget]")

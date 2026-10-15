@@ -72,7 +72,8 @@ def _print_recall(result: dict[str, Any]) -> None:
     if not result["memories"] and not result["facts"]:
         print("(no memories found)")
     for rank, memory in enumerate(result["memories"], 1):
-        print(f"{rank:2d}. [{memory['score']:.3f}] {memory['content']}")
+        order = f"  (same day {memory['same_day']})" if memory.get("same_day") else ""
+        print(f"{rank:2d}. [{memory['score']:.3f}] {memory['content']}{order}")
     if result["gap"] not in {"none", "low"}:
         reason = f": {result['gap_reason']}" if result["gap_reason"] else ""
         print(f"-- memory gap: {result['gap']}{reason}")

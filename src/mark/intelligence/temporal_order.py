@@ -152,3 +152,27 @@ def temporal_order(
         floor = min(floor, scores[i])
         new_scores.append(floor)
     return ([fragments[i] for i in order], new_scores, [relevances[i] for i in order], intent)
+
+
+def same_day_order(fragments: list[MemoryFragment]) -> dict[str, tuple[int, int]]:
+    """Position of each record among results that share its declared date.
+
+    Returns ``{fragment_id: (k, m)}`` meaning "k-th of m records dated that
+    day", in the order they happened (declared time, then storage order).
+    Only records whose date is shared by another result are included, so
+    callers can show the sequence of same-day events instead of leaving the
+    reader to guess which came last.
+    """
+    by_day: dict[str, list[MemoryFragment]] = {}
+    for fragment in fragments:
+        declared = declared_event_time(fragment)
+        if declared is not None:
+            by_day.setdefault(declared.date().isoformat(), []).append(fragment)
+    positions: dict[str, tuple[int, int]] = {}
+    for group in by_day.values():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda f: (declared_event_time(f), _stored_at(f)))
+        for k, fragment in enumerate(group, 1):
+            positions[fragment.id] = (k, len(group))
+    return positions

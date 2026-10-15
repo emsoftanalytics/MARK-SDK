@@ -107,12 +107,17 @@ def _fact_json(fact: Any) -> dict[str, Any]:
 
 
 def _result_json(result: Any, k: int) -> dict[str, Any]:
+    from mark.intelligence.temporal_order import same_day_order
+
+    shown = list(zip(result.fragments, result.scores))[:k]
+    same_day = same_day_order([fragment for fragment, _ in shown])
     return {
         "query": result.query,
         "facts": [_fact_json(f) for f in result.facts],
         "memories": [
-            {"score": round(score, 3), "content": fragment.content, "id": fragment.id}
-            for fragment, score in list(zip(result.fragments, result.scores))[:k]
+            {"score": round(score, 3), "content": fragment.content, "id": fragment.id,
+             "same_day": "{}/{}".format(*same_day[fragment.id]) if fragment.id in same_day else None}
+            for fragment, score in shown
         ],
         "gap": result.gap_report.severity.value,
         "gap_reason": result.gap_report.reason,

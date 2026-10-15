@@ -38,3 +38,22 @@ def test_watch_briefing_orders_same_day_events(tmp_path: Path) -> None:
     runtime.shutdown()
 
     assert "closed" in lines[2]
+
+
+def test_recall_output_shows_same_day_order(tmp_path: Path) -> None:
+    """Run-2 MH10: two same-day transfers must not leave the reader guessing."""
+    from mark._cli.engine import _result_json
+
+    runtime = MarkRuntime.local(store_path=tmp_path / "o.db")
+    mem = runtime.memory("t")
+    mem.store_many_sync([
+        "[2026-04-07] HR: Tomasz Nowak transferred to the Messaging team.",
+        "[2026-04-07] HR: Tomasz Nowak transferred to the Platform team.",
+        "[2026-03-08] HR: Tomasz Nowak transferred to the Data team.",
+    ])
+    result = mem.retrieve_sync("Tomasz Nowak transferred team")
+    runtime.shutdown()
+
+    labels = {m["content"].split("the ")[-1]: m["same_day"] for m in _result_json(result, 10)["memories"]}
+    assert labels == {"Messaging team.": "1/2", "Platform team.": "2/2", "Data team.": None}
+    assert "same day 2/2] [2026-04-07] HR: Tomasz Nowak transferred to the Platform team." in result.as_context()
