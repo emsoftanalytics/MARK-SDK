@@ -6,6 +6,9 @@ import math
 import re
 from abc import ABC, abstractmethod
 from functools import lru_cache
+from typing import Callable
+
+from mark.embeddings.segments import CJK_RUN, is_symbol, segment_words
 
 
 class EmbeddingProvider(ABC):
@@ -59,7 +62,7 @@ _STOPWORDS = frozenset(
     your yours
     """.split()
 )
-_WORD_RE = re.compile(r"\w+")
+_WORD_RE = re.compile(r"\w+")  # kept for importers; segment_words supersedes it here
 _POSSESSIVE_RE = re.compile(r"(\w)['’]s\b")
 
 _UNIGRAM_WEIGHT = 1.0
@@ -74,7 +77,9 @@ def _feature_hash(feature: str) -> int:
 
 def _hash_features(text: str) -> dict[str, float]:
     """Weighted feature counts: unigrams, adjacent bigrams, char 3-grams."""
-    words = _WORD_RE.findall(_POSSESSIVE_RE.sub(r"\1", text.lower()))
+    # CJK runs become bigrams and emoji/symbols tokens (see segments); plain
+    # ASCII text splits exactly as ``\w+`` did in v2.
+    words = segment_words(_POSSESSIVE_RE.sub(r"\1", text.lower()))
     content = [word for word in words if word not in _STOPWORDS] or words
     counts: dict[str, float] = {}
     for word in content:
@@ -94,10 +99,13 @@ class HashEmbeddingProvider(EmbeddingProvider):
     """
     Deterministic CPU-only embedder for tests and zero-dependency local demos.
 
-    v2 features: lowercase ``\\w+`` words (possessive 's stripped, English
-    stopwords dropped), adjacent-word bigrams, and boundary-marked character
+    v3 features: lowercase ``\\w+`` words (possessive 's stripped, English
+    stopwords dropped; CJK runs as character bigrams, emoji and other
+    symbols as tokens), adjacent-word bigrams, and boundary-marked character
     3-grams (weight 0.5), combined with signed feature hashing (blake2b),
-    sublinear term frequency, and L2 normalisation.
+    sublinear term frequency, and L2 normalisation. v3 differs from v2 only
+    for text containing CJK or non-ASCII symbols, so upgrading re-embeds
+    just those memories (see :meth:`reembed_filter`).
 
     Production local usage should pass a stronger provider, such as
     OpenAICompatibleEmbeddingProvider (llama.cpp, LM Studio, vLLM, Ollama),
@@ -133,10 +141,26 @@ class HashEmbeddingProvider(EmbeddingProvider):
 
     @property
     def fingerprint(self) -> str:
-        """Identity of the v2 hash embedding space."""
-        return f"mark.hash-v2:{self._dim}"
+        """Identity of the v3 hash embedding space."""
+        return f"mark.hash-v3:{self._dim}"
+
+    def reembed_filter(self, stored_fingerprint: str) -> Callable[[str], bool] | None:
+        """Which stored texts need new vectors when moving from *stored_fingerprint*.
+
+        Returns a predicate over memory text when only some vectors changed
+        (v2 -> v3: texts with CJK or non-ASCII symbols), or None when every
+        memory must be re-embedded (any other change).
+        """
+        if stored_fingerprint == f"mark.hash-v2:{self._dim}":
+            return _differs_from_v2
+        return None
 
     @property
     def semantic(self) -> bool:
         """Hashed words and n-grams: lexical similarity only."""
         return False
+
+
+def _differs_from_v2(text: str) -> bool:
+    """True when hash v3 embeds *text* differently from v2 (CJK or non-ASCII symbols)."""
+    return not text.isascii() and (CJK_RUN.search(text) is not None or any(is_symbol(ch) for ch in text))

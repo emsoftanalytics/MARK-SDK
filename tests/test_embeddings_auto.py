@@ -57,7 +57,7 @@ def _offline(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_nothing_installed_is_exactly_the_hash_default() -> None:
     provider = auto_embedder()
     assert type(provider) is HashEmbeddingProvider
-    assert provider.fingerprint == HashEmbeddingProvider().fingerprint == "mark.hash-v2:256"
+    assert provider.fingerprint == HashEmbeddingProvider().fingerprint == "mark.hash-v3:256"
     assert provider.embed("same vector") == HashEmbeddingProvider().embed("same vector")
 
 
@@ -88,7 +88,7 @@ def test_unavailable_or_broken_candidates_fall_through(
         provider = auto_embedder()
     assert type(provider) is HashEmbeddingProvider
     assert "fastembed unavailable" in caplog.text
-    assert "using mark.hash-v2:256" in caplog.text
+    assert "using mark.hash-v3:256" in caplog.text
 
 
 def test_allow_download_is_passed_to_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -211,7 +211,7 @@ def test_env_var_selects_openai_with_key(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_prefer_overrides_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(auto.ENV_VAR, "ollama:x")
-    assert auto_embedder("hash:64").fingerprint == "mark.hash-v2:64"
+    assert auto_embedder("hash:64").fingerprint == "mark.hash-v3:64"
 
 
 def test_explicit_local_kind_raises_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -242,9 +242,9 @@ def test_resolve_embedder_forms(monkeypatch: pytest.MonkeyPatch) -> None:
     assert resolve_embedder(custom) is custom
     assert type(resolve_embedder(None)) is HashEmbeddingProvider
     assert resolve_embedder("hash:128").dim == 128
-    assert resolve_embedder(" AUTO ").fingerprint == "mark.hash-v2:256"
+    assert resolve_embedder(" AUTO ").fingerprint == "mark.hash-v3:256"
     monkeypatch.setenv(auto.ENV_VAR, "hash:64")
-    assert resolve_embedder(None).fingerprint == "mark.hash-v2:64"  # explicit operator opt-in
+    assert resolve_embedder(None).fingerprint == "mark.hash-v3:64"  # explicit operator opt-in
     with pytest.raises(TypeError):
         resolve_embedder(42)
 
@@ -252,7 +252,7 @@ def test_resolve_embedder_forms(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_runtime_local_accepts_auto_string() -> None:
     runtime = MarkRuntime.local(embedder="auto")
     try:
-        assert runtime.embedder.fingerprint == "mark.hash-v2:256"
+        assert runtime.embedder.fingerprint == "mark.hash-v3:256"
         mem = runtime.memory("auto")
         fid = mem.store_sync("The billing service runs on port 9443.")
         assert mem.retrieve_sync("billing service port").fragments[0].id == fid
