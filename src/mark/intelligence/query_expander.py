@@ -3,11 +3,14 @@
 """Query expansion interfaces and local expander implementations."""
 from __future__ import annotations
 
+import logging
 import re
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from mark.types.llm import LLMProvider
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -72,5 +75,6 @@ class LLMQueryExpander:
                 if line.strip() and line.strip().lower() != query.lower()
             ][: self._n]
             return [query, *alternates]
-        except Exception:
+        except Exception as exc:
+            logger.warning("LLMQueryExpander failed; using the original query: %s: %s", type(exc).__name__, exc)
             return [query]
