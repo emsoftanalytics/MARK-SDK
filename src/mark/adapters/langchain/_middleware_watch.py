@@ -44,8 +44,10 @@ class _AnticipationMixin:
             if memory is None:
                 return None
             # Half the context budget: the watch complements, not replaces,
-            # the query-driven retrieval block.
-            run.watch = ContextWatch(memory, budget_chars=max(400, self._max_chars // 2))
+            # the query-driven retrieval block. The preset sizes its lines.
+            run.watch = ContextWatch.for_preset(memory, getattr(self, "_preset", None),
+                                                budget_chars=max(400, self._max_chars // 2),
+                                                budget_tokens=None)
         return run.watch
 
     def _feed_watch(self, watch: Any, run: _RunState, state: Any) -> None:

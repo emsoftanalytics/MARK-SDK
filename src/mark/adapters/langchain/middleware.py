@@ -12,26 +12,16 @@ Two surfaces are provided:
 
    **RETRIEVE (inject context — synchronous with the agent):**
 
-   * ``abefore_agent``   — captures the user query the instant it enters the
-     agent; fires retrieval immediately so context is ready before the first
-     model call.  Like a real-time search that pre-loads results as the query
-     arrives.
-   * ``abefore_model``   — per-step multi-query parallel retrieval: user goal
-     (cached) + current AI reasoning excerpt (always fresh).  Context adapts
-     as the agent's plan evolves, step by step.
-   * ``(a)wrap_model_call`` — injects the retrieved ``[MARK project memory]``
-     block into the system message of *every* model request.  Pure read +
-     transform; no I/O, no latency.
+   * ``abefore_agent``   — captures the user query and warms retrieval.
+   * ``abefore_model``   — per-step retrieval (user goal + reasoning/tool triggers).
+   * ``(a)wrap_model_call`` — injects the ``[MARK project memory]`` block (no I/O).
 
    **OBSERVE (archive context — background, non-blocking):**
 
-   * ``aafter_model``    — queues each substantive AI reasoning step so older
-     turns remain retrievable even after they scroll out of the active
-     context window.
-   * ``(a)wrap_tool_call`` — absorbs every tool result that enters the agent's
-     context window into MARK.  What the agent sees, MARK archives.
-   * ``aafter_agent``    — flushes queued observations, emits a
-     retrieval-quality feedback signal and releases the per-run state.
+   * ``aafter_model`` / ``(a)wrap_tool_call`` — queue reasoning (low trust)
+     and tool results for archival, with provenance.
+   * ``aafter_agent``    — flushes queued observations, emits feedback and
+     releases the per-run state.
 
 2. :class:`MarkMemoryMiddleware` — a lightweight dataclass helper for
    augmenting plain message lists (without a full LangChain agent graph).
@@ -205,7 +195,7 @@ class MarkAgentMiddleware(  # type: ignore[misc]
         observe_tool_results: bool = True,
         immediate_tool_observe: bool = False,
         retrieval_timeout_ms: int = 2500,
-        include_skill: bool = True,
+        include_skill: "bool | str" = True,
         thinking_model: "Any | None" = None,
         thinking_budget_tokens: int = 2000,
         anticipate: bool = True,
@@ -213,6 +203,8 @@ class MarkAgentMiddleware(  # type: ignore[misc]
         token_counter: "Any | None" = None,
         history: str = "full",
         keep_last: int = 6,
+        preset: "str | None" = None,
+        store_assistant: bool = True,
     ) -> None:
         """
         Args:
@@ -242,6 +234,17 @@ class MarkAgentMiddleware(  # type: ignore[misc]
                 ``"mark"`` keeps system + the last ``keep_last`` messages and
                 lets MARK stand in for the rest (stored before dropping).
             keep_last: Messages kept in ``history="mark"`` (default 6).
+            preset: Model-size preset for the briefing: ``"small"`` (~1-3B)
+                or ``"tiny"`` (<=1B) (``mark.context.presets``); they inject
+                no skill by default (it lowered small-model accuracy).
+            store_assistant: Store the model's replies when they leave the
+                window (low trust, ``mark:assistant``; never anchors a
+                briefing). ``False`` drops them unstored.
+
+        ``include_skill`` may also name a packaged skill (e.g.
+        ``"mark-memory-compact"``). ``True`` injects the long skill except for
+        small presets or when it would take over half of ``budget_tokens``;
+        the injected skill counts inside the budget.
         """
         if not _LANGCHAIN_AVAILABLE:
             raise ImportError(
@@ -259,6 +262,11 @@ class MarkAgentMiddleware(  # type: ignore[misc]
         self._immediate_tool_observe = immediate_tool_observe
         self._retrieval_timeout_s = max(retrieval_timeout_ms, 0) / 1000
         self._include_skill = include_skill
+        if preset is not None:
+            from mark.context.presets import preset_settings
+            preset_settings(preset)          # validates the name
+        self._preset = preset
+        self._store_assistant = store_assistant
         self._skill_text: str | None = None  # lazy-loaded packaged skill
         self._thinking_budget = thinking_budget_tokens
         self._anticipate = anticipate

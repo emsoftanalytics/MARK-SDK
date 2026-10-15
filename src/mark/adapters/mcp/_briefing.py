@@ -18,7 +18,9 @@ Invariants:
 * **Never blocks the event loop, never waits long.** All watch work runs on
   MARK's shared worker pool (``run_off_loop``); the prefetch wait is clamped
   to ``_MAX_WAIT_S``.
-* **Never raises into the client.** Failures come back as a short text.
+* **Clear failures.** A denied namespace, a bad role, a backend without
+  local memory or an internal error comes back as an ``isError=True``
+  result with one sentence (never a traceback, never a "success" text).
 * ``allowed_agent_ids`` is enforced exactly as for the other tools.
 
 The optional resource ``mark://briefing/{session_id}`` returns the current
@@ -35,6 +37,7 @@ from collections.abc import Callable
 from typing import Any
 
 from mark.adapters.backend import run_off_loop
+from mark.adapters.mcp._common import fail, tool_error_class
 
 logger = logging.getLogger("mark.adapters.mcp")
 
@@ -133,9 +136,7 @@ def _watch_factory(backend: Any, preset: str) -> Callable[[str], Any]:
             return None
         from mark.context.watch import ContextWatch
 
-        if preset == "small":
-            return ContextWatch.for_small_models(memory)
-        return ContextWatch(memory)
+        return ContextWatch.for_preset(memory, preset)
 
     return factory
 
@@ -148,7 +149,7 @@ def _briefing_sync(
     """Observe the new input and render the session's briefing (blocking; run off-loop)."""
     watch = sessions.get(agent_id, session_id)
     if watch is None:
-        return _UNAVAILABLE
+        fail(_UNAVAILABLE)
     if messages:
         watch.observe_messages(messages)
     text = text.strip()[-_MAX_TEXT:]
@@ -168,8 +169,8 @@ def register_briefing(
     preset: str = "default",
 ) -> BriefingSessions:
     """Add the ``mark_briefing`` tool (and the briefing resource) to *server*."""
-    if preset not in ("default", "small"):
-        raise ValueError("briefing preset must be 'default' or 'small'")
+    if preset not in ("default", "small", "tiny"):
+        raise ValueError("briefing preset must be 'default', 'small' or 'tiny'")
     sessions = BriefingSessions(_watch_factory(backend, preset), max_sessions)
 
     @server.tool()
@@ -182,21 +183,22 @@ def register_briefing(
         wait: float = 0.5,
         budget_tokens: int = 0,
     ) -> str:
-        """Get MARK's briefing for this conversation: put it in your context before answering.
+        """Memory briefing for an ongoing conversation, meant for the context window.
 
         Pass the latest message as ``text`` (``role`` user, assistant or tool),
         or the recent chat as ``messages`` (role/content dicts), and a stable
         ``session_id`` per conversation. Returns current facts about the
-        subjects being discussed, corrections of outdated values and the
-        subjects memory knows nothing about (say so rather than guessing).
-        ``budget_tokens`` > 0 caps the briefing at that many tokens (estimated
-        as characters / 4), keeping corrections and unknowns first.
+        subjects being discussed, related notes, corrections of outdated
+        values and the subjects memory knows nothing about. ``budget_tokens``
+        > 0 caps the briefing (tokens estimated as characters / 4), keeping
+        corrections and unknowns first. ``wait`` (0-2 s) lets running
+        lookups finish.
         """
         resolved, denied = resolve_agent(agent_id)
         if denied:
-            return f"MARK briefing failed: {denied}"
+            fail(f"MARK briefing failed: {denied}")
         if role not in ("user", "assistant", "tool"):
-            return "MARK briefing failed: role must be user, assistant or tool"
+            fail("MARK briefing failed: role must be user, assistant or tool")
         session = (session_id or "default")[:_MAX_SESSION_ID]
         try:
             return await run_off_loop(
@@ -204,9 +206,11 @@ def register_briefing(
                 min(max(float(wait), 0.0), _MAX_WAIT_S),
                 int(budget_tokens) if budget_tokens and int(budget_tokens) > 0 else None,
             )
-        except Exception as exc:  # anticipation is best-effort, never fatal for the client
+        except tool_error_class():
+            raise
+        except Exception as exc:  # reported as a tool error, never as a traceback
             logger.warning("mark_briefing failed: %s", exc)
-            return f"MARK briefing failed: {type(exc).__name__}"
+            fail(f"MARK briefing failed: {type(exc).__name__}")
 
     _register_resource(server, sessions, default_agent_id)
     return sessions

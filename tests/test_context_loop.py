@@ -92,9 +92,47 @@ def test_every_exchange_is_stored_before_it_leaves_the_window(server, memory) ->
         for text in TURNS[:3]:
             chat.send(text)
         assert len(chat.window) == 2
-    stored = [f.content for f in memory.retrieve_sync("Ana bees hive Lisbon Colmeia").fragments]
-    assert any("User said: My hive is called Colmeia Azul." in s and "Assistant replied: ack 2" in s
-               for s in stored)
+    stored = {f.content: f for f in memory.list(limit=None)}
+    user = stored["User said: My hive is called Colmeia Azul."]
+    reply = stored["Assistant replied: ack 2"]
+    # One dense memory per user message; the reply is separate, low-trust context.
+    assert user.source == "user" and "mark:assistant" not in user.tags
+    assert reply.source == "assistant" and "mark:assistant" in reply.tags
+    assert reply.confidence < 0.5 and reply.importance < user.importance
+
+
+def test_assistant_replies_can_be_left_out_and_never_anchor(server, memory) -> None:
+    with MarkChat(memory, base_url=server.url, keep_last=2, store_assistant=False) as chat:
+        for text in TURNS[:3]:
+            chat.send(text)
+    contents = [f.content for f in memory.list(limit=None)]
+    assert len(contents) == 3 and all(c.startswith("User said:") for c in contents)
+
+
+def test_questions_are_stored_but_not_briefed(server, memory) -> None:
+    with MarkChat(memory, base_url=server.url, keep_last=1) as chat:
+        chat.send("My hive is called Colmeia Azul.")
+        chat.send("What is my hive called?")
+        stored = {f.content: f for f in memory.list(limit=None)}
+        assert "mark:question" in stored["User said: What is my hive called?"].tags
+        brief = chat.prepare("Remind me about the hive Colmeia Azul.")[0]["content"]
+    assert "Colmeia Azul." in brief and "What is my hive called" not in brief
+
+
+def test_size_presets_shape_the_briefing(server, memory) -> None:
+    from mark.context.presets import PRESETS
+
+    with MarkChat(memory, base_url=server.url) as chat:            # measured default: small
+        assert chat.budget.max_tokens == PRESETS["small"]["budget_tokens"] == 200
+    with MarkChat(memory, base_url=server.url, preset="default") as chat:
+        assert chat.budget.max_tokens == 400
+    with MarkChat(memory, base_url=server.url, preset="tiny") as chat:
+        assert chat.budget.max_tokens == PRESETS["tiny"]["budget_tokens"]
+        assert chat.watch.assistant_lines == 0
+    with MarkChat(memory, base_url=server.url, preset="small", budget_tokens=250) as chat:
+        assert chat.budget.max_tokens == 250            # an explicit budget wins
+    with pytest.raises(ValueError):
+        MarkChat(memory, preset="huge")
 
 
 def test_briefing_skips_what_the_window_already_shows(server, memory) -> None:
@@ -125,3 +163,16 @@ def test_server_errors_are_reported(memory) -> None:
         chat_completion("http://127.0.0.1:9/v1", "m", [], timeout=2)
     with pytest.raises(ValueError):
         MarkChat(memory, keep_last=0)
+
+
+def test_skill_tokens_count_inside_the_budget(server, memory) -> None:
+    with MarkChat(memory, base_url=server.url, system="Be brief.", budget_tokens=300,
+                  skill="mark-memory-compact") as chat:
+        for text in TURNS:
+            chat.send(text)
+        system = server.requests[-1]["body"]["messages"][0]["content"]
+    assert system.startswith("Be brief.\n\n# Your memory") and "name:" not in system
+    mark_text = system.split("Be brief.\n\n", 1)[1]
+    assert "Colmeia Azul" in mark_text and estimate_tokens(mark_text) <= 300 + 2
+    with pytest.raises(ValueError):
+        MarkChat(memory, skill="no-such-skill")

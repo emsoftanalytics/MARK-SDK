@@ -89,10 +89,14 @@ def test_mcp_allowed_agent_ids_rejects_other_namespaces(tmp_path: Any) -> None:
     mark, server = _mcp_server(tmp_path, allowed_agent_ids={"team-a"})
     try:
         async def drive() -> tuple[str, str, str]:
-            denied = await server.call_tool("mark_write", {"content": "secret plan", "agent_id": "team-b"})
+            try:   # a denied namespace is an isError result (ToolError from call_tool)
+                await server.call_tool("mark_write", {"content": "secret plan", "agent_id": "team-b"})
+                denied = "accepted"
+            except Exception as exc:
+                denied = str(exc)
             allowed = await server.call_tool("mark_write", {"content": "team a fact", "agent_id": "team-a"})
             default = await server.call_tool("mark_write", {"content": "default namespace fact"})
-            return str(denied), str(allowed), str(default)
+            return denied, str(allowed), str(default)
 
         denied, allowed, default = asyncio.run(drive())
         assert "not allowed" in denied

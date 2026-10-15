@@ -188,7 +188,7 @@ class _RetrievalMixin:
                         self._record("heal", chars=len(healed_text))
 
         if getattr(self, "_budget", None) is not None and result is not None and result.ok:
-            run.recall_items[query] = self._retrieval_items(used) if text else []
+            run.recall_items[query] = self._retrieval_items(used, query) if text else []
             while len(run.recall_items) > _MAX_RECALL_CACHE:
                 run.recall_items.pop(next(iter(run.recall_items)))
         text = self._truncate_context(text) if text else ""

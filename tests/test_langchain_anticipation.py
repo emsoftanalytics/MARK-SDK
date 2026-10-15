@@ -102,7 +102,7 @@ def test_context_is_anticipated_and_stale_claims_corrected(mark, mode: str) -> N
     # First call: the ticket, plus the linked service's current port, without any memory tool.
     assert "<mark_briefing>" in first
     assert "TICKET HAL-4433 opened" in first
-    assert "port: 4444" in first
+    assert "atlas-core port = 4444" in first
     # Second call: the stale value the model stated is corrected.
     assert "9239 is outdated" in second
     assert second.index("Corrections") < second.index("TICKET HAL-4433")

@@ -32,7 +32,7 @@ class ContextBuilder:
     ) -> ContextBundle:
         """Build the context bundle."""
         lines: list[str] = []
-        memories: list[MemoryRecord] = []
+        memories: list[Any] = []
         scores: dict[str, float] = {}
 
         if not scored_records:

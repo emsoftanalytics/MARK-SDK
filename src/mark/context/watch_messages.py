@@ -140,7 +140,7 @@ def _latest_user_turn(messages: Sequence[Any]) -> int:
 
 
 class _WatchMessagesMixin:
-    """``observe_messages`` and the small-model preset for :class:`ContextWatch`.
+    """``observe_messages`` and the model-size presets for :class:`ContextWatch`.
 
     Expects ``observe``, ``observe_tool_call`` and ``_lock`` on the host class.
     Cursor state (``_msg_count``, ``_msg_tail``) is created lazily here so
@@ -148,26 +148,43 @@ class _WatchMessagesMixin:
     """
 
     @classmethod
-    def for_small_models(cls, memory: Any, **overrides: Any) -> Any:
-        """A watch tuned for small local models with short context windows.
+    def for_preset(cls, memory: Any, preset: str | None = "default", **overrides: Any) -> Any:
+        """A watch configured by a named preset ("default", "small", "tiny").
 
-        Differences from the defaults: ``budget_chars`` 700 (vs 1800),
-        ``max_anchors`` 3 (vs 6), ``per_anchor`` 1 record per subject (vs 3),
-        ``line_chars`` 120 per bullet (vs 240) and ``follow_links`` 1 (vs 3).
-        It also sets ``budget_tokens=175`` (about 700 characters with the
-        default 4-chars-per-token estimate, so the same size as the character
-        budget) to get priority fill: corrections and "Not in memory" notices
-        are kept first, since they matter most for models that would
-        otherwise guess. Any keyword overrides a value (``budget_tokens=None``
-        restores the plain character budget).
+        See :mod:`mark.context.presets` for the measured values. Any keyword
+        overrides a preset value (``budget_tokens=None`` restores the plain
+        character budget).
         """
-        settings = {"budget_chars": 700, "max_anchors": 3, "per_anchor": 1, "line_chars": 120,
-                    "budget_tokens": 175}
-        follow_links = overrides.pop("follow_links", 1)
-        settings.update(overrides)
+        from mark.context.presets import preset_settings
+
+        settings = preset_settings(preset, **overrides)
+        follow_links = settings.pop("follow_links", None)
         watch = cls(memory, **settings)
-        watch.follow_links = follow_links
+        if follow_links is not None:
+            watch.follow_links = follow_links
         return watch
+
+    @classmethod
+    def for_small_models(cls, memory: Any, **overrides: Any) -> Any:
+        """A watch tuned for small local models (~1-3B) with short context windows.
+
+        The "small" preset: a 200-token priority-filled budget, the best four
+        lines retrieved for the current request first, one record per
+        subject, 160-character lines, one linked subject, and no earlier
+        assistant replies (small models repeat them as facts). Corrections
+        and "Not in memory" notices are kept first.
+        """
+        return cls.for_preset(memory, "small", **overrides)
+
+    @classmethod
+    def for_tiny_models(cls, memory: Any, **overrides: Any) -> Any:
+        """A watch for models of about 1B parameters or less ("tiny" preset).
+
+        Facts and the three best lines for the current request within 160
+        tokens; no linked subjects and no assistant replies. Tiny models
+        misread long briefings, so less is more here.
+        """
+        return cls.for_preset(memory, "tiny", **overrides)
 
     def observe_messages(self, messages: Sequence[Any]) -> list[str]:
         """Feed the messages of *messages* not seen by a previous call. Returns new anchors.

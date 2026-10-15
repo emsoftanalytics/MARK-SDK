@@ -5,7 +5,15 @@ A :class:`ContextBudget` is a hard cap, in tokens, on one injected block
 Candidate lines are :class:`BudgetItem` objects tagged with a *section*; the
 budget includes them by section priority until the cap is reached:
 
-    corrections > unknown ("Not in memory") > facts > records > linked > related
+    corrections > unknown ("Not in memory") > relevant > facts > records >
+    linked > related > assistant
+
+``relevant`` holds what the current request retrieved (its facts and best
+records): the line that answers the question beats a record that merely
+names a subject in play (usage test 0.2.0a9: at 200 tokens 11 of 25 answers
+were cut while subject records were kept). ``assistant`` is the model's own
+earlier output (low trust, see ``mark.context.provenance``): kept only when
+everything else fits.
 
 Rules (all deterministic — same items, same counter, same result):
 
@@ -36,7 +44,8 @@ from typing import Any, Callable, Sequence
 TokenCounter = Callable[[str], int]
 
 #: Section priority, highest first.
-SECTIONS: tuple[str, ...] = ("corrections", "unknown", "facts", "records", "linked", "related")
+SECTIONS: tuple[str, ...] = ("corrections", "unknown", "relevant", "facts", "records", "linked",
+                             "related", "assistant")
 _RANK = {name: rank for rank, name in enumerate(SECTIONS)}
 _ELLIPSIS = "…"
 _MIN_TRUNCATED_CHARS = 8   # a cut item shorter than this carries no information

@@ -11,11 +11,16 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from mark.context.provenance import observe_options
 from mark.adapters.langchain._middleware_support import (
     _run_sync,
     _SystemMessage,
     content_text,
 )
+
+
+_LONG_SKILL = "mark-memory-middleware"
+_COMPACT_SKILL = "mark-memory-compact"
 
 
 class _CallWrappersMixin:
@@ -90,8 +95,9 @@ class _CallWrappersMixin:
 
             # Auto-inject the packaged middleware skill once, so agents know how
             # to treat MARK-injected memory without manual prompt wiring.
-            skill_block = self._packaged_skill() if self._include_skill else ""
-            if skill_block and "mark-memory-middleware" not in system_text:
+            skill_block = self._skill_block() if self._include_skill else ""
+            marker = "mark-memory-middleware" if self._skill_name() == _LONG_SKILL else skill_block
+            if skill_block and marker not in system_text:
                 additions.append({"type": "text", "text": skill_block})
 
             if context:
@@ -173,14 +179,51 @@ class _CallWrappersMixin:
         return []
 
     def _packaged_skill(self) -> str:
-        """Lazy-load the packaged mark-memory-middleware skill text."""
+        """Lazy-load the packaged mark-memory-middleware skill text (the long skill)."""
         if self._skill_text is None:
             try:
                 from mark.middlewares.skills import load_skill_text
-                self._skill_text = load_skill_text("mark-memory-middleware")
+                self._skill_text = load_skill_text(_LONG_SKILL)
             except Exception:
                 self._skill_text = ""
         return self._skill_text
+
+    def _skill_name(self) -> str | None:
+        """Which packaged skill to inject: an explicit name, the long skill, or none.
+
+        ``include_skill=True`` keeps the long skill for large models and
+        injects *no* skill for the small/tiny presets or when the long skill
+        would take more than half of ``budget_tokens`` (it is charged to the
+        budget, see ``_middleware_context``). Measured on llama3.2:1b (a10
+        context report): the compact skill cost 8 of 25 answers even with the
+        full memory budget beside it, so small models get a self-explanatory
+        briefing instead; pass ``include_skill="mark-memory-compact"`` to opt in.
+        """
+        choice = self._include_skill
+        if not choice:
+            return None
+        if isinstance(choice, str):
+            return choice
+        if getattr(self, "_preset", None) in ("small", "tiny"):
+            return None
+        budget = getattr(self, "_budget", None)
+        if budget is not None and budget.count(self._packaged_skill()) > budget.max_tokens // 2:
+            return None
+        return _LONG_SKILL
+
+    def _skill_block(self) -> str:
+        """The skill text exactly as injected ("" when none)."""
+        name = self._skill_name()
+        if name is None:
+            return ""
+        if name == _LONG_SKILL:
+            return self._packaged_skill()       # unchanged for large models
+        cache = self.__dict__.setdefault("_skill_cache", {})
+        if name not in cache:
+            from mark.middlewares.skills.loader import load_skill_text, prompt_text
+            # Without frontmatter: small models read "name: ..." as a tool to call (M7).
+            cache[name] = prompt_text(load_skill_text(name))
+        return cache[name]
 
     # ── (a)wrap_tool_call: absorb tool results into MARK ──────────────────
 
@@ -203,8 +246,9 @@ class _CallWrappersMixin:
             skip in lowered for skip in ("write", "delete", "remove")
         ):
             self._record("observe_immediate", tool=tool_name, chars=len(content))
-            return self._backend_call("observe", observation, agent_id=self._agent_id)
-        self._queue_observation(run, observation)
+            return self._backend_call("observe", observation, agent_id=self._agent_id,
+                                      **observe_options("tool"))
+        self._queue_observation(run, observation, **observe_options("tool"))
         return None
 
     def wrap_tool_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:

@@ -148,10 +148,9 @@ def test_small_model_preset_is_tighter(memory) -> None:
         full.observe_messages(question)
         small.observe_messages(question)
         big, tight = full.briefing(), small.briefing()
-    assert (small.budget_chars, small.max_anchors, small.per_anchor, small.line_chars, small.follow_links) == (
-        700, 3, 1, 120, 1)
-    assert len(tight.text) <= 700 + len("<mark_briefing>\n\n</mark_briefing>")
+    assert (small.max_anchors, small.per_anchor, small.line_chars, small.follow_links) == (3, 1, 160, 1)
+    assert tight.usage.used_tokens <= small.budget.max_tokens
     assert len(tight.anchors) <= 3
     assert len(tight.text) < len(big.text)
-    assert all(len(line) <= 122 for line in tight.text.splitlines())
+    assert all(len(line) <= 162 for line in tight.text.splitlines())
     assert ContextWatch.for_small_models(memory, budget_chars=500, background=False).budget_chars == 500

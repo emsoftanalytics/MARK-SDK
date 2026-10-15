@@ -18,12 +18,93 @@ import logging
 import re
 import time
 from concurrent.futures import Future
+from dataclasses import replace
 from typing import Any
 
+from mark.context.provenance import USER_TAG
+from mark.context.watch_lines import trusted
 from mark.context.watch_support import _TOKEN_RE, _Anchor, _label_for, _mentions_value
 
 # Same logger name as before the split, so log filtering keeps working.
 logger = logging.getLogger("mark.context.watch")
+
+
+def _confirmed(result: Any, key: str) -> bool:
+    """Memory confirms a subject only through a fact or a trusted record naming it.
+
+    The model's own stored replies do not count: otherwise a phrase it
+    invented ("Caldo Verde", "mark_memory_middleware") would be "known" as
+    soon as its reply was stored, and anchor the next briefings (M7).
+    """
+    from mark.intelligence.query_understanding import _anchor_norm, _contains_anchor
+
+    if any(_anchor_norm(str(f.subject)) == key for f in getattr(result, "facts", None) or []):
+        return True
+    return any(trusted(f) and _contains_anchor(_anchor_norm(f.content), key)
+               for f in result.fragments)
+
+
+#: Untrusted results (assistant replies, bare questions) in one top-k that
+#: trigger a second, user-statements-only retrieval for that query.
+_CROWDED = 3
+
+
+def _with_user_lane(memory: Any, batch: list[str], results: list[Any]) -> list[Any]:
+    """Top up crowded results with user statements (tag ``mark:user``).
+
+    Retrieval ranks by relevance, not provenance: long assistant replies
+    repeat the user's words and fill the top-k, pushing the user's own
+    statement out (a10 small-model replay: "I moved from Porto to Braga"
+    missing behind five replies). For each query whose results hold
+    ``_CROWDED`` or more untrusted records, user statements are retrieved
+    separately and appended after the trusted results of the first pass.
+    """
+    crowded = [i for i, r in enumerate(results)
+               if sum(not trusted(f) for f in r.fragments) >= _CROWDED]
+    if not crowded:
+        return results
+    try:
+        extra = memory.retrieve_many_sync([batch[i] for i in crowded], tags=[USER_TAG])
+    except Exception as exc:   # the first pass is still a valid answer
+        logger.warning("user-statement retrieval failed: %s", exc)
+        return results
+    merged = list(results)
+    for index, lane in zip(crowded, extra):
+        first = merged[index]
+        ids = {f.id for f in first.fragments}
+        pairs = list(zip(first.fragments, first.scores)) + [
+            (f, s) for f, s in zip(lane.fragments, lane.scores) if f.id not in ids]
+        merged[index] = replace(first, fragments=[f for f, _ in pairs], scores=[s for _, s in pairs])
+    return merged
+
+
+#: Questions about a value now, before or since it changed.
+_STATE_QUESTION = re.compile(
+    r"\b(now|current(ly)?|before|originally|original|old|previous(ly)?|used to|chang\w*|"
+    r"still|any ?more|latest|new|moved|switched)\b", re.IGNORECASE)
+#: Statements that replace an earlier value ("moved from Porto to Braga").
+_CHANGE_STATEMENT = re.compile(
+    r"\b(moved|changed|switched|no longer|actually|now|new|instead|stopped|started|"
+    r"replaced|renamed|correction|not \w+ any ?more)\b", re.IGNORECASE)
+_CHANGE_QUERY = "moved changed switched now no longer actually new instead stopped started replaced"
+
+
+def _change_lane(memory: Any, task: str, limit: int) -> list[Any]:
+    """The user's change statements, for questions about current or earlier values.
+
+    "Which city do I live in now?" shares no word with "I moved from Porto
+    to Braga", so relevance search alone misses the one line that answers
+    it (a10 replay, llama3.2:3b). For such questions the user's statements
+    that replace an earlier value are fetched as their own small group.
+    """
+    if limit <= 0 or not _STATE_QUESTION.search(task):
+        return []
+    try:
+        lane = memory.retrieve_many_sync([_CHANGE_QUERY], tags=[USER_TAG])[0]
+    except Exception as exc:
+        logger.warning("change-statement retrieval failed: %s", exc)
+        return []
+    return [f for f in lane.fragments if trusted(f) and _CHANGE_STATEMENT.search(f.content)][:limit]
 
 
 class _WatchPrefetchMixin:
@@ -101,7 +182,7 @@ class _WatchPrefetchMixin:
         batch = list(queries) + ([task] if task else [])
         if not batch:
             return
-        results = self._memory.retrieve_many_sync(batch)
+        results = _with_user_lane(self._memory, batch, self._memory.retrieve_many_sync(batch))
         from mark.intelligence.query_understanding import _anchor_norm
 
         links: list[str] = []
@@ -111,11 +192,15 @@ class _WatchPrefetchMixin:
                 self._results[key] = result
                 anchor = self._anchors.get(key)
                 if anchor is not None:
-                    anchor.known = key not in result.missing_anchors
+                    anchor.known = key not in result.missing_anchors and _confirmed(result, key)
                     if anchor.known and not anchor.linked and self.follow_links:
                         links.extend(self._links_from(anchor, result))
             if task:
                 self._task_results = {task: results[-1]}
+        if task:
+            changes = _change_lane(self._memory, task, getattr(self, "change_lines", 0))
+            with self._lock:
+                self._task_changes = {task: changes}
         if links:
             self._prefetch(links, None)
 
@@ -124,7 +209,7 @@ class _WatchPrefetchMixin:
         from mark.intelligence.query_understanding import _anchor_norm, _contains_anchor
 
         labels: list[str] = []
-        for fragment in result.fragments[:3]:
+        for fragment in [f for f in result.fragments if trusted(f)][:3]:
             if not _contains_anchor(_anchor_norm(fragment.content), anchor.key):
                 continue
             for key, label in self._extract_anchors(fragment.content):
