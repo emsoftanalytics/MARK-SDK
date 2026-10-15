@@ -75,3 +75,38 @@ earlier agents (read-only for you).`
 
 Arm B `{MEMORY_SYSTEM_FINAL}`: `MARK via {ARM_DIR}/mark recall "QUERY" [-k N]
 (N <= 15) and {ARM_DIR}/mark stats. Run as many recall queries as you need.`
+
+---
+
+# Run 2 (large profile, v0.2.0a8)
+
+Same templates as run 1 with `5` → `10` agents. `{MARK}` is a wrapper for the
+SDK's own `mark` command bound to the arm's database (a `mark serve` process
+keeps it warm during the run).
+
+### Arm B (with MARK, agents curate) — `{MEMORY_SYSTEM}`
+
+```
+MARK, a local memory runtime, available through the command {MARK} :
+  {MARK} ingest FILE [--session NAME]                  store every line of FILE as a memory
+  {MARK} store "TEXT" [--session NAME] [--occurred-at DATE]   store one memory
+  {MARK} fact set SUBJECT ATTRIBUTE VALUE --valid-from DATE   record a value that changes over time
+  {MARK} fact get SUBJECT [ATTRIBUTE]                  current value(s)
+  {MARK} fact history SUBJECT ATTRIBUTE                every value over time
+  {MARK} recall "QUERY" [-k N]                          search memory (facts first; N <= 15)
+  printf 'q1\nq2\n' | {MARK} recall-many - [-k N]       many searches in one call
+  {MARK} stats                                          counts
+You may ingest the log, store your own notes and record facts. Do not create
+any other files and do not keep notes on disk outside MARK.
+```
+
+### Arm C (with MARK, raw ingestion only)
+
+No ingest agents. The harness runs `{MARK} ingest chunks/chunk_K.log` for
+K = 1..10, then only the final-session agent runs, with the same
+`{MEMORY_SYSTEM_FINAL}` as arm B:
+
+```
+MARK via {MARK} recall "QUERY" [-k N] (N <= 15), printf '...' | {MARK} recall-many - ,
+{MARK} fact get / fact history, and {MARK} stats. Run as many queries as you need.
+```

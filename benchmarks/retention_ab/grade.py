@@ -1,6 +1,6 @@
 """Grade answers.json files against the private gold answers.
 
-    python grade.py armA/answers.json armB/answers.json [--out results.json]
+    python grade.py armA/answers.json armB/answers.json [--key answers.json] [--out results.json]
 
 Scoring is strict and LLM-free: an answer is correct when, after normalising
 case/punctuation/whitespace, it equals the gold value or an alias, or contains
@@ -17,7 +17,13 @@ from collections import defaultdict
 from pathlib import Path
 
 HERE = Path(__file__).parent
-GOLD = {q["id"]: q for q in json.loads((HERE / "answers.json").read_text())}
+GOLD: dict[str, dict] = {}
+
+
+def load_key(path: Path) -> None:
+    """Load the private gold answers written by gen.py."""
+    GOLD.clear()
+    GOLD.update({q["id"]: q for q in json.loads(path.read_text())})
 UNKNOWN = ("unknown", "not mentioned", "no record", "not found", "no information", "not in memory", "n/a")
 VALUE_PATTERNS = [r"\b\d{4}\b", r"HAL-\d{4}", r"[a-z]{2}-[a-z]+-\d"]
 
@@ -67,8 +73,10 @@ def grade(path: Path) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("files", nargs="+")
+    parser.add_argument("--key", default=str(HERE / "answers.json"), help="gold answers from gen.py")
     parser.add_argument("--out")
     args = parser.parse_args()
+    load_key(Path(args.key))
     results = [grade(Path(f)) for f in args.files]
     for res in results:
         print(f"{res['file']}: {res['score']}/{res['total']}")

@@ -53,11 +53,22 @@ forward itself.
 | `prompts.md` | Verbatim session prompt templates |
 | `results/` | Run 1: run log, both arms' final memory and answers, graded results, `RESULTS.md` |
 
+## Profiles
+
+| Profile | Log | Sessions | Questions | Used in |
+| --- | --- | --- | --- | --- |
+| `small` (default) | 543 lines, 64 services, 32 people | 5 | 44 | run 1 (v0.2.0a7) |
+| `large` | 4,494 lines, 160 services, 64 people, ~120 tickets | 10 | 61 | run 2 (v0.2.0a8) |
+
+Run 2 adds **arm C**: the raw log is ingested into MARK mechanically and only
+the final question agent runs. It measures MARK's retrieval on its own, with
+no agent curation.
+
 ## Reproduce
 
 ```bash
 cd benchmarks/retention_ab
-python gen.py                                   # chunks/, questions.json, answers.json
+python gen.py [--profile large] [--out DIR]     # chunks/, questions.json, answers.json
 mkdir -p run/armA run/armB
 printf '# Halcyon Labs operational notes (relay)\n' > run/armA/notes.md
 cat > run/armB/mark <<EOF
@@ -76,7 +87,7 @@ done
 
 cp questions.json run/armA/ && cp questions.json run/armB/
 # Launch the final-session prompt for each arm, then:
-python grade.py run/armA/answers.json run/armB/answers.json --out results/graded.json
+python grade.py --key answers.json run/armA/answers.json run/armB/answers.json --out results/graded.json
 ```
 
 Agents must not be able to read `gen.py`, `answers.json` or `chunks/` during

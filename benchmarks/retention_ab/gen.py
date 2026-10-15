@@ -11,13 +11,27 @@ import json
 import random
 from pathlib import Path
 
+import argparse
+
+_args = argparse.ArgumentParser(description="Generate the retention A/B benchmark.")
+_args.add_argument("--profile", choices=["small", "large"], default="small",
+                   help="small: run 1 (543 lines, 5 sessions); large: ~10x (10 sessions)")
+_args.add_argument("--out", default=None, help="output directory (default: next to this file)")
+ARGS = _args.parse_args()
+LARGE = ARGS.profile == "large"
+
 rng = random.Random(20261015)
 HERE = Path(__file__).parent
-OUT = HERE
+OUT = Path(ARGS.out) if ARGS.out else HERE
+OUT.mkdir(parents=True, exist_ok=True)
 (OUT / "chunks").mkdir(exist_ok=True)
 
 _FAMILIES = ["atlas", "billing", "orion", "pulse", "vega", "lyra", "nova", "cobalt",
              "ember", "quartz", "helix", "zephyr", "titanium", "sable", "kestrel", "mosaic"]
+if LARGE:
+    _FAMILIES += ["aurora", "basalt", "cinder", "delta", "ember2", "fjord", "garnet", "harbor",
+                  "iris", "juniper", "krypton", "lumen", "meteor", "nimbus", "onyx", "prism",
+                  "quill", "raven", "sierra", "tundra", "umbra", "vortex", "willow", "xenon"]
 _ROLES = ["gateway", "gate", "core", "worker"]
 SERVICES = [f"{f}-{r}" for f in _FAMILIES for r in _ROLES]
 PEOPLE = [
@@ -29,13 +43,19 @@ PEOPLE = [
     "Zoltan Farkas", "Aisha Bello", "Bram de Vries", "Chiara Russo", "Diego Alvarez",
     "Elif Yilmaz", "Farid Mansour",
 ]
+if LARGE:
+    _FIRST = ["Ada", "Bola", "Cyrus", "Dana", "Eli", "Femi", "Gita", "Hugo", "Ines", "Jae", "Kofi",
+              "Lena", "Malik", "Nora", "Omar", "Pia"]
+    _LAST = ["Achebe", "Brandt", "Castillo", "Dang"]
+    PEOPLE += [f"{first} {last}" for last in _LAST for first in _FIRST][:32]
 TEAMS = ["Platform", "Payments", "Search", "Observability", "Identity", "Messaging", "Edge", "Data", "ML"]
 CITIES = ["Lagos", "Berlin", "Lisbon", "Nairobi", "Toronto", "Singapore", "Warsaw", "Austin"]
 REGIONS = ["eu-west-1", "eu-central-1", "us-east-1", "us-west-2", "af-south-1", "ap-southeast-1"]
 DATABASES = ["PostgreSQL 14", "PostgreSQL 15", "PostgreSQL 16", "MySQL 8.0", "Redis 7", "CockroachDB 23", "MongoDB 7"]
 
-DAYS_PER_CHUNK = 8
-CHUNKS = 5
+DAYS_PER_CHUNK = 4 if LARGE else 8
+CHUNKS = 10 if LARGE else 5
+CHANGES_PER_DAY = (100, 150) if LARGE else (10, 15)
 
 state: dict = {"svc": {}, "person": {}, "ticket": {}, "misc": {}}
 history: dict = {}  # (kind, name, attr) -> [(day, value)]
@@ -120,6 +140,12 @@ TICKET_TOPICS = [
     "kestrel sync drops deletes", "mosaic thumbnails render black", "titanium core panics on nil config",
     "sable gateway leaks file descriptors", "vault-rotator skips one secret", "canary metrics missing tags",
 ]
+if LARGE:
+    _SYMPTOMS = ["timeouts", "memory growth", "stale reads", "duplicate events", "slow startup",
+                 "dropped connections", "wrong totals", "missing logs", "cache misses", "retry storms",
+                 "clock skew", "high p99 latency", "partial writes", "auth failures"]
+    _WHERE = ["during deploys", "after failover", "under load", "at midnight UTC", "for EU users", "on mobile"]
+    TICKET_TOPICS += [f"{what} {where}" for what in _SYMPTOMS for where in _WHERE][:84]
 ticket_ids: list[str] = []
 for k, topic in enumerate(TICKET_TOPICS):
     tid = f"HAL-{rng.randint(1000, 9999)}"
@@ -136,7 +162,7 @@ for k, topic in enumerate(TICKET_TOPICS):
 
 # ── Changes over time (days 8–40) ────────────────────────────────────────────
 for day in range(8, 41):
-    for _ in range(rng.randint(10, 15)):
+    for _ in range(rng.randint(*CHANGES_PER_DAY)):
         roll = rng.random()
         if roll < 0.18:
             svc = rng.choice(SERVICES)
@@ -219,6 +245,7 @@ for c in range(CHUNKS):
 
 # ── Questions ────────────────────────────────────────────────────────────────
 questions: list[dict] = []
+CU_N, HIST_N, LONG_N, MH_N, ID_N, ST_N = (15, 8, 8, 5, 6, 5) if LARGE else (10, 5, 5, 4, 4, 3)
 
 
 def changes(kind: str, name: str, attr: str) -> int:
@@ -234,44 +261,44 @@ svc_attr_names = {"port": "port does {s} listen on", "owner": "currently owns {s
                   "db": "datastore does {s} use", "version": "release of {s} is in production"}
 updated = [(s, a) for s in SERVICES for a in ("port", "owner", "region", "db") if changes("svc", s, a) >= 2]
 rng.shuffle(updated)
-for n, (s, a) in enumerate(updated[:10], 1):
+for n, (s, a) in enumerate(updated[:CU_N], 1):
     phrase = {"port": f"Which port does {s} listen on now?", "owner": f"Who currently owns {s}?",
               "region": f"Which region does {s} run in now?", "db": f"Which datastore does {s} use now?"}[a]
     ask(f"CU{n}", "current-after-multiple-updates", phrase, state["svc"][s][a])
 
-hist_pool = [(s, a) for s in SERVICES for a in ("port", "region", "db") if changes("svc", s, a) >= 1 and (s, a) not in updated[:10]]
+hist_pool = [(s, a) for s in SERVICES for a in ("port", "region", "db") if changes("svc", s, a) >= 1 and (s, a) not in updated[:CU_N]]
 rng.shuffle(hist_pool)
-for n, (s, a) in enumerate(hist_pool[:5], 1):
+for n, (s, a) in enumerate(hist_pool[:HIST_N], 1):
     first = history[("svc", s, a)][0][1]
     label = {"port": "port", "region": "region", "db": "datastore"}[a]
     ask(f"HIST{n}", "original-value-before-changes", f"What was the original {label} of {s} when it was first inventoried?", first)
 
 long_pool = [(s, a) for s in SERVICES for a in ("port", "region", "db", "owner") if changes("svc", s, a) == 0]
 rng.shuffle(long_pool)
-for n, (s, a) in enumerate(long_pool[:5], 1):
+for n, (s, a) in enumerate(long_pool[:LONG_N], 1):
     phrase = {"port": f"Which port does {s} listen on?", "owner": f"Who owns {s}?",
               "region": f"Which region does {s} run in?", "db": f"Which datastore does {s} use?"}[a]
     ask(f"LONG{n}", "early-fact-never-updated", phrase, state["svc"][s][a])
-ask("LONG6", "early-fact-never-updated", "Per ADR-019, what percentage of production traffic does the canary stage receive?", "7 percent", ["7%", "7 percent", "seven percent"])
-ask("LONG7", "early-fact-never-updated", "What is the retention period for audit logs?", "400 days")
-ask("LONG8", "early-fact-never-updated", "What is the guest Wi-Fi network name?", "halcyon-guest-7")
+ask(f"LONG{LONG_N + 1}", "early-fact-never-updated", "Per ADR-019, what percentage of production traffic does the canary stage receive?", "7 percent", ["7%", "7 percent", "seven percent"])
+ask(f"LONG{LONG_N + 2}", "early-fact-never-updated", "What is the retention period for audit logs?", "400 days")
+ask(f"LONG{LONG_N + 3}", "early-fact-never-updated", "What is the guest Wi-Fi network name?", "halcyon-guest-7")
 
 mh = [t for t in ticket_ids]
 rng.shuffle(mh)
-for n, tid in enumerate(mh[:4], 1):
+for n, tid in enumerate(mh[:MH_N], 1):
     svc = state["ticket"][tid]["service"]
     ask(f"MH{n}", "multi-hop-ticket-to-current-owner", f"Who currently owns the service affected by ticket {tid}?", state["svc"][svc]["owner"])
-for n, tid in enumerate(mh[4:8], 5):
+for n, tid in enumerate(mh[MH_N:2 * MH_N], MH_N + 1):
     assignee = state["ticket"][tid]["assignee"]
     ask(f"MH{n}", "multi-hop-ticket-assignee-team", f"Which team is the current assignee of ticket {tid} on now?", state["person"][assignee]["team"])
 
-id_pool = [t for t in ticket_ids if t not in mh[:8]]
+id_pool = [t for t in ticket_ids if t not in mh[:2 * MH_N]]
 rng.shuffle(id_pool)
-for n, tid in enumerate(id_pool[:4], 1):
+for n, tid in enumerate(id_pool[:ID_N], 1):
     ask(f"ID{n}", "exact-id-lookup", f"Which ticket ID tracks the issue '{state['ticket'][tid]['topic']}'?", tid)
 status_pool = [t for t in ticket_ids if changes("ticket", t, "status") >= 2]
 rng.shuffle(status_pool)
-for n, tid in enumerate(status_pool[:3], 1):
+for n, tid in enumerate(status_pool[:ST_N], 1):
     ask(f"ST{n}", "ticket-status-after-updates", f"What is the current status of ticket {tid}?", state["ticket"][tid]["status"])
 
 ask("MISC1", "current-after-multiple-updates", "Who is the current primary on-call?", state["misc"]["oncall-primary"]["value"])
@@ -282,9 +309,10 @@ ask("ABS1", "abstention-never-mentioned", "Which port does the titan-billing ser
 ask("ABS2", "abstention-never-mentioned", "Which team is Marcus Webb on?", "unknown")
 ask("ABS3", "abstention-never-mentioned", "What is the status of ticket HAL-0042?", "unknown")
 
+assert len({q["id"] for q in questions}) == len(questions), "duplicate question ids"
 (OUT / "questions.json").write_text(json.dumps(
     [{"id": q["id"], "question": q["question"]} for q in questions], indent=2))
-(HERE / "answers.json").write_text(json.dumps(questions, indent=2))
+(OUT / "answers.json").write_text(json.dumps(questions, indent=2))
 print(f"log lines: {len(log)}; questions: {len(questions)}")
 for c in range(CHUNKS):
     p = OUT / "chunks" / f"chunk_{c + 1}.log"
