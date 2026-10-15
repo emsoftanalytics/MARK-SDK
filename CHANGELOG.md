@@ -4,163 +4,114 @@ All notable changes to the MARK Python SDK will be documented here.
 
 This project follows semantic versioning for public package releases.
 
-## 0.2.0a7 - 2026-10-15
-
-Reliability, speed, and retrieval-quality release. Benchmarked with
-`benchmarks/bench_runtime.py` (offline, default configuration, numpy installed):
-retrieval p50 is 12.5 ms at 2k memories (0.2.0a6: 89 ms) and 32 ms at 10k
-(0.2.0a6: 171 ms); hit@1 on the bundled fact set is 14/14 even with 10k
-distractor memories (0.2.0a6: 8/14 with 30 memories).
-
-### Breaking changes
-
-- Explicit retrieval policies (`FAST`, `BALANCED`, `DEEP`) are now
-  authoritative; the query classifier no longer overrides their `top_k` or
-  graph depth. Use the new `RetrievalPolicy.AUTO` for classifier-driven sizing.
-- `FernetEncryptionProvider()` with neither a key nor a passphrase now raises
-  instead of silently generating a key that is lost on restart. Pass
-  `ephemeral=True` for throwaway keys.
-- The implicit default web search skill used by gap healing requires a `web`
-  permission grant. Passing an explicit `web_skill` counts as consent.
-  `MarkAgentMiddleware(auto_heal=...)` now defaults to `False` (it never ran
-  before because of a severity-case bug).
-- `BusSnapshot.facts_by_trust(level)` returns facts at or above `level`, as
-  documented (previously exact match).
-- Docker sandbox workspaces must sit inside an explicit `workspace_root`.
-- Redaction placeholders are unified: secrets become `[REDACTED]`, and sync
-  redaction also replaces emails with `[EMAIL]`. Sync envelopes no longer
-  include a content hash of unredacted content.
-- `HashEmbeddingProvider` defaults to a new 256-dim v2 feature space. Existing
-  stores are re-embedded automatically on first retrieval (see "embedder
-  fingerprints" below).
-- After a run, `MarkAgentMiddleware` clears `mark_context` from graph state.
-
-### Known limitations
-
-- Encryption at rest covers fragment content only; tags, metadata, session
-  ids, graph labels, and embeddings stay plaintext so they can be filtered in
-  SQL. See SECURITY.md.
+## 0.2.0a8 - 2026-10-15
 
 ### Added
 
-- Hybrid retrieval: SQLite FTS5 BM25 lexical channel plus vector channel,
-  fused with Reciprocal Rank Fusion. Exact identifiers and names hit reliably.
-  FTS5 is probed at runtime and never indexes plaintext for encrypted stores.
-- Calibrated relevance per result (`RetrievalResult.relevance`) driving gap
-  detection, plus per-channel hit counts (`RetrievalResult.channels`).
-- `ReinforceMode` (`relevant` default, `all`, `none`) and a per-call
-  `reinforce=` option on `RetrievalPipeline.retrieve()`.
-- Local embedding providers: `OpenAICompatibleEmbeddingProvider` (llama.cpp
-  server, LM Studio, vLLM, LocalAI, Ollama `/v1`; stdlib HTTP),
-  `FastEmbedProvider` (ONNX, no torch), and `Model2VecProvider`. The Ollama
-  provider uses the batch `/api/embed` endpoint with fallback to the legacy
-  endpoint. HTTP providers batch, use connect/read timeouts, and retry
-  transient failures with jittered backoff.
-- Embedder fingerprints: stores record which embedding space each agent's
-  memory was built with and re-embed when the embedder changes.
-- Vectorised search backend when numpy is installed (`mark-sdk[fast]`):
-  about 1 ms at 10k vectors and 7 ms at 100k. New extras: `fast`,
-  `fastembed`, `model2vec`.
-- Store APIs: `retrievable_ids`, `lexical_search`, `get_many`, `touch_many`,
-  `update_importance_many`, `embeddings_for_agent`, `get_meta`/`set_meta`,
-  change listeners, and `fts_available`.
-- `MarkAgentMiddleware.awrap_model_call` and full `ainvoke`/`astream` support.
-- MCP: `allowed_agent_ids` namespace allowlist and bounded `importance`.
-- Optional HMAC signing for trust-bus messages (`signing_key=`).
-- `SimpleMemory.feedback()` now persists bounded importance feedback and
-  forwards to `HOOK_FEEDBACK`; `LocalMarkBackend.feedback` is wired to it.
-- `MiddlewareStack.from_bound()` for deriving independent stacks.
-- `benchmarks/bench_runtime.py`: reproducible offline latency and hit@k
-  benchmark.
+- Anticipatory context: `ContextWatch` follows an agent's conversation, tool
+  calls and tool results, prefetches memory about the subjects in play
+  (including linked subjects, such as the service named by a ticket), and
+  provides a compact briefing before each model call without the agent
+  issuing a search.
+- `MarkAgentMiddleware` injects the anticipatory briefing automatically
+  (`anticipate=True` by default), including corrections when the model states
+  a value that memory records as superseded, and notices for subjects that are
+  not in memory.
+- Bi-temporal facts: `memory.facts.set/get/current/history/as_of` record values
+  that change over time with validity intervals. Late-arriving updates are
+  placed correctly in history, corrections are audited rather than deleted,
+  and fact values are encrypted at rest when encryption is enabled.
+- Time-aware retrieval: queries about the current or original state of a
+  subject return the newest or earliest matching record first, using
+  `occurred_at` or a leading date stamp as the event time.
+- `occurred_at=` on `store_sync` and `store_many_sync` to record when an event
+  happened, independent of when it was stored.
+- Batch operations: `retrieve_many` / `retrieve_many_sync` answer several
+  queries in one pass, and `store_many_sync` embeds and writes many memories
+  in a single transaction.
+- `mark` command-line interface: `ingest`, `store`, `recall`, `recall-many`,
+  `fact set|get|history`, `stats`, and `serve`.
+- `mark serve` keeps a store warm for fast command-line use, restricted to
+  loopback with token authentication and a per-database lock.
+- `RetrievalResult` exposes `facts`, `temporal_intent`, and `missing_anchors`.
+
+### Changed
+
+- Gap reports now flag named entities and identifiers that do not occur
+  anywhere in memory, even when other words in the query match.
+- `import mark` loads public names on first use, reducing import time from
+  roughly 370 ms to under 10 ms. All public names remain available.
+- The default vector index switches to numpy only once an index is large
+  enough to benefit, so short-lived processes with small stores start faster.
+- Store schema version 4 adds the facts table; existing stores upgrade in
+  place.
 
 ### Fixed
 
-Retrieval and storage
+- Keyword search over large filtered scopes could miss in-scope matches.
+- Term matching treated unrelated identifiers with a shared prefix (for
+  example `titan` and `titanium`) as the same word.
+- Concurrent creation of a new store from several processes could fail.
+- Several modules could not be imported on their own because of circular
+  imports.
 
-- Retrieval only ever considered an agent's top 200 fragments by importance;
-  older or low-importance memories were unreachable. Filters now run in SQL
-  with no row cap (also fixed in pruning, consolidation, working memory, and
-  `clear()`).
-- One agent's memories (and deleted or quarantined entries) could crowd
-  another agent's results to zero. The vector index is now partitioned per
-  agent and kept consistent on delete and state changes.
-- Reads changed rankings: every retrieval boosted importance of whatever was
-  returned. Importance boosts and edge co-activation now apply only to
-  results with real query evidence; access writes are batched.
-- Gap reports said "no gap" on complete misses; gaps now use calibrated
-  query evidence.
-- Fragments failing content-hash verification were still returned; they are
-  now persisted as contradicted and never surface.
-- `VectorIndex`, `CachedEmbeddingProvider`, and the in-memory SQLite store
-  were not thread-safe under the runtime's thread pool.
-- `runtime.index` was not the index used by the pipeline (an empty index is
-  falsy).
-- Dimension mismatches between embedders were silently truncated; they now
-  raise and trigger re-embedding.
-- `SentenceTransformerEmbeddingProvider` could never be constructed
-  (self-import).
-- Opening a pre-versioned database with blocks but no fragments crashed.
-- `session_prefix` did not escape SQL `LIKE` wildcards.
-- Schema v3: float32 embedding BLOBs (legacy JSON embeddings still load),
-  composite indexes, WAL tuning, and a persisted write version that lets
-  caches stay valid across threads and processes.
+## 0.2.0a7 - 2026-10-15
 
-LangChain, agents, adapters
+### Breaking changes
 
-- Every async run of `MarkAgentMiddleware` crashed (`awrap_model_call` missing).
-- Concurrent runs sharing one middleware leaked or dropped each other's
-  context; per-run state is now isolated and released on errors.
-- The second and later model calls in a run lost MARK memory.
-- Stale memory from a checkpointed earlier turn was injected into unrelated
-  later turns.
-- Empty stores injected a gap block into every prompt.
-- Blocking SQLite and embedding work ran on the event loop; timeouts had no
-  effect. Hooks no longer raise into the user's agent, and background tasks
-  are tracked with logged failures.
-- `MarkAgent.use()` mutated the runtime-wide middleware stack, and `run()`
-  mutated a reusable `AgentRun`.
-- `PluginRegistry.register` left half-registered plugins when `on_register`
-  raised.
-- MCP adapter supports `mcp` 2.x (`MCPServer`) and 1.x (`FastMCP`).
+- Explicit retrieval policies (`FAST`, `BALANCED`, `DEEP`) are applied as
+  specified; use `RetrievalPolicy.AUTO` for automatic sizing.
+- `FernetEncryptionProvider` requires a key or passphrase; pass
+  `ephemeral=True` for a temporary key.
+- The default web search skill used by gap healing requires a `web`
+  permission; `MarkAgentMiddleware(auto_heal=...)` defaults to `False`.
+- `BusSnapshot.facts_by_trust(level)` returns facts at or above `level`.
+- Docker sandbox workspaces must be inside an explicit `workspace_root`.
+- Redaction uses `[REDACTED]` for secrets and `[EMAIL]` for email addresses;
+  sync envelopes no longer include a content hash.
+- `HashEmbeddingProvider` uses a new 256-dimension feature space; existing
+  stores are re-embedded automatically.
 
-Security and integrity
+### Known limitations
 
-- Trust levels on the trust bus could be forged with a `trust:*` tag.
-- Async `MarkMemory.store()` bypassed the middleware stack, so governance and
-  redaction never ran; gap-healing evidence also bypassed governance.
-- Governance let rejected `observe` content stay retrievable.
-- `web_search` was open to SSRF via DNS rebinding, unchecked redirects,
-  fail-open resolution, and proxy variables. Connections now go to pinned,
-  validated public IPs with every redirect re-validated.
-- Redaction missed common secret formats (cloud, VCS, chat, LLM provider
-  keys, JWTs, bearer tokens, PEM keys, URL credentials, sensitive mapping
-  keys); the governance sanitizer no longer flattens newlines.
-- Encrypted stores kept an unsalted SHA-256 of plaintext; digests are now
-  keyed HMACs. PBKDF2 keys are cached, and `cryptography` is imported lazily.
-- Sandbox: code is sent over stdin (the container user could not read the
-  temp file), timeouts kill the container, and `--pids-limit`, `--user`, and
-  `--init` are set.
-- `MiddlewareStack.run` skipped after-hooks when an operation raised.
-- `SimpleMemory.retrieve(blocks=[...])` filtered after the top-k cut, so a
-  block's memories disappeared behind other blocks; block membership is now a
-  pre-filter.
-- `Authorization` mapping keys were not treated as sensitive by redaction.
-- Unescaped memory content in XML contexts could forge context boundaries.
-- Maintenance (dedup, consolidation, pruning, block moves) no longer mutates
-  sealed blocks, and the pruner keeps quarantined evidence. Decay is
-  idempotent, and naive datetimes are treated as UTC.
-- LLM extraction tolerates prose around JSON and invalid items; deterministic
-  extraction only links facts within a sentence.
+- Encryption at rest covers memory content; tags, metadata,
+  session ids, graph labels, and embeddings remain plaintext so they can be
+  filtered. See SECURITY.md.
 
-Packaging
+### Added
 
-- Editable installs could shadow the package with an empty `mark` namespace
-  (`mark.__version__` missing) because of a redundant wheel `force-include`.
-- The version is single-sourced from `src/mark/_version.py`.
-- CI checks sdist contents and packaged skill assets, runs a numpy backend
-  job, and release builds verify that the tag matches the package version.
-- Dependency lock refreshed (langchain 1.4, langchain-core 1.6, langgraph
-  1.2.15, mcp 2.3, pydantic 2.14, cryptography 50).
+- Hybrid retrieval combining keyword (BM25) and vector search with rank
+  fusion, so exact identifiers, names, and paraphrases are all found.
+- Calibrated relevance scores and per-channel hit counts on retrieval results.
+- `ReinforceMode` to control how retrieval affects memory importance.
+- Local embedding providers for OpenAI-compatible servers (llama.cpp, LM
+  Studio, vLLM, LocalAI), Ollama batch embedding, FastEmbed, and Model2Vec.
+- Automatic re-embedding when the embedding model changes.
+- Vectorised search with the optional `fast` extra.
+- Asynchronous `MarkAgentMiddleware` support (`ainvoke`, `astream`).
+- MCP namespace allowlist (`allowed_agent_ids`) and support for `mcp` 2.x.
+- Optional signing of trust-bus messages.
+- Persistent memory feedback through `SimpleMemory.feedback()`.
+
+### Fixed
+
+- Retrieval considered only an agent's 200 most important memories.
+- One agent's memories could displace another agent's results.
+- Retrieval inflated the importance of whatever it returned.
+- Gap reports did not flag queries with no relevant memory.
+- Memories failing integrity checks could still be returned.
+- Thread-safety issues in the vector index, embedding cache, and in-memory store.
+- `SentenceTransformerEmbeddingProvider` could not be constructed.
+- `MarkAgentMiddleware` failed on asynchronous runs, leaked context between
+  concurrent runs, and could inject stale context into later turns.
+- Trust levels could be forged, asynchronous writes bypassed governance, and
+  web lookups were vulnerable to server-side request forgery.
+- Secret redaction missed common credential formats.
+- Encrypted stores kept unkeyed hashes of plaintext content.
+- The Docker sandbox could not execute code and left containers running
+  after timeouts.
+- Maintenance operations could modify sealed memory blocks.
+- Editable installs could import an empty `mark` package.
 
 ## 0.2.0a6 - 2026-06-16
 

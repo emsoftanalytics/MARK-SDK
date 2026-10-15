@@ -292,6 +292,63 @@ HTTP providers batch requests, use connect/read timeouts, and retry transient
 failures with jittered backoff. MARK records each embedder's fingerprint, so
 switching models re-embeds existing memory instead of mixing vector spaces.
 
+### 8. Track values that change over time
+
+Facts record the current value of something and keep its full history.
+Later values supersede earlier ones by when they became true, not by when
+they were written:
+
+```python
+with Mark.local(".") as mark:
+    memory = mark.runtime.memory("ops")
+    memory.facts.set("atlas-core", "port", "6430", valid_from="2026-03-01")
+    memory.facts.set("atlas-core", "port", "4444", valid_from="2026-03-30")
+
+    memory.facts.get("atlas-core", "port").value              # "4444"
+    [f.value for f in memory.facts.history("atlas-core", "port")]   # ["6430", "4444"]
+
+    # Retrieval understands "now" and "originally":
+    result = memory.retrieve_sync("Which port does atlas-core use now?")
+    result.facts            # current facts about atlas-core
+    result.missing_anchors  # names in the query that memory has never seen
+```
+
+Free-text memories can carry an event time too
+(`store_sync(text, occurred_at="2026-03-30")`, or a leading `[2026-03-30]`
+stamp), and "current"/"original" questions order matching records by it.
+
+### 9. Let MARK anticipate what the agent needs
+
+`ContextWatch` follows a conversation and keeps relevant memory ready before
+the agent asks: facts about the subjects being discussed (and subjects they
+link to), corrections when the agent states an outdated value, and notices for
+subjects memory has never seen.
+
+```python
+from mark import ContextWatch
+
+with Mark.local(".") as mark, ContextWatch(mark.runtime.memory("ops")) as watch:
+    watch.observe("Please look into ticket HAL-4433.", role="user")
+    system_prompt = base_prompt + watch.briefing().text   # before each model call
+    watch.observe(model_reply, role="assistant")
+```
+
+`MarkAgentMiddleware` does this automatically for LangChain agents
+(`anticipate=True` by default).
+
+### 10. Use memory from the command line
+
+```bash
+mark ingest ops.log --session day-1
+mark fact set atlas-core port 4444 --valid-from 2026-03-30
+mark recall "Which port does atlas-core use now?"
+printf 'Who owns atlas-core?\nWhat is HAL-4433 about?\n' | mark recall-many -
+mark serve &          # keep the store warm: each call then takes about 0.1 s
+```
+
+The store comes from `--db` or `$MARK_DB`; the server binds to loopback only
+and requires a token kept next to the database.
+
 ## Comparative Samples
 
 MARK examples are written as A/B comparisons: the same task runs once with
