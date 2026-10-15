@@ -15,6 +15,7 @@ from mark.memory.facade.core import MemoryCore
 if TYPE_CHECKING:
     from mark.memory.block_chain import BlockChain
     from mark.memory.block_graph import BlockGraph
+    from mark.media.memory import ImageMemory
     from mark.middlewares.media_continuity.entity import CharacterMemory, LocationMemory, ObjectMemory
     from mark.middlewares.media_continuity.session_memory import SessionMemory
     from mark.middlewares.media_continuity.world_bible import WorldBibleMemory
@@ -49,6 +50,16 @@ class ViewsMixin(MemoryCore):
         """Return a WorldBibleMemory for this agent's canonical facts."""
         from mark.middlewares.media_continuity.world_bible import WorldBibleMemory
         return WorldBibleMemory(self)
+
+    @property
+    def images(self) -> "ImageMemory":
+        """Image memories (path + hash, captions, continuity checks) for this agent.
+
+        A fresh view without an image embedder or describer; construct
+        ``mark.media.ImageMemory(memory, embedder=..., describer=...)`` to add them.
+        """
+        from mark.media.memory import ImageMemory
+        return ImageMemory(self)
 
     # ── memory blocks ─────────────────────────────────────────────────────────
 
