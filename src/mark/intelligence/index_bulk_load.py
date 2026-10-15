@@ -138,9 +138,9 @@ def restore_snapshot(
     for ids, data in parts:
         if ids:
             index.add_many(ids, np.frombuffer(data, dtype="<f4").reshape(len(ids), dim), agent_id=agent_id, expected=count)
-    if index.count(agent_id) > len(missing):
-        for fragment_id in set(index.ids(agent_id)).difference(missing):
-            index.remove(fragment_id)
+    # Deleted / no longer retrievable since the snapshot: one C-level difference.
+    for fragment_id in set(index.ids(agent_id)).difference(missing):
+        index.remove(fragment_id)
     left = index.missing(missing, agent_id)
     return left, index.count(agent_id), len(left) >= max(1_000, len(missing) // 10), version
 

@@ -13,6 +13,7 @@ Invariants:
 from __future__ import annotations
 
 from mark.store._sqlite.codec import _FTS_ML_TABLE, _FTS_TABLE
+from mark.store._sqlite.vector_snapshot import SNAPSHOT_DDL
 
 
 class SchemaDDL:
@@ -121,13 +122,13 @@ class SchemaDDL:
             )
             """,
         ],
-        # 6: a partial index finds the next TTL expiry without a scan (only TTL
-        #    rows pay for it). A covering index for the retrievable-id query was
-        #    measured: 3x faster query, but ~25% slower writes, so it is not used.
+        # 6: a partial index finds the next TTL expiry (only TTL rows pay for it; a
+        #    covering retrievable-id index cost ~25% of write speed: not used).
         #    The multilingual FTS table is set up by _init_fts.
         6: [
             "CREATE INDEX IF NOT EXISTS idx_frag_ttl ON fragments(agent_id, created_at, ttl_seconds)"
             " WHERE ttl_seconds IS NOT NULL",
+            *SNAPSHOT_DDL,  # vector-index snapshots (see vector_snapshot)
         ],
     }
 
@@ -269,12 +270,12 @@ class SchemaDDL:
         )
     """
     _DDL_FTS_ML_FALLBACK = _DDL_FTS_ML.replace(" categories 'L* N* Co M* S*'", "")
-    # Deletes and content rewrites need no plaintext: triggers mirror them.
+    # Deletes need no plaintext: a trigger mirrors them. (An UPDATE OF content
+    # trigger was measured to slow every upsert by ~40%; _fts_upsert deletes.)
     _DDL_FTS_ML_TRIGGER = f"""
         CREATE TRIGGER IF NOT EXISTS {_FTS_ML_TABLE}_delete AFTER DELETE ON fragments
         BEGIN DELETE FROM {_FTS_ML_TABLE} WHERE rowid = old.rowid; END
     """
-    _DDL_FTS_ML_UPDATE_TRIGGER = _DDL_FTS_ML_TRIGGER.replace("_delete AFTER DELETE ON", "_update AFTER UPDATE OF content ON")
     _INDEXES = [
         "CREATE INDEX IF NOT EXISTS idx_frag_agent   ON fragments(agent_id)",
         "CREATE INDEX IF NOT EXISTS idx_frag_state   ON fragments(state)",

@@ -189,7 +189,6 @@ class SchemaMixin(SchemaDDL):
         if not self._fts_enabled:
             # Encrypted store: never keep a plaintext lexical index around.
             conn.execute(f"DROP TRIGGER IF EXISTS {_FTS_ML_TABLE}_delete")
-            conn.execute(f"DROP TRIGGER IF EXISTS {_FTS_ML_TABLE}_update")
             for table, key in ((_FTS_TABLE, _FTS_META_KEY), (_FTS_ML_TABLE, _FTS_ML_META_KEY)):
                 conn.execute(f"DROP TABLE IF EXISTS {table}")
                 conn.execute("DELETE FROM schema_info WHERE key = ?", (key,))
@@ -200,7 +199,6 @@ class SchemaMixin(SchemaDDL):
         except sqlite3.OperationalError:  # SQLite without the categories option
             conn.execute(self._DDL_FTS_ML_FALLBACK)
         conn.execute(self._DDL_FTS_ML_TRIGGER)
-        conn.execute(self._DDL_FTS_ML_UPDATE_TRIGGER)
         self._fts_ml_enabled = True
         marker = "SELECT value FROM schema_info WHERE key = ?"
         porter_done = (conn.execute(marker, (_FTS_META_KEY,)).fetchone() or ["0"])[0] == "1"
@@ -249,8 +247,9 @@ class SchemaMixin(SchemaDDL):
             f"INSERT INTO {_FTS_TABLE} (rowid, content, tags, fragment_id, agent_id) VALUES (?, ?, ?, ?, ?)",
             (rowid, content, " ".join(str(tag) for tag in tags), fragment_id, agent_id),
         )
+        self._mark_vector_dirty(conn, agent_id, fragment_id)  # no-op without a vector snapshot
         if getattr(self, "_fts_ml_enabled", False):
-            # A previous row for this rowid was removed by the content-update trigger.
+            conn.execute(f"DELETE FROM {_FTS_ML_TABLE} WHERE rowid = ?", (rowid,))
             self._fts_ml_insert(conn, rowid, fragment_id, agent_id, content)
 
     @staticmethod

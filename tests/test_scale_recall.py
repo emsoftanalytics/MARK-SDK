@@ -213,7 +213,8 @@ def test_vector_snapshot_round_trip_with_dirty_rows(tmp_path, monkeypatch) -> No
         assert reads == [AGENT]
         assert mark.runtime.store._fetchall("SELECT count FROM vector_snapshot_meta")[0][0] == len(ids)
         mark.runtime.store.delete(ids[1])
-        mark.runtime.store.update_embedding(ids[2], [1.0] + [0.0] * 255)  # dirty: re-read from its row
+        edited = mark.runtime.store.get(ids[2])  # re-stored with a new vector: dirty, re-read from its row
+        mark.runtime.store.store(edited.model_copy(update={"embedding": [1.0] + [0.0] * 255}))
         memory.store_sync("svc-999 was restarted for the needle test")
     with Mark.local(tmp_path) as mark:  # second: snapshot, dirty rows read individually
         memory = mark.runtime.memory(AGENT)
@@ -224,3 +225,13 @@ def test_vector_snapshot_round_trip_with_dirty_rows(tmp_path, monkeypatch) -> No
         assert index.get(ids[2])[0] == pytest.approx(1.0)
         assert index.count(AGENT) == len(mark.runtime.store.retrievable_ids(AGENT))
         assert memory.retrieve_sync("svc-999 restarted needle test").fragments[0].content.startswith("svc-999")
+
+
+def test_snapshots_need_the_fts_write_hook(tmp_path) -> None:
+    pytest.importorskip("cryptography")
+    from mark.security import FernetEncryptionProvider
+
+    store = LocalMemoryStore(tmp_path / "e.db", encryption=FernetEncryptionProvider(ephemeral=True))
+    assert store.save_vector_snapshot(AGENT, "fp", ["a"], [b"\0" * 4], 1, store._write_version()) is False
+    assert store.load_vector_snapshot(AGENT, "fp") is None
+    store.close()

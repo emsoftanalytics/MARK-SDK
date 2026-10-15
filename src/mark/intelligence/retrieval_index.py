@@ -195,6 +195,7 @@ class _IndexSyncMixin:
             if not ordered:
                 continue
             vectors = self._embedder.embed_batch([f.content for f in ordered])
+            getattr(self._store, "mark_vectors_dirty", lambda *a: None)(agent_id, [f.id for f in ordered])
             for fragment, vector in zip(ordered, vectors):
                 if update is not None:
                     update(fragment.id, vector)

@@ -9,10 +9,15 @@ ids, which load in well under a second.
 Consistency:
   - a snapshot belongs to one agent and one embedder fingerprint; another
     fingerprint never loads it;
-  - once an agent has a snapshot, triggers record in ``vector_dirty`` every
-    fragment of that agent that is inserted, deleted, or whose embedding,
-    state or owner changes. Loading skips dirty ids (the caller fetches them
-    from their rows), so a snapshot never serves a stale vector;
+  - once an agent has a snapshot, every store of one of its fragments (the
+    FTS write hook, ``_fts_upsert``) and every pipeline re-embedding records
+    the id in ``vector_dirty``; loading skips dirty ids (the caller reads
+    them from their rows), so a snapshot never serves a stale vector. New,
+    deleted or no longer retrievable fragments need no record: the caller
+    compares the snapshot with the retrievable-id set. (SQLite triggers
+    would do this too, but any UPDATE trigger on ``fragments`` was measured
+    to slow every upsert by ~40%.) Stores without that hook (encrypted, or
+    no FTS5) never use snapshots;
   - a snapshot is written only if no structural write happened since the
     rows it was built from were read (``write_version`` check), inside one
     transaction that also clears the agent's dirty set.
@@ -29,7 +34,7 @@ from typing import Iterable, Iterator
 PART_ROWS = 65_536
 MIN_ROWS = 50_000
 
-_DDL = [
+SNAPSHOT_DDL = [
     """CREATE TABLE IF NOT EXISTS vector_snapshot_meta (
         agent_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, dim INTEGER NOT NULL, count INTEGER NOT NULL
     )""",
@@ -40,23 +45,23 @@ _DDL = [
     "CREATE TABLE IF NOT EXISTS vector_dirty (agent_id TEXT NOT NULL, id TEXT NOT NULL,"
     " PRIMARY KEY (agent_id, id)) WITHOUT ROWID",
 ]
-_WATCHED = "EXISTS (SELECT 1 FROM vector_snapshot_meta WHERE agent_id = {row}.agent_id)"
-_TRIGGERS = [
-    f"""CREATE TRIGGER IF NOT EXISTS vector_dirty_insert AFTER INSERT ON fragments
-        WHEN {_WATCHED.format(row='new')}
-        BEGIN INSERT OR IGNORE INTO vector_dirty VALUES (new.agent_id, new.id); END""",
-    f"""CREATE TRIGGER IF NOT EXISTS vector_dirty_update
-        AFTER UPDATE OF embedding_blob, embedding, state, agent_id ON fragments
-        WHEN {_WATCHED.format(row='old')} OR {_WATCHED.format(row='new')}
-        BEGIN INSERT OR IGNORE INTO vector_dirty VALUES (old.agent_id, old.id); END""",
-    f"""CREATE TRIGGER IF NOT EXISTS vector_dirty_delete AFTER DELETE ON fragments
-        WHEN {_WATCHED.format(row='old')}
-        BEGIN INSERT OR IGNORE INTO vector_dirty VALUES (old.agent_id, old.id); END""",
-]
-
-
 class VectorSnapshotMixin:
     """Save and load per-agent vector snapshots (see module docstring)."""
+
+    def mark_vectors_dirty(self, agent_id: str, fragment_ids: Iterable[str]) -> None:
+        """Record re-embedded fragments so a snapshot never serves their old vectors."""
+        with self._writing(structural=False) as conn:
+            for fragment_id in fragment_ids:
+                self._mark_vector_dirty(conn, agent_id, fragment_id)
+
+    @staticmethod
+    def _mark_vector_dirty(conn: sqlite3.Connection, agent_id: str, fragment_id: str) -> None:
+        """One statement, a no-op unless the agent has a snapshot (called on every store)."""
+        conn.execute(
+            "INSERT OR IGNORE INTO vector_dirty SELECT ?, ?"
+            " WHERE EXISTS (SELECT 1 FROM vector_snapshot_meta WHERE agent_id = ?)",
+            (agent_id, fragment_id, agent_id),
+        )
 
     def load_vector_snapshot(
         self, agent_id: str, fingerprint: str,
@@ -66,12 +71,9 @@ class VectorSnapshotMixin:
         Parts are read one at a time, so loading never holds two copies of
         the vectors in memory.
         """
-        try:
-            meta = self._fetchone(
-                "SELECT fingerprint, dim, count FROM vector_snapshot_meta WHERE agent_id = ?", (agent_id,),
-            )
-        except sqlite3.OperationalError:  # no snapshot tables yet
+        if not self._fts_enabled:  # no write hook to record changes: never trust a snapshot
             return None
+        meta = self._fetchone("SELECT fingerprint, dim, count FROM vector_snapshot_meta WHERE agent_id = ?", (agent_id,))
         if meta is None or str(meta[0]) != fingerprint:
             return None
         dim, count = int(meta[1]), int(meta[2])
@@ -97,9 +99,9 @@ class VectorSnapshotMixin:
         self, agent_id: str, fingerprint: str, ids: list[str], vectors: Iterable[bytes], dim: int, write_version: int,
     ) -> bool:
         """Replace the agent's snapshot; False (nothing written) if the store changed since *write_version*."""
+        if not self._fts_enabled:
+            return False
         with self._writing(structural=False) as conn:
-            for statement in (*_DDL, *_TRIGGERS):
-                conn.execute(statement)
             current = conn.execute("SELECT value FROM schema_info WHERE key = 'write_version'").fetchone()
             if current is None or int(current[0]) != write_version:
                 return False
@@ -119,9 +121,6 @@ class VectorSnapshotMixin:
 
     def drop_vector_snapshot(self, agent_id: str) -> None:
         """Delete the agent's snapshot (triggers stop tracking it)."""
-        try:
-            with self._writing(structural=False) as conn:
-                for table in ("vector_snapshots", "vector_snapshot_meta", "vector_dirty"):
-                    conn.execute(f"DELETE FROM {table} WHERE agent_id = ?", (agent_id,))
-        except sqlite3.OperationalError:  # no snapshot tables: nothing to drop
-            pass
+        with self._writing(structural=False) as conn:
+            for table in ("vector_snapshots", "vector_snapshot_meta", "vector_dirty"):
+                conn.execute(f"DELETE FROM {table} WHERE agent_id = ?", (agent_id,))
