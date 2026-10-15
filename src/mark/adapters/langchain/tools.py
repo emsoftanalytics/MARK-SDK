@@ -7,7 +7,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from mark.adapters.backend import MarkBackend
+from mark.adapters.backend import MarkBackend, call_backend_off_loop
 
 
 _SYNC_EXECUTOR: ThreadPoolExecutor | None = None
@@ -43,14 +43,20 @@ def _run_sync(coro):
 def create_mark_tools(
     backend: MarkBackend,
     *,
-    default_agent_id: str,
+    default_agent_id: str = "__mark__",
     default_blocks: list[str] | None = None,
     compress: bool = False,
 ) -> list[Any]:
     """Create basic LangChain tools backed by MARK.
 
+    default_agent_id — memory namespace. Defaults to ``"__mark__"``, the same
+    namespace ``Mark.local().memory`` (``mark.memory.block(...).write``) uses,
+    so tools see memory written through the simple API.
     compress — opt-in LLM contextual compression for mark_retrieve results.
     Off by default: compression is lossy and requires a configured LLM.
+
+    The async tool implementations run blocking backend work in a worker
+    thread, so they never stall the agent's event loop.
     """
 
     structured_tool = _require_langchain_tool()
@@ -66,7 +72,9 @@ def create_mark_tools(
             query: Phrase describing your current task or topic, e.g.
                    "FastAPI endpoint conventions and project structure".
         """
-        result = await backend.retrieve(
+        result = await call_backend_off_loop(
+            backend,
+            "retrieve",
             query,
             agent_id=default_agent_id,
             blocks=default_blocks,
@@ -113,7 +121,9 @@ def create_mark_tools(
         options: dict[str, Any] = {"importance": 0.95 if canonical else 0.8}
         if canonical:
             options["tags"] = ["canonical"]
-        result = await backend.write(content, agent_id=default_agent_id, **options)
+        result = await call_backend_off_loop(
+            backend, "write", content, agent_id=default_agent_id, **options
+        )
         if not result.ok:
             return f"MARK write failed: {result.error}"
         return "MARK canonical memory written." if canonical else "MARK memory written."
@@ -144,7 +154,9 @@ def create_mark_tools(
         Args:
             content: Brief description of what you implemented or discovered.
         """
-        result = await backend.observe(content, agent_id=default_agent_id)
+        result = await call_backend_off_loop(
+            backend, "observe", content, agent_id=default_agent_id
+        )
         if not result.ok:
             return f"MARK observe failed: {result.error}"
         fragment_id = result.metadata.get("fragment_id", "")
