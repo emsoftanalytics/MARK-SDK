@@ -3,16 +3,20 @@
 The stages, in order:
 
 1. **Channels.** Each query text is searched in the vector index and the
-   lexical (BM25) index; both channels are fused with Reciprocal Rank Fusion.
-2. **Seed scores.** The strongest fused candidates get a score that blends
-   normalised rank evidence with calibrated absolute evidence (relevance).
+   lexical (BM25) index; both channels are fused with Reciprocal Rank Fusion,
+   which also selects the candidate pool.
+2. **Seed scores.** The pool is scored per the fusion strategy (see
+   ``fusion_scoring``): RRF rank evidence blended with calibrated relevance
+   for lexical embedders, or relative cosine plus term coverage for
+   semantic embedders.
 3. **Graph expansion.** Optional, per policy: neighbours of the top seeds are
    pulled in with damped scores; contradicted fragments are collected.
 4. **Ranking.** Non-retrievable states and duplicate contents are dropped,
    then a scoring plugin or the built-in reranker produces the final order.
 
-Expects the host class to provide ``_store``, ``_expander``, ``_reranker``,
-``_plugins`` and the search helpers of ``_IndexSyncMixin``.
+Expects the host class to provide ``_store``, ``_embedder``, ``_fusion``,
+``_expander``, ``_reranker``, ``_plugins`` and the search helpers of
+``_IndexSyncMixin``.
 """
 from __future__ import annotations
 
@@ -20,7 +24,16 @@ import heapq
 
 from mark.index import VectorSearchResult
 from mark.intelligence.classifier import QueryAnalysis
-from mark.intelligence.query_understanding import _relevance
+from mark.intelligence.fusion_scoring import (
+    lexical_share,
+    max_rrf,
+    merge_max,
+    normalised_cosines,
+    rrf_seed_score,
+    score_fusion_seed,
+    uses_score_fusion,
+)
+from mark.intelligence.query_understanding import _coverage, _relevance, query_anchors
 from mark.intelligence.reranker import RerankResult
 from mark.intelligence.retrieval_policy import (
     _RETRIEVABLE_STATES,
@@ -42,13 +55,15 @@ class _FusionMixin:
         allowed_ids: set[str],
         scope_ids: set[str] | None,
         depth: int,
-    ) -> tuple[dict[str, float], dict[str, float], dict[str, int]]:
+    ) -> tuple[dict[str, float], dict[str, float], dict[str, int], dict[str, float]]:
         """Search both channels for every query text and fuse them with RRF.
 
-        Returns (fused RRF score, best cosine similarity, hit count per channel).
+        Returns (fused RRF score, best cosine similarity, hit count per
+        channel, best cosine relative to each query's top hit).
         """
         fused: dict[str, float] = {}
         cosine: dict[str, float] = {}
+        vector_norm: dict[str, float] = {}
         channels = {"vector": 0, "lexical": 0}
         for q_text in query_texts:
             vector_hits = self._vector_search(q_text, agent_id, allowed_ids, scope_ids, depth)
@@ -59,38 +74,49 @@ class _FusionMixin:
                 fused[hit.fragment_id] = fused.get(hit.fragment_id, 0.0) + 1.0 / (RRF_K + rank)
                 if hit.score > cosine.get(hit.fragment_id, -1.0):
                     cosine[hit.fragment_id] = hit.score
+            merge_max(vector_norm, normalised_cosines(vector_hits))
             for rank, (fragment_id, _bm25) in enumerate(lexical_hits, 1):
                 fused[fragment_id] = fused.get(fragment_id, 0.0) + 1.0 / (RRF_K + rank)
-        return fused, cosine, channels
+        return fused, cosine, channels, vector_norm
 
     def _score_seeds(
         self,
+        query: str,
         query_terms: list[str],
         query_count: int,
         fused: dict[str, float],
         cosine: dict[str, float],
+        vector_norm: dict[str, float],
         depth: int,
     ) -> tuple[dict[str, MemoryFragment], dict[str, float], dict[str, float]]:
         """Fetch the strongest fused candidates and score them.
 
         Returns (fragments by id, calibrated relevance, seed score).
         """
-        # Keep the strongest fused candidates, then fetch them in one query.
+        # RRF picks the pool for both strategies, so recall does not change;
+        # only the scoring of the pool depends on the embedder.
         seed_ids = heapq.nlargest(depth, fused, key=fused.__getitem__)
         fragments_by_id = self._get_many(seed_ids)
-        relevance = {
-            fid: _relevance(query_terms, fragments_by_id[fid].content, cosine.get(fid, 0.0))
+        coverage = {
+            fid: _coverage(query_terms, fragments_by_id[fid].content)
             for fid in seed_ids if fid in fragments_by_id
         }
-        # Fused rank evidence (normalised to the best possible fused score:
-        # rank 1 in both channels for every query text) is combined with
-        # absolute evidence so ranking stays query-aware even when one
-        # channel is empty.
-        max_fused = query_count * 2.0 / (RRF_K + 1)
-        seed_scores = {
-            fid: 0.5 * min(1.0, fused[fid] / max_fused) + 0.5 * relevance[fid]
-            for fid in relevance
-        }
+        # Calibrated relevance (gap detection, reinforcement) is the same
+        # under either strategy: max of cosine and term coverage.
+        relevance = {fid: max(0.0, min(1.0, max(cosine.get(fid, 0.0), cov))) for fid, cov in coverage.items()}
+        if uses_score_fusion(self._fusion, self._embedder):
+            weight = lexical_share(
+                self._fusion, query_anchors(query), (fragments_by_id[fid].content for fid in coverage),
+            )
+            seed_scores = {
+                fid: score_fusion_seed(vector_norm.get(fid, 0.0), cov, weight)
+                for fid, cov in coverage.items()
+            }
+        else:
+            # Fused rank evidence is combined with absolute evidence so
+            # ranking stays query-aware even when one channel is empty.
+            best = max_rrf(query_count)
+            seed_scores = {fid: rrf_seed_score(fused[fid], best, relevance[fid]) for fid in relevance}
         return fragments_by_id, relevance, seed_scores
 
     def _expand_seeds(
