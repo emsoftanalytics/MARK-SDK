@@ -8,6 +8,7 @@ Each module owns one responsibility of the per-agent memory facade:
 * ``write_guard`` fragment construction, consolidation gate, quarantine
 * ``write``       store / store_sync / store_many_sync (middleware-routed)
 * ``retrieve``    retrieve / retrieve_sync / retrieve_many_sync, escalation
+* ``timeline``    whole-history subject timelines (no top-k cap)
 * ``healing``     explicit gap healing through a web lookup skill
 * ``observing``   observe() and optional structured extraction into the graph
 * ``graph_ops``   concept nodes, edges, and neighbourhood traversal

@@ -10,6 +10,7 @@ mixin                       responsibility
 ``GuardMixin``              consolidation gate, quarantine, last_rejection
 ``RetrieveMixin``           retrieve / retrieve_sync / retrieve_many_sync
 ``HealingMixin``            gap healing via an explicit web lookup
+``TimelineMixin``           timeline(): a subject's whole ordered history
 ``ObserveMixin``            observe() and optional graph structuring
 ``GraphMixin``              node / attach_node / link_nodes / neighborhood
 ``LifecycleMixin``          list / forget / promote / clear
@@ -31,6 +32,7 @@ from mark.memory.facade.graph_ops import _NODE_TYPE_ALIASES, GraphMixin, _resolv
 from mark.memory.facade.lifecycle import LifecycleMixin
 from mark.memory.facade.observing import ObserveMixin
 from mark.memory.facade.retrieve import RetrieveMixin
+from mark.memory.facade.timeline import TimelineMixin
 from mark.memory.facade.views import ViewsMixin
 from mark.memory.facade.write import WriteMixin
 from mark.memory.facade.write_guard import GuardMixin, MemoryWriteRejection, _with_occurred_at  # noqa: F401
@@ -58,6 +60,7 @@ logger = logging.getLogger(__name__)
 
 class MarkMemory(
     RetrieveMixin,
+    TimelineMixin,
     ObserveMixin,
     LifecycleMixin,
     ViewsMixin,
