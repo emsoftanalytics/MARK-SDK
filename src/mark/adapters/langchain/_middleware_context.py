@@ -40,7 +40,7 @@ from mark.context.budget import BudgetItem, ContextBudget, as_budget, render_lin
 from mark.context.history import message_key, message_role, message_text, split_history, turn_text
 from mark.context.presets import split_budget
 from mark.context.provenance import is_assistant, observe_options
-from mark.context.watch_lines import Deduper, is_echo, small_talk, trusted, words
+from mark.context.watch_lines import Deduper, is_echo, note_text, small_talk, trusted, words
 from mark.context.watch_render import ASSISTANT_HEADER, render_briefing
 from mark.context.watch_support import _one_line
 
@@ -89,7 +89,7 @@ class _ContextControlMixin:
             if not content.strip() or is_echo(fragment, query_words) or small_talk(fragment):
                 continue
             ref = str(getattr(fragment, "id", "") or "") or None
-            line = f"- {_one_line(content, _RECORD_CHARS)}"
+            line = note_text(fragment, _RECORD_CHARS)
             if is_assistant(fragment):
                 replies.append(BudgetItem("assistant", line, ASSISTANT_HEADER, ref))
             elif trusted(fragment):

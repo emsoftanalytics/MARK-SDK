@@ -50,11 +50,12 @@ from mark.context.watch_lines import (
     fact_key,
     fact_line,
     is_echo,
+    note_text,
     small_talk,
     trusted,
     words,
 )
-from mark.context.watch_support import _anchor_norm, _contains_anchor, _one_line, _timeline_key
+from mark.context.watch_support import _anchor_norm, _contains_anchor, _timeline_key
 
 CORRECTIONS_HEADER = "Corrections:"
 FACTS_HEADER = "Known facts (current):"
@@ -117,7 +118,7 @@ def briefing_items(snapshot: dict[str, Any], *, per_anchor: int | None,
     seen: set[str] = set()
 
     def note(section: str, fragment: Any, header: str = RELATED_HEADER) -> BudgetItem | None:
-        text = f"- {_one_line(fragment.content, line_chars)}"
+        text = note_text(fragment, line_chars)
         if fragment.id in seen or is_echo(fragment, task_words) or small_talk(fragment) \
                 or not dedupe.fresh(text):
             return None

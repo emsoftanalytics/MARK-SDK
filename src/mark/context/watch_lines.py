@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable
 
-from mark.context.provenance import is_assistant, is_question_record
+from mark.context.provenance import UNTRUSTED_TAG, is_assistant, is_question_record
 
 _WORD = re.compile(r"\w+")
 _ROLE_PREFIX = re.compile(r"^\s*(user said|user|assistant replied|assistant said)\s*:\s*", re.IGNORECASE)
@@ -69,6 +69,15 @@ def small_talk(fragment: Any) -> bool:
     """A short greeting or sign-off with no information in it."""
     text = strip_role(getattr(fragment, "content", "") or "").strip()
     return len(text.split()) <= _SMALL_TALK_WORDS and bool(_SMALL_TALK.match(text))
+
+
+def note_text(fragment: Any, line_chars: int) -> str:
+    """``- <content>`` for a briefing; instruction-like memories (``mark:untrusted``,
+    set by the security layer) are labelled so the model reads them as data."""
+    from mark.context.watch_support import _one_line
+
+    label = "(untrusted) " if UNTRUSTED_TAG in (getattr(fragment, "tags", None) or ()) else ""
+    return f"- {label}{_one_line(getattr(fragment, 'content', '') or '', line_chars)}"
 
 
 class Deduper:
