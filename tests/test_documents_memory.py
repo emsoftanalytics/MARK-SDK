@@ -129,3 +129,22 @@ def test_audio_needs_a_transcriber(tmp_path: Path) -> None:
     record = memory.remember_file(wav, transcriber=Fake(), extract_facts=True)
     assert record.metadata["modality"] == "audio" and record.metadata["media_path"] == str(wav.resolve())
     assert memory.facts.get("ledger-sync", "port").value == "7000"
+
+
+def test_document_text_title_and_source_are_encrypted_at_rest(tmp_path: Path) -> None:
+    import sqlite3
+
+    pytest.importorskip("cryptography")
+    from mark.security import FernetEncryptionProvider
+
+    db = tmp_path / "enc.db"
+    runtime = MarkRuntime.local(store_path=db, embedder=HashEmbeddingProvider(dim=32),
+                                encryption=FernetEncryptionProvider(passphrase="pw"))
+    memory = runtime.memory("enc")
+    note = tmp_path / "secret-plan.md"
+    note.write_text("# Merger plan\n\nAcquire Zenith Labs in Q3.")
+    record = memory.store_document(note)
+    assert memory.documents.get(record.id).text.endswith("Acquire Zenith Labs in Q3.")
+    runtime.shutdown()
+    raw = sqlite3.connect(db).execute("SELECT title, content, source FROM documents").fetchone()
+    assert all("Zenith" not in str(v) and "secret-plan" not in str(v) for v in raw)
