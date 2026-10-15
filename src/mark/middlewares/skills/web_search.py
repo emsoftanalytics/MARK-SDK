@@ -5,83 +5,174 @@
 #
 # Local MARK intentionally does not launch Playwright. LLM-guided browser lookup,
 # source credibility scoring, and automatic self-healing belong in registered extensions.
-"""Lightweight explicit web lookup skill (DuckDuckGo, Wikipedia, fetch)."""
+"""Lightweight explicit web lookup skill (DuckDuckGo, Wikipedia, fetch).
+
+Holds :class:`WebSearchSkill` and the SSRF-guarded fetch path: URL
+validation with DNS pinning (:func:`_pin_url`) and a redirect-revalidating
+GET (:func:`_safe_http_get`). Network primitives live in :mod:`.web_net`,
+search backends and result shaping in :mod:`.web_sources`; both are
+re-exported here, the historical import path.
+"""
 from __future__ import annotations
 
 import asyncio
 import ipaddress
-import re
+import logging
 import socket
+import time
 from typing import Any, Dict, List
-from urllib.parse import urlparse
-from urllib.request import Request, urlopen
-
-from mark.types import MemoryFragment, MemoryScope, MemoryState
+from urllib.parse import urljoin, urlparse
 
 from .base import Skill, SkillManifest, SkillResult
 
-try:
-    from mark.types import SourceAttribution, SourceCredibility
-    _HAS_ATTRIBUTION = True
-except ImportError:
-    _HAS_ATTRIBUTION = False
-    SourceAttribution = None   # type: ignore[assignment,misc]
-    SourceCredibility = None   # type: ignore[assignment,misc]
+# ``_is_internal_address`` and ``_open_connection`` are deliberately looked up
+# as globals of *this* module by ``_pin_url`` / ``_safe_http_get``, so patching
+# ``web_search._is_internal_address`` / ``web_search._open_connection`` works.
+from .web_net import (
+    _MAX_PAGE_CHARS,
+    _MAX_REDIRECTS,
+    _MAX_RESPONSE_BYTES,
+    _NAT64_NETWORKS,
+    _REDIRECT_STATUSES,
+    _TIMEOUT_MS,
+    _USER_AGENT,
+    FetchBlocked,
+    _embedded_ipv4,
+    _is_internal_address,
+    _open_connection,
+    _PinnedHTTPConnection,
+    _PinnedHTTPSConnection,
+    _PinnedTarget,
+)
+from .web_sources import (
+    _HAS_ATTRIBUTION,
+    SourceAttribution,
+    SourceCredibility,
+    build_search_result,
+    ddg_search,
+    page_text,
+    wiki_search,
+)
 
-_USER_AGENT = "Mozilla/5.0 (compatible; MARK/1.0)"
-_TIMEOUT_MS = 15_000
-_MAX_PAGE_CHARS = 8_000
+logger = logging.getLogger(__name__)
 
 
-def _is_internal_address(address: ipaddress._BaseAddress) -> bool:
-    return (
-        address.is_loopback
-        or address.is_private
-        or address.is_link_local
-        or address.is_reserved
-        or address.is_multicast
-        or address.is_unspecified
-    )
+def _pin_url(url: str) -> tuple[_PinnedTarget | None, str | None]:
+    """Validate *url*, resolve it once, and return the pinned target or an error.
+
+    Fails closed: resolution errors, unparseable addresses, and any resolved
+    address that is not globally routable reject the URL.
+    """
+    try:
+        parsed = urlparse(url)
+        port = parsed.port
+    except ValueError:
+        return None, f"Invalid URL: {url!r}"
+    if parsed.scheme not in {"http", "https"}:
+        return None, f"Only http/https URLs can be fetched (got scheme {parsed.scheme!r})"
+    host = parsed.hostname or ""
+    if not host:
+        return None, "URL has no host"
+    if parsed.username is not None or parsed.password is not None:
+        return None, "URLs with embedded credentials are not fetched"
+    lowered = host.lower().rstrip(".")
+    if lowered == "localhost" or lowered.endswith(".localhost") or lowered.endswith(".local"):
+        return None, "Refusing to fetch loopback/internal hosts"
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is not None:
+        if _is_internal_address(literal):
+            return None, "Refusing to fetch private/loopback/link-local addresses"
+        return _PinnedTarget(parsed.scheme, host, port, str(literal), path), None
+
+    # Resolve once and pin the first address: every resolved address must be
+    # public (one private answer rejects the host), and the connection later
+    # dials exactly the pinned IP, so a second DNS answer can never be used.
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except (OSError, UnicodeError) as exc:
+        return None, f"Could not resolve host {host!r}: {type(exc).__name__}"
+    if not infos:
+        return None, f"Could not resolve host {host!r}"
+    pinned: str | None = None
+    for info in infos:
+        try:
+            resolved = ipaddress.ip_address(str(info[4][0]).split("%", 1)[0])
+        except (ValueError, IndexError, TypeError):
+            return None, "Could not validate resolved host address"
+        if _is_internal_address(resolved):
+            return None, "Refusing to fetch hosts that resolve to private/loopback/link-local addresses"
+        if pinned is None:
+            pinned = str(resolved)
+    assert pinned is not None
+    return _PinnedTarget(parsed.scheme, host, port, pinned, path), None
 
 
 def _validate_fetch_url(url: str) -> str | None:
     """Return an error string when a fetch URL is unsafe, else None.
 
     Only http/https are fetchable — file://, ftp://, and friends would let a
-    crafted observation read local files into agent memory. Loopback, private,
-    and link-local addresses are rejected to keep gap healing from probing
-    internal services.
+    crafted observation read local files into agent memory. Hosts must
+    resolve, and every resolved address must be globally routable, to keep
+    gap healing from probing internal services.
     """
-    try:
-        parsed = urlparse(url)
-    except ValueError:
-        return f"Invalid URL: {url!r}"
-    if parsed.scheme not in {"http", "https"}:
-        return f"Only http/https URLs can be fetched (got scheme {parsed.scheme!r})"
-    host = parsed.hostname or ""
-    if not host:
-        return "URL has no host"
-    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
-        return "Refusing to fetch loopback/internal hosts"
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
+    return _pin_url(url)[1]
+
+
+def _safe_http_get(
+    url: str,
+    *,
+    timeout: float,
+    max_bytes: int = _MAX_RESPONSE_BYTES,
+    max_redirects: int = _MAX_REDIRECTS,
+) -> bytes:
+    """GET *url* with SSRF protection.
+
+    Every hop (including redirects) is re-validated and connected to its
+    pinned IP. Proxy environment variables are never consulted. The body is
+    capped at *max_bytes* and the whole exchange at *timeout* seconds.
+    """
+    deadline = time.monotonic() + timeout
+    current = url
+    for _hop in range(max_redirects + 1):
+        target, error = _pin_url(current)
+        if error or target is None:
+            raise FetchBlocked(error or "blocked")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("fetch deadline exceeded")
+        conn = _open_connection(target, remaining)
         try:
-            infos = socket.getaddrinfo(host, parsed.port, type=socket.SOCK_STREAM)
-        except socket.gaierror:
-            return None
-        for info in infos:
-            resolved_host = info[4][0]
-            try:
-                resolved = ipaddress.ip_address(resolved_host)
-            except ValueError:
-                return "Could not validate resolved host address"
-            if _is_internal_address(resolved):
-                return "Refusing to fetch hosts that resolve to private/loopback/link-local addresses"
-        return None
-    if _is_internal_address(address):
-        return "Refusing to fetch private/loopback/link-local addresses"
-    return None
+            conn.request(
+                "GET",
+                target.path,
+                headers={
+                    "User-Agent": _USER_AGENT,
+                    "Accept-Encoding": "identity",
+                    "Connection": "close",
+                },
+            )
+            response = conn.getresponse()
+            if response.status in _REDIRECT_STATUSES:
+                location = response.getheader("Location")
+                if not location:
+                    raise FetchBlocked("redirect without Location header")
+                current = urljoin(current, location.strip())
+                continue
+            if response.status >= 400:
+                raise FetchBlocked(f"HTTP {response.status}")
+            return response.read(max_bytes)
+        finally:
+            conn.close()
+    raise FetchBlocked(f"too many redirects (> {max_redirects})")
 
 
 class WebSearchSkill(Skill):
@@ -176,77 +267,23 @@ class WebSearchSkill(Skill):
         return []
 
     async def _ddg_search(self, query: str) -> List[Dict[str, str]]:
-        try:
-            from duckduckgo_search import DDGS  # type: ignore[import]
-        except ImportError:
-            return []
-
-        def _sync() -> List[Dict[str, str]]:
-            with DDGS() as ddgs:
-                return [
-                    {
-                        "title": r.get("title", ""),
-                        "snippet": r.get("body", ""),
-                        "url": r.get("href", ""),
-                        "source": "duckduckgo",
-                    }
-                    for r in ddgs.text(query, max_results=self.num_results)
-                ]
-
-        try:
-            return await asyncio.get_running_loop().run_in_executor(None, _sync)
-        except Exception:
-            return []
+        return await ddg_search(query, self.num_results)
 
     async def _wiki_search(self, query: str) -> List[Dict[str, str]]:
-        try:
-            import wikipediaapi  # type: ignore[import]
-        except ImportError:
-            return []
-
-        def _sync() -> List[Dict[str, str]]:
-            wiki = wikipediaapi.Wikipedia(language="en", user_agent="MARK/1.0")
-            page = wiki.page(query)
-            if not page.exists():
-                return []
-            snippet = ". ".join(page.summary.split(". ")[:5])
-            return [
-                {
-                    "title": page.title,
-                    "url": page.fullurl,
-                    "snippet": snippet,
-                    "source": "wikipedia",
-                }
-            ]
-
-        try:
-            return await asyncio.get_running_loop().run_in_executor(None, _sync)
-        except Exception:
-            return []
+        return await wiki_search(query)
 
     async def _fetch_page(self, url: str) -> str:
-        if _validate_fetch_url(url):
-            return ""
-
+        # Validation (and DNS pinning) happens inside _safe_http_get for every hop.
         def _sync() -> str:
-            request = Request(url, headers={"User-Agent": _USER_AGENT})
-            with urlopen(request, timeout=max(1, self.timeout_ms / 1000)) as response:
-                raw = response.read(_MAX_PAGE_CHARS * 4)
-            html = raw.decode("utf-8", errors="ignore")
-            try:
-                from bs4 import BeautifulSoup  # type: ignore[import]
-
-                soup = BeautifulSoup(html, "html.parser")
-                for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form"]):
-                    tag.decompose()
-                text = soup.get_text(separator=" ", strip=True)
-            except Exception:
-                text = re.sub(r"<[^>]+>", " ", html)
-            return re.sub(r"\s{2,}", " ", text)[:_MAX_PAGE_CHARS]
+            return page_text(_safe_http_get(url, timeout=max(1.0, self.timeout_ms / 1000)))
 
         try:
             return await asyncio.get_running_loop().run_in_executor(None, _sync)
-        except Exception:
+        except FetchBlocked as exc:
+            logger.warning("web fetch blocked for %s: %s", url, exc)
+            return ""
+        except Exception as exc:
+            logger.warning("web fetch failed for %s: %s: %s", url, type(exc).__name__, exc)
             return ""
 
     def _build_result(
@@ -256,56 +293,4 @@ class WebSearchSkill(Skill):
         agent_id: str,
         mode: str,
     ) -> SkillResult:
-        attributions: List[Any] = []
-        fragments: List[Any] = []
-        lines = [f"Web search results for: {query!r} [mode={mode}]"]
-
-        for item in raw:
-            url = item.get("url", "")
-            title = item.get("title", "Result")
-            snippet = item.get("snippet", "")
-            source = item.get("source", "web")
-
-            if _HAS_ATTRIBUTION:
-                credibility = (
-                    SourceCredibility.VERIFIED  # type: ignore[union-attr]
-                    if source == "wikipedia"
-                    else SourceCredibility.WEB  # type: ignore[union-attr]
-                )
-                attr: Any = SourceAttribution(  # type: ignore[misc]
-                    source_url=url,
-                    source_title=title,
-                    snippet=snippet,
-                    credibility=credibility,
-                    via=f"web_search:{source}",
-                )
-            else:
-                attr = {"url": url, "title": title, "snippet": snippet, "source": source}
-
-            attributions.append(attr)
-            lines.append(f"- [{source}] {title}: {snippet} ({url})")
-            frag_kwargs: Dict[str, Any] = {
-                "content": f"{title}: {snippet}",
-                "agent_id": agent_id,
-                "scope": MemoryScope.AGENT,
-                "importance": 0.6 if source == "wikipedia" else 0.4,
-                "state": MemoryState.UNVERIFIED,
-                "source": url,
-                "tags": ["web_search", f"source:{source}", "auto_acquired"],
-            }
-            if _HAS_ATTRIBUTION:
-                frag_kwargs["attribution"] = attr
-            fragments.append(MemoryFragment(**frag_kwargs))
-
-        return SkillResult(
-            content="\n".join(lines) if raw else f"No results for {query!r}",
-            attributions=attributions,
-            fragments=fragments,
-            success=True,
-            metadata={
-                "query": query,
-                "mode": mode,
-                "result_count": len(raw),
-                "agent_id": agent_id,
-            },
-        )
+        return build_search_result(query, raw, agent_id, mode)

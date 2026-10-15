@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from mark.store import LocalMemoryStore
+from mark.store.sqlite import LocalMemoryStore
 from mark.types import BlockLink, BlockStatus, MemoryBlock, MemoryEdge, MemoryNode, MemoryScope
 from mark.types.graph import EdgeRelation
 
@@ -92,9 +92,19 @@ class BlockGraph:
         """Assign a fragment to a block (a fragment belongs to one block).
 
         Raises ValueError if the block is not OPEN — sealed blocks are
-        immutable and quarantined blocks must be released first.
+        immutable and quarantined blocks must be released first. Also raises
+        ValueError when the fragment currently belongs to a non-OPEN block:
+        moving a member out of a sealed block would break its seal.
         """
         self._require_open(block_id)
+        fragment = self._store.get(fragment_id)
+        if fragment is not None and fragment.block_id and fragment.block_id != block_id:
+            current = self._store.get_block(fragment.block_id)
+            if current is not None and current.status != BlockStatus.OPEN:
+                raise ValueError(
+                    f"Fragment {fragment_id!r} belongs to {current.status.value} block "
+                    f"{current.name!r} and cannot be moved"
+                )
         self._store.assign_fragment_block(fragment_id, block_id)
 
     def add_node(self, block_id: str, node_id: str) -> None:

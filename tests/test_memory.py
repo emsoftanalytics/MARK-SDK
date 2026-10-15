@@ -1,3 +1,4 @@
+"""Basic memory blocks: writing/listing records, ranked retrieval, block scoping."""
 from mark import Mark
 
 

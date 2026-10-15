@@ -36,7 +36,15 @@ def test_unsafe_fetch_urls_rejected(url):
         "https://93.184.216.34/",  # public IP literal
     ],
 )
-def test_public_fetch_urls_allowed(url):
+def test_public_fetch_urls_allowed(url, monkeypatch):
+    import socket
+
+    # No network in tests: resolve every hostname to a public address.
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80))],
+    )
     assert _validate_fetch_url(url) is None
 
 

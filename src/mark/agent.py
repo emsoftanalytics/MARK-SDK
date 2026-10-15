@@ -1,52 +1,28 @@
-"""Reusable MARK agent wrapper for memory, policies, skills, and middleware."""
+"""Reusable MARK agent wrapper for memory, policies, skills, and middleware.
+
+The public class :class:`MarkAgent` orchestrates one run in ``_execute``;
+the run value objects, individual steps, and middleware handling live in
+:mod:`mark._agent` and are re-exported here.
+"""
 from __future__ import annotations
 
-import inspect
+import asyncio
 import time
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import replace
 from typing import Any, Callable
 
-from mark.context import ContextBundle
-from mark.middlewares.base import MarkMiddleware, MiddlewareContext, MiddlewareStack
-from mark.middlewares.skills import SkillRegistry, SkillResult
+from mark._agent.middleware import AgentMiddlewareMixin
+from mark._agent.run_types import AgentResult, AgentRun
+from mark._agent.steps import AgentStepsMixin
+from mark.context import ContextBundle  # noqa: F401  (re-export)
+from mark.middlewares.base import MarkMiddleware, MiddlewareContext, MiddlewareStack  # noqa: F401
+from mark.middlewares.skills import SkillRegistry, SkillResult  # noqa: F401
 from mark.memory import MemoryManager
-from mark.policies import AgentState, PolicyAction, PolicyDecision, PolicyRegistry
+from mark.policies import AgentState, PolicyAction, PolicyDecision, PolicyRegistry  # noqa: F401
 
 
-@dataclass
-class AgentRun:
-    """Per-run configuration for a MARK-wrapped agent call."""
-
-    prompt: str
-    blocks: list[str] | None = None
-    policy: str | None = None
-    skills: list[str] | None = None
-    skill_inputs: dict[str, dict[str, Any]] = field(default_factory=dict)
-    metadata: dict[str, Any] = field(default_factory=dict)
-    retrieve: bool | None = None
-    store_output: bool | None = None
-    top_k: int | None = None
-    max_context_chars: int = 6000
-    session_id: str | None = None
-    output_block: str = "agent-output"
-
-
-@dataclass(frozen=True)
-class AgentResult:
-    """Result of a wrapped agent run."""
-
-    output: str
-    context: ContextBundle
-    events: list[dict[str, Any]] = field(default_factory=list)
-    rendered_prompt: str = ""
-    decision: PolicyDecision | None = None
-    skill_results: dict[str, SkillResult] = field(default_factory=dict)
-    stored_record_ids: list[str] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-class MarkAgent:
+class MarkAgent(AgentMiddlewareMixin, AgentStepsMixin):
     """Production-oriented wrapper for a developer-provided LLM callable.
 
     The wrapper keeps the simple API intact while adding the reusable pieces a
@@ -82,6 +58,12 @@ class MarkAgent:
         self._agent_id = agent_id
         self._default_max_context_chars = default_max_context_chars
         self._middleware = self._build_middleware_stack(runtime, middleware)
+        # True while ``self._middleware`` is the runtime-wide stack shared with
+        # every other agent; ``use()`` copies it before extending.
+        self._shares_runtime_stack = (
+            self._middleware is not None
+            and self._middleware is getattr(runtime, "middleware", None)
+        )
 
     async def run(
         self,
@@ -116,14 +98,6 @@ class MarkAgent:
         )
         return await self._run_with_middleware(request)
 
-    def use(self, *middleware: MarkMiddleware) -> "MarkAgent":
-        """Append agent-level middleware and return this agent for chaining."""
-        if self._middleware is None:
-            self._middleware = MiddlewareStack()
-            self._middleware.bind(self._runtime)
-        self._middleware.extend(middleware)
-        return self
-
     def available_skills(self) -> list[str]:
         """Return registered skill names."""
         return self._skills.names()
@@ -133,6 +107,12 @@ class MarkAgent:
         return self._policies.names()
 
     async def _execute(self, request: AgentRun) -> AgentResult:
+        """Run one request: policy -> retrieval -> skills -> LLM -> store.
+
+        Explicit request flags (``retrieve``/``store_output``) override the
+        policy decision. Blocking memory calls run in worker threads so the
+        caller's event loop is never blocked.
+        """
         started = time.perf_counter()
         events: list[dict[str, Any]] = []
         policy = self._policies.get(request.policy or self._policy_name)
@@ -156,7 +136,8 @@ class MarkAgent:
         if should_retrieve is None:
             should_retrieve = PolicyAction.RETRIEVE in actions
         if should_retrieve:
-            context = self._memory.retrieve(
+            context = await asyncio.to_thread(
+                self._memory.retrieve,
                 request.prompt,
                 blocks=blocks or None,
                 top_k=request.top_k or decision.retrieve_top_k,
@@ -181,7 +162,9 @@ class MarkAgent:
         if should_store is None:
             should_store = decision.store_output or PolicyAction.STORE in actions
         if should_store and output:
-            stored_record_ids = self._store_output(request, output, events)
+            stored_record_ids = await asyncio.to_thread(
+                self._store_output, request, output, events
+            )
 
         duration_ms = round((time.perf_counter() - started) * 1000, 3)
         metadata = {
@@ -210,139 +193,17 @@ class MarkAgent:
             metadata=metadata,
         )
 
-    def _render_prompt(
-        self,
-        prompt: str,
-        context: ContextBundle,
-        skill_results: dict[str, SkillResult] | None = None,
-    ) -> str:
-        parts: list[str] = []
-        if self._skill_prompt:
-            parts.append(self._skill_prompt.strip())
-        if context.memories:
-            parts.append(context.as_text())
-        rendered_skills = [
-            result.as_context()
-            for result in (skill_results or {}).values()
-            if result.success and result.content
-        ]
-        if rendered_skills:
-            parts.append("MARK skill results:\n" + "\n\n".join(rendered_skills))
-        parts.append(f"User request:\n{prompt}" if parts else prompt)
-        return "\n\n".join(parts)
-
-    async def _call_llm(self, prompt: str) -> object:
-        result = self._llm(prompt)
-        if inspect.isawaitable(result):
-            return await result
-        return result
-
-    async def _run_skills(
-        self,
-        request: AgentRun,
-        skill_names: list[str],
-        events: list[dict[str, Any]],
-    ) -> dict[str, SkillResult]:
-        results: dict[str, SkillResult] = {}
-        for name in skill_names:
-            skill_input = dict(request.skill_inputs.get(name) or {"prompt": request.prompt})
-            skill_context = {
-                "agent_id": self._agent_id,
-                "prompt": request.prompt,
-                "blocks": request.blocks if request.blocks is not None else self._block_labels,
-                "metadata": request.metadata,
-                "session_id": request.session_id,
-            }
-            result = await self._skills.run_skill(name, skill_input, skill_context)
-            results[name] = result
-            events.append(
-                {
-                    "type": "skill.run",
-                    "skill": name,
-                    "success": result.success,
-                    "error": result.error,
-                }
-            )
-        return results
-
-    async def _run_with_middleware(self, request: AgentRun) -> AgentResult:
-        if self._middleware is None:
-            return await self._execute(request)
-
-        context = MiddlewareContext(
-            operation="agent.run",
-            runtime=self._runtime,
-            agent_id=self._agent_id,
-            payload={"request": request, "prompt": request.prompt, "metadata": dict(request.metadata)},
-        )
-        executed: list[MarkMiddleware] = []
-        try:
-            for middleware in self._middleware.list():
-                middleware.before(context)
-                executed.append(middleware)
-                if context.stopped:
-                    break
-
-            if context.stopped:
-                result = context.result
-                if isinstance(result, AgentResult):
-                    context.result = result
-                else:
-                    context.result = AgentResult(
-                        output="" if result is None else str(result),
-                        context=self._empty_context(request.prompt),
-                        events=[{"type": "middleware.stop"}],
-                        metadata={"agent_id": self._agent_id},
-                    )
-            else:
-                current = context.payload.get("request", request)
-                if not isinstance(current, AgentRun):
-                    raise TypeError("agent.run middleware payload['request'] must be an AgentRun")
-                context.result = await self._execute(current)
-        except Exception as exc:
-            context.metadata["error"] = repr(exc)
-            raise
-        finally:
-            for middleware in reversed(executed):
-                middleware.after(context)
-
-        if not isinstance(context.result, AgentResult):
-            raise TypeError("agent.run middleware must return an AgentResult or a string-like stop result")
-        return context.result
-
-    def _store_output(
-        self,
-        request: AgentRun,
-        output: str,
-        events: list[dict[str, Any]],
-    ) -> list[str]:
-        tags = ["agent-output", f"agent:{self._agent_id}"]
-        metadata = {"prompt": request.prompt, **request.metadata}
-        try:
-            observed = self._memory.observe(
-                output,
-                session_id=request.session_id,
-                importance=0.5,
-                tags=tags,
-                source="mark-agent",
-                metadata=metadata,
-            )
-            record_id = getattr(observed, "fragment_id", None) or getattr(observed, "id", "")
-            events.append({"type": "memory.store", "record_id": record_id})
-            return [record_id] if record_id else []
-        except AttributeError:
-            record = self._memory.block(request.output_block).write(
-                output,
-                importance=0.5,
-                metadata=metadata,
-                source="mark-agent",
-            )
-            events.append({"type": "memory.store", "record_id": record.id})
-            return [record.id]
-
     def _build_request(self, prompt: str | AgentRun, **overrides: Any) -> AgentRun:
+        """Merge per-call overrides onto agent defaults (None = use default)."""
         if isinstance(prompt, AgentRun):
-            request = prompt
+            # Never mutate the caller's (possibly reused) AgentRun in place.
+            request = replace(
+                prompt,
+                blocks=list(prompt.blocks) if prompt.blocks is not None else None,
+                skills=list(prompt.skills) if prompt.skills is not None else None,
+                skill_inputs=dict(prompt.skill_inputs),
+                metadata=dict(prompt.metadata),
+            )
         else:
             request = AgentRun(
                 prompt=prompt,
@@ -364,26 +225,3 @@ class MarkAgent:
         if request.max_context_chars <= 0:
             request.max_context_chars = self._default_max_context_chars
         return request
-
-    def _empty_context(self, prompt: str) -> ContextBundle:
-        text = "MARK context: retrieval skipped."
-        return ContextBundle(query=prompt, memories=[], text=text, token_estimate=max(1, len(text) // 4))
-
-    def _build_middleware_stack(
-        self,
-        runtime: object | None,
-        middleware: Iterable[MarkMiddleware] | None,
-    ) -> MiddlewareStack | None:
-        runtime_stack = getattr(runtime, "middleware", None)
-        if middleware is None and isinstance(runtime_stack, MiddlewareStack):
-            return runtime_stack
-        if middleware is None:
-            return None
-
-        items: list[MarkMiddleware] = []
-        if isinstance(runtime_stack, MiddlewareStack):
-            items.extend(runtime_stack.list())
-        items.extend(list(middleware))
-        stack = MiddlewareStack(items)
-        stack.bind(runtime or self)
-        return stack

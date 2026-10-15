@@ -160,18 +160,41 @@ MARK's retrieval path is intentionally layered:
 ```text
 query
   ↓
-session / tag / block filters
+agent / session / tag / block / TTL filters   (SQL, no row cap, cached by write_version)
   ↓
-local vector retrieval
+lexical channel (FTS5 BM25)  ║  vector channel (per-agent index, numpy or pure Python)
   ↓
-graph expansion and scoring
+Reciprocal Rank Fusion (k = 60) + calibrated relevance (vector similarity vs term coverage)
   ↓
-gap reporting
+graph expansion (best-first, damped per hop) and contradiction penalties
+  ↓
+rerank: relevance × bounded priors (importance, confidence, node weight, recency for temporal queries)
+  ↓
+gap reporting on calibrated relevance
   ↓
 optional query expansion / contextual compression
   ↓
 agent context, tool result, or MCP response
 ```
+
+Design rules for the hot path:
+
+- **No LLM calls** on store or retrieve. LLM-backed extraction, expansion, and
+  compression are opt-in.
+- **Filter before scoring.** Candidates are restricted to the agent's
+  retrievable fragments in SQL, so other agents, sessions, deleted, expired,
+  quarantined, or hash-failed memories never take top-k slots.
+- **Priors can only reorder comparable evidence.** Importance, confidence, and
+  graph weight scale a result's relevance by a bounded factor; an irrelevant
+  important memory can't outrank a relevant one.
+- **Reads don't destabilise ranking.** Access statistics are recorded in one
+  batched write; importance boosts and edge co-activation apply only to results
+  with real query evidence (`ReinforceMode.RELEVANT`, configurable).
+- **One embedding space per agent.** Each agent's embedder fingerprint is
+  stored; switching embedders re-embeds instead of mixing vector spaces.
+- **Concurrency.** File stores use one connection per thread in WAL mode; the
+  in-memory store serialises access. The vector index and embedding cache are
+  thread-safe. Async adapters run blocking work off the event loop.
 
 Framework adapters use the same runtime APIs. Middleware retrieves relevant
 memory before model calls and can archive reasoning or tool results after the

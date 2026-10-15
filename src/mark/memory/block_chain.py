@@ -27,15 +27,20 @@ hook contracts.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from mark.store import LocalMemoryStore
-from mark.types import BlockStatus, MemoryBlock, MemoryEdge, MemoryFragment, MemoryNode
-
-_MEMBER_HASHES_KEY = "mark_member_hashes"
+from mark.memory.block_hashing import (  # noqa: F401  (hash helpers re-exported)
+    _MEMBER_HASHES_KEY,
+    _canonical_hash,
+    _hash_edge,
+    _hash_fragment,
+    _hash_node,
+    block_content_hash,
+)
+from mark.memory.block_membership import SealedMembership, _safe_call, sealed_membership  # noqa: F401
+from mark.store.sqlite import LocalMemoryStore
+from mark.types import BlockStatus, MemoryBlock, MemoryEdge, MemoryFragment, MemoryNode  # noqa: F401
 
 
 @dataclass(frozen=True)
@@ -76,6 +81,7 @@ class ChainVerification:
     broken_links: list[tuple[str, str]] = field(default_factory=list)
 
 
+
 class BlockChain:
     """Per-agent sealing, verification, and quarantine over memory blocks.
 
@@ -110,6 +116,8 @@ class BlockChain:
 
         member_hashes = self._member_hashes(block_id)
         content_hash = self._content_hash(member_hashes)
+        # Chain link: the agent's most recently sealed block (never itself).
+        # The first sealed block has no predecessor (prev_* stay None).
         prev = self._store.latest_sealed_block(self.agent_id, exclude_id=block_id)
 
         metadata = dict(block.metadata)
@@ -153,6 +161,8 @@ class BlockChain:
         )
         missing = sorted(set(sealed_hashes) - set(current_hashes))
         added = sorted(set(current_hashes) - set(sealed_hashes))
+        # The seal record itself can be tampered with too: the stored
+        # content_hash must still match the stored member hashes.
         content_ok = self._content_hash(sealed_hashes) == block.content_hash
 
         valid = not corrupted and not missing and not added and content_ok
@@ -188,6 +198,8 @@ class BlockChain:
         for block in chain:
             if not self.verify(block.id).valid:
                 broken_blocks.append(block.id)
+            # A link breaks when the predecessor is gone or its content hash
+            # no longer equals the prev_block_hash recorded at seal time.
             if block.prev_block_id is not None:
                 expected = prev_hash_by_id.get(block.prev_block_id)
                 if expected is None:
@@ -246,48 +258,4 @@ class BlockChain:
     @staticmethod
     def _content_hash(member_hashes: dict[str, str]) -> str:
         """Deterministic block hash over sorted member hashes."""
-        canonical = json.dumps(sorted(member_hashes.items()), separators=(",", ":"))
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
-def _canonical_hash(payload: dict[str, object]) -> str:
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
-    ).hexdigest()
-
-
-def _hash_fragment(fragment: MemoryFragment) -> str:
-    # importance/state/access metadata are mutable by design — excluded.
-    return _canonical_hash({
-        "kind": "fragment",
-        "id": fragment.id,
-        "content": fragment.content,
-        "agent_id": fragment.agent_id,
-        "session_id": fragment.session_id,
-        "source": fragment.source,
-        "created_at": fragment.created_at.isoformat(),
-    })
-
-
-def _hash_node(node: MemoryNode) -> str:
-    # weight is plasticity-mutable — excluded.
-    return _canonical_hash({
-        "kind": "node",
-        "id": node.id,
-        "node_type": node.node_type.value,
-        "label": node.label,
-        "fragment_id": node.fragment_id,
-        "created_at": node.created_at.isoformat(),
-    })
-
-
-def _hash_edge(edge: MemoryEdge) -> str:
-    # weight is reinforced on co-activation — excluded.
-    return _canonical_hash({
-        "kind": "edge",
-        "id": edge.id,
-        "source_id": edge.source_id,
-        "target_id": edge.target_id,
-        "relation": edge.relation.value,
-        "created_at": edge.created_at.isoformat(),
-    })
+        return block_content_hash(member_hashes)

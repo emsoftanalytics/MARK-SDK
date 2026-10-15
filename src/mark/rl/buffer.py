@@ -65,6 +65,8 @@ class ReplayBuffer:
     _latest: ClassVar[Optional["ReplayBuffer"]] = None
 
     def __init__(self, capacity: int = 10_000) -> None:
+        if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity < 1:
+            raise ValueError(f"ReplayBuffer capacity must be a positive integer, got {capacity!r}")
         self._capacity = capacity
         self._buffer:  List[ExperienceTuple] = []
         self._pos:     int = 0

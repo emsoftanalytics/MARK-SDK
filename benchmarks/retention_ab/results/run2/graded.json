@@ -1,0 +1,1334 @@
+[
+  {
+    "file": "/tmp/claude-1000/-run-media-emsoft-analytics-Workspace-mark-mark-sdk/c1644daa-fb48-41b6-ac88-042150ae288c/scratchpad/exp2/run/armA/answers.json",
+    "score": 61,
+    "total": 61,
+    "by_category": {
+      "abstention-never-mentioned": "3/3",
+      "current-after-multiple-updates": "18/18",
+      "early-fact-never-updated": "11/11",
+      "exact-id-lookup": "6/6",
+      "multi-hop-ticket-assignee-team": "5/5",
+      "multi-hop-ticket-to-current-owner": "5/5",
+      "original-value-before-changes": "8/8",
+      "ticket-status-after-updates": "5/5"
+    },
+    "rows": [
+      {
+        "id": "CU1",
+        "category": "current-after-multiple-updates",
+        "gold": "Pia Achebe",
+        "answer": "Pia Achebe",
+        "correct": true
+      },
+      {
+        "id": "CU2",
+        "category": "current-after-multiple-updates",
+        "gold": "Eli Brandt",
+        "answer": "Eli Brandt",
+        "correct": true
+      },
+      {
+        "id": "CU3",
+        "category": "current-after-multiple-updates",
+        "gold": "us-west-2",
+        "answer": "us-west-2",
+        "correct": true
+      },
+      {
+        "id": "CU4",
+        "category": "current-after-multiple-updates",
+        "gold": "MySQL 8.0",
+        "answer": "MySQL 8.0",
+        "correct": true
+      },
+      {
+        "id": "CU5",
+        "category": "current-after-multiple-updates",
+        "gold": "PostgreSQL 15",
+        "answer": "PostgreSQL 15",
+        "correct": true
+      },
+      {
+        "id": "CU6",
+        "category": "current-after-multiple-updates",
+        "gold": "8216",
+        "answer": "8216",
+        "correct": true
+      },
+      {
+        "id": "CU7",
+        "category": "current-after-multiple-updates",
+        "gold": "5433",
+        "answer": "5433",
+        "correct": true
+      },
+      {
+        "id": "CU8",
+        "category": "current-after-multiple-updates",
+        "gold": "eu-west-1",
+        "answer": "eu-west-1",
+        "correct": true
+      },
+      {
+        "id": "CU9",
+        "category": "current-after-multiple-updates",
+        "gold": "Emeka Nwosu",
+        "answer": "Emeka Nwosu",
+        "correct": true
+      },
+      {
+        "id": "CU10",
+        "category": "current-after-multiple-updates",
+        "gold": "7214",
+        "answer": "7214",
+        "correct": true
+      },
+      {
+        "id": "CU11",
+        "category": "current-after-multiple-updates",
+        "gold": "5810",
+        "answer": "5810",
+        "correct": true
+      },
+      {
+        "id": "CU12",
+        "category": "current-after-multiple-updates",
+        "gold": "eu-west-1",
+        "answer": "eu-west-1",
+        "correct": true
+      },
+      {
+        "id": "CU13",
+        "category": "current-after-multiple-updates",
+        "gold": "af-south-1",
+        "answer": "af-south-1",
+        "correct": true
+      },
+      {
+        "id": "CU14",
+        "category": "current-after-multiple-updates",
+        "gold": "7107",
+        "answer": "7107",
+        "correct": true
+      },
+      {
+        "id": "CU15",
+        "category": "current-after-multiple-updates",
+        "gold": "PostgreSQL 16",
+        "answer": "PostgreSQL 16",
+        "correct": true
+      },
+      {
+        "id": "HIST1",
+        "category": "original-value-before-changes",
+        "gold": "ap-southeast-1",
+        "answer": "ap-southeast-1",
+        "correct": true
+      },
+      {
+        "id": "HIST2",
+        "category": "original-value-before-changes",
+        "gold": "af-south-1",
+        "answer": "af-south-1",
+        "correct": true
+      },
+      {
+        "id": "HIST3",
+        "category": "original-value-before-changes",
+        "gold": "ap-southeast-1",
+        "answer": "ap-southeast-1",
+        "correct": true
+      },
+      {
+        "id": "HIST4",
+        "category": "original-value-before-changes",
+        "gold": "MongoDB 7",
+        "answer": "MongoDB 7",
+        "correct": true
+      },
+      {
+        "id": "HIST5",
+        "category": "original-value-before-changes",
+        "gold": "MySQL 8.0",
+        "answer": "MySQL 8.0",
+        "correct": true
+      },
+      {
+        "id": "HIST6",
+        "category": "original-value-before-changes",
+        "gold": "us-west-2",
+        "answer": "us-west-2",
+        "correct": true
+      },
+      {
+        "id": "HIST7",
+        "category": "original-value-before-changes",
+        "gold": "CockroachDB 23",
+        "answer": "CockroachDB 23",
+        "correct": true
+      },
+      {
+        "id": "HIST8",
+        "category": "original-value-before-changes",
+        "gold": "Redis 7",
+        "answer": "Redis 7",
+        "correct": true
+      },
+      {
+        "id": "LONG1",
+        "category": "early-fact-never-updated",
+        "gold": "6147",
+        "answer": "6147",
+        "correct": true
+      },
+      {
+        "id": "LONG2",
+        "category": "early-fact-never-updated",
+        "gold": "PostgreSQL 15",
+        "answer": "PostgreSQL 15",
+        "correct": true
+      },
+      {
+        "id": "LONG3",
+        "category": "early-fact-never-updated",
+        "gold": "Dalia Haddad",
+        "answer": "Dalia Haddad",
+        "correct": true
+      },
+      {
+        "id": "LONG4",
+        "category": "early-fact-never-updated",
+        "gold": "MySQL 8.0",
+        "answer": "MySQL 8.0",
+        "correct": true
+      },
+      {
+        "id": "LONG5",
+        "category": "early-fact-never-updated",
+        "gold": "Redis 7",
+        "answer": "Redis 7",
+        "correct": true
+      },
+      {
+        "id": "LONG6",
+        "category": "early-fact-never-updated",
+        "gold": "eu-central-1",
+        "answer": "eu-central-1",
+        "correct": true
+      },
+      {
+        "id": "LONG7",
+        "category": "early-fact-never-updated",
+        "gold": "PostgreSQL 14",
+        "answer": "PostgreSQL 14",
+        "correct": true
+      },
+      {
+        "id": "LONG8",
+        "category": "early-fact-never-updated",
+        "gold": "us-west-2",
+        "answer": "us-west-2",
+        "correct": true
+      },
+      {
+        "id": "LONG9",
+        "category": "early-fact-never-updated",
+        "gold": "7 percent",
+        "answer": "7 percent",
+        "correct": true
+      },
+      {
+        "id": "LONG10",
+        "category": "early-fact-never-updated",
+        "gold": "400 days",
+        "answer": "400 days",
+        "correct": true
+      },
+      {
+        "id": "LONG11",
+        "category": "early-fact-never-updated",
+        "gold": "halcyon-guest-7",
+        "answer": "halcyon-guest-7",
+        "correct": true
+      },
+      {
+        "id": "MH1",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Dalia Haddad",
+        "answer": "Dalia Haddad",
+        "correct": true
+      },
+      {
+        "id": "MH2",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Dana Brandt",
+        "answer": "Dana Brandt",
+        "correct": true
+      },
+      {
+        "id": "MH3",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Ugo Bianchi",
+        "answer": "Ugo Bianchi",
+        "correct": true
+      },
+      {
+        "id": "MH4",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Bola Brandt",
+        "answer": "Bola Brandt",
+        "correct": true
+      },
+      {
+        "id": "MH5",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Cyrus Achebe",
+        "answer": "Cyrus Achebe",
+        "correct": true
+      },
+      {
+        "id": "MH6",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "Data",
+        "answer": "Data",
+        "correct": true
+      },
+      {
+        "id": "MH7",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "ML",
+        "answer": "ML",
+        "correct": true
+      },
+      {
+        "id": "MH8",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "Observability",
+        "answer": "Observability",
+        "correct": true
+      },
+      {
+        "id": "MH9",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "Messaging",
+        "answer": "Messaging",
+        "correct": true
+      },
+      {
+        "id": "MH10",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "Platform",
+        "answer": "Platform",
+        "correct": true
+      },
+      {
+        "id": "ID1",
+        "category": "exact-id-lookup",
+        "gold": "HAL-2140",
+        "answer": "HAL-2140",
+        "correct": true
+      },
+      {
+        "id": "ID2",
+        "category": "exact-id-lookup",
+        "gold": "HAL-7117",
+        "answer": "HAL-7117",
+        "correct": true
+      },
+      {
+        "id": "ID3",
+        "category": "exact-id-lookup",
+        "gold": "HAL-6220",
+        "answer": "HAL-6220",
+        "correct": true
+      },
+      {
+        "id": "ID4",
+        "category": "exact-id-lookup",
+        "gold": "HAL-7880",
+        "answer": "HAL-7880",
+        "correct": true
+      },
+      {
+        "id": "ID5",
+        "category": "exact-id-lookup",
+        "gold": "HAL-8297",
+        "answer": "HAL-8297",
+        "correct": true
+      },
+      {
+        "id": "ID6",
+        "category": "exact-id-lookup",
+        "gold": "HAL-6993",
+        "answer": "HAL-6993",
+        "correct": true
+      },
+      {
+        "id": "ST1",
+        "category": "ticket-status-after-updates",
+        "gold": "closed",
+        "answer": "closed",
+        "correct": true
+      },
+      {
+        "id": "ST2",
+        "category": "ticket-status-after-updates",
+        "gold": "in progress",
+        "answer": "in progress",
+        "correct": true
+      },
+      {
+        "id": "ST3",
+        "category": "ticket-status-after-updates",
+        "gold": "blocked",
+        "answer": "blocked",
+        "correct": true
+      },
+      {
+        "id": "ST4",
+        "category": "ticket-status-after-updates",
+        "gold": "closed",
+        "answer": "closed",
+        "correct": true
+      },
+      {
+        "id": "ST5",
+        "category": "ticket-status-after-updates",
+        "gold": "in progress",
+        "answer": "in progress",
+        "correct": true
+      },
+      {
+        "id": "MISC1",
+        "category": "current-after-multiple-updates",
+        "gold": "Rosa Delgado",
+        "answer": "Rosa Delgado",
+        "correct": true
+      },
+      {
+        "id": "MISC2",
+        "category": "current-after-multiple-updates",
+        "gold": "EUR 455,000",
+        "answer": "EUR 455,000",
+        "correct": true
+      },
+      {
+        "id": "MISC3",
+        "category": "current-after-multiple-updates",
+        "gold": "2026-04-16",
+        "answer": "2026-04-16",
+        "correct": true
+      },
+      {
+        "id": "ABS1",
+        "category": "abstention-never-mentioned",
+        "gold": "unknown",
+        "answer": "unknown",
+        "correct": true
+      },
+      {
+        "id": "ABS2",
+        "category": "abstention-never-mentioned",
+        "gold": "unknown",
+        "answer": "unknown",
+        "correct": true
+      },
+      {
+        "id": "ABS3",
+        "category": "abstention-never-mentioned",
+        "gold": "unknown",
+        "answer": "unknown",
+        "correct": true
+      }
+    ]
+  },
+  {
+    "file": "/tmp/claude-1000/-run-media-emsoft-analytics-Workspace-mark-mark-sdk/c1644daa-fb48-41b6-ac88-042150ae288c/scratchpad/exp2/run/armB/answers.json",
+    "score": 61,
+    "total": 61,
+    "by_category": {
+      "abstention-never-mentioned": "3/3",
+      "current-after-multiple-updates": "18/18",
+      "early-fact-never-updated": "11/11",
+      "exact-id-lookup": "6/6",
+      "multi-hop-ticket-assignee-team": "5/5",
+      "multi-hop-ticket-to-current-owner": "5/5",
+      "original-value-before-changes": "8/8",
+      "ticket-status-after-updates": "5/5"
+    },
+    "rows": [
+      {
+        "id": "CU1",
+        "category": "current-after-multiple-updates",
+        "gold": "Pia Achebe",
+        "answer": "Pia Achebe",
+        "correct": true
+      },
+      {
+        "id": "CU2",
+        "category": "current-after-multiple-updates",
+        "gold": "Eli Brandt",
+        "answer": "Eli Brandt",
+        "correct": true
+      },
+      {
+        "id": "CU3",
+        "category": "current-after-multiple-updates",
+        "gold": "us-west-2",
+        "answer": "us-west-2",
+        "correct": true
+      },
+      {
+        "id": "CU4",
+        "category": "current-after-multiple-updates",
+        "gold": "MySQL 8.0",
+        "answer": "MySQL 8.0",
+        "correct": true
+      },
+      {
+        "id": "CU5",
+        "category": "current-after-multiple-updates",
+        "gold": "PostgreSQL 15",
+        "answer": "PostgreSQL 15",
+        "correct": true
+      },
+      {
+        "id": "CU6",
+        "category": "current-after-multiple-updates",
+        "gold": "8216",
+        "answer": "8216",
+        "correct": true
+      },
+      {
+        "id": "CU7",
+        "category": "current-after-multiple-updates",
+        "gold": "5433",
+        "answer": "5433",
+        "correct": true
+      },
+      {
+        "id": "CU8",
+        "category": "current-after-multiple-updates",
+        "gold": "eu-west-1",
+        "answer": "eu-west-1",
+        "correct": true
+      },
+      {
+        "id": "CU9",
+        "category": "current-after-multiple-updates",
+        "gold": "Emeka Nwosu",
+        "answer": "Emeka Nwosu",
+        "correct": true
+      },
+      {
+        "id": "CU10",
+        "category": "current-after-multiple-updates",
+        "gold": "7214",
+        "answer": "7214",
+        "correct": true
+      },
+      {
+        "id": "CU11",
+        "category": "current-after-multiple-updates",
+        "gold": "5810",
+        "answer": "5810",
+        "correct": true
+      },
+      {
+        "id": "CU12",
+        "category": "current-after-multiple-updates",
+        "gold": "eu-west-1",
+        "answer": "eu-west-1",
+        "correct": true
+      },
+      {
+        "id": "CU13",
+        "category": "current-after-multiple-updates",
+        "gold": "af-south-1",
+        "answer": "af-south-1",
+        "correct": true
+      },
+      {
+        "id": "CU14",
+        "category": "current-after-multiple-updates",
+        "gold": "7107",
+        "answer": "7107",
+        "correct": true
+      },
+      {
+        "id": "CU15",
+        "category": "current-after-multiple-updates",
+        "gold": "PostgreSQL 16",
+        "answer": "PostgreSQL 16",
+        "correct": true
+      },
+      {
+        "id": "HIST1",
+        "category": "original-value-before-changes",
+        "gold": "ap-southeast-1",
+        "answer": "ap-southeast-1",
+        "correct": true
+      },
+      {
+        "id": "HIST2",
+        "category": "original-value-before-changes",
+        "gold": "af-south-1",
+        "answer": "af-south-1",
+        "correct": true
+      },
+      {
+        "id": "HIST3",
+        "category": "original-value-before-changes",
+        "gold": "ap-southeast-1",
+        "answer": "ap-southeast-1",
+        "correct": true
+      },
+      {
+        "id": "HIST4",
+        "category": "original-value-before-changes",
+        "gold": "MongoDB 7",
+        "answer": "MongoDB 7",
+        "correct": true
+      },
+      {
+        "id": "HIST5",
+        "category": "original-value-before-changes",
+        "gold": "MySQL 8.0",
+        "answer": "MySQL 8.0",
+        "correct": true
+      },
+      {
+        "id": "HIST6",
+        "category": "original-value-before-changes",
+        "gold": "us-west-2",
+        "answer": "us-west-2",
+        "correct": true
+      },
+      {
+        "id": "HIST7",
+        "category": "original-value-before-changes",
+        "gold": "CockroachDB 23",
+        "answer": "CockroachDB 23",
+        "correct": true
+      },
+      {
+        "id": "HIST8",
+        "category": "original-value-before-changes",
+        "gold": "Redis 7",
+        "answer": "Redis 7",
+        "correct": true
+      },
+      {
+        "id": "LONG1",
+        "category": "early-fact-never-updated",
+        "gold": "6147",
+        "answer": "6147",
+        "correct": true
+      },
+      {
+        "id": "LONG2",
+        "category": "early-fact-never-updated",
+        "gold": "PostgreSQL 15",
+        "answer": "PostgreSQL 15",
+        "correct": true
+      },
+      {
+        "id": "LONG3",
+        "category": "early-fact-never-updated",
+        "gold": "Dalia Haddad",
+        "answer": "Dalia Haddad",
+        "correct": true
+      },
+      {
+        "id": "LONG4",
+        "category": "early-fact-never-updated",
+        "gold": "MySQL 8.0",
+        "answer": "MySQL 8.0",
+        "correct": true
+      },
+      {
+        "id": "LONG5",
+        "category": "early-fact-never-updated",
+        "gold": "Redis 7",
+        "answer": "Redis 7",
+        "correct": true
+      },
+      {
+        "id": "LONG6",
+        "category": "early-fact-never-updated",
+        "gold": "eu-central-1",
+        "answer": "eu-central-1",
+        "correct": true
+      },
+      {
+        "id": "LONG7",
+        "category": "early-fact-never-updated",
+        "gold": "PostgreSQL 14",
+        "answer": "PostgreSQL 14",
+        "correct": true
+      },
+      {
+        "id": "LONG8",
+        "category": "early-fact-never-updated",
+        "gold": "us-west-2",
+        "answer": "us-west-2",
+        "correct": true
+      },
+      {
+        "id": "LONG9",
+        "category": "early-fact-never-updated",
+        "gold": "7 percent",
+        "answer": "7 percent",
+        "correct": true
+      },
+      {
+        "id": "LONG10",
+        "category": "early-fact-never-updated",
+        "gold": "400 days",
+        "answer": "400 days",
+        "correct": true
+      },
+      {
+        "id": "LONG11",
+        "category": "early-fact-never-updated",
+        "gold": "halcyon-guest-7",
+        "answer": "halcyon-guest-7",
+        "correct": true
+      },
+      {
+        "id": "MH1",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Dalia Haddad",
+        "answer": "Dalia Haddad",
+        "correct": true
+      },
+      {
+        "id": "MH2",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Dana Brandt",
+        "answer": "Dana Brandt",
+        "correct": true
+      },
+      {
+        "id": "MH3",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Ugo Bianchi",
+        "answer": "Ugo Bianchi",
+        "correct": true
+      },
+      {
+        "id": "MH4",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Bola Brandt",
+        "answer": "Bola Brandt",
+        "correct": true
+      },
+      {
+        "id": "MH5",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Cyrus Achebe",
+        "answer": "Cyrus Achebe",
+        "correct": true
+      },
+      {
+        "id": "MH6",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "Data",
+        "answer": "Data",
+        "correct": true
+      },
+      {
+        "id": "MH7",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "ML",
+        "answer": "ML",
+        "correct": true
+      },
+      {
+        "id": "MH8",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "Observability",
+        "answer": "Observability",
+        "correct": true
+      },
+      {
+        "id": "MH9",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "Messaging",
+        "answer": "Messaging",
+        "correct": true
+      },
+      {
+        "id": "MH10",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "Platform",
+        "answer": "Platform",
+        "correct": true
+      },
+      {
+        "id": "ID1",
+        "category": "exact-id-lookup",
+        "gold": "HAL-2140",
+        "answer": "HAL-2140",
+        "correct": true
+      },
+      {
+        "id": "ID2",
+        "category": "exact-id-lookup",
+        "gold": "HAL-7117",
+        "answer": "HAL-7117",
+        "correct": true
+      },
+      {
+        "id": "ID3",
+        "category": "exact-id-lookup",
+        "gold": "HAL-6220",
+        "answer": "HAL-6220",
+        "correct": true
+      },
+      {
+        "id": "ID4",
+        "category": "exact-id-lookup",
+        "gold": "HAL-7880",
+        "answer": "HAL-7880",
+        "correct": true
+      },
+      {
+        "id": "ID5",
+        "category": "exact-id-lookup",
+        "gold": "HAL-8297",
+        "answer": "HAL-8297",
+        "correct": true
+      },
+      {
+        "id": "ID6",
+        "category": "exact-id-lookup",
+        "gold": "HAL-6993",
+        "answer": "HAL-6993",
+        "correct": true
+      },
+      {
+        "id": "ST1",
+        "category": "ticket-status-after-updates",
+        "gold": "closed",
+        "answer": "closed",
+        "correct": true
+      },
+      {
+        "id": "ST2",
+        "category": "ticket-status-after-updates",
+        "gold": "in progress",
+        "answer": "in progress",
+        "correct": true
+      },
+      {
+        "id": "ST3",
+        "category": "ticket-status-after-updates",
+        "gold": "blocked",
+        "answer": "blocked",
+        "correct": true
+      },
+      {
+        "id": "ST4",
+        "category": "ticket-status-after-updates",
+        "gold": "closed",
+        "answer": "closed",
+        "correct": true
+      },
+      {
+        "id": "ST5",
+        "category": "ticket-status-after-updates",
+        "gold": "in progress",
+        "answer": "in progress",
+        "correct": true
+      },
+      {
+        "id": "MISC1",
+        "category": "current-after-multiple-updates",
+        "gold": "Rosa Delgado",
+        "answer": "Rosa Delgado",
+        "correct": true
+      },
+      {
+        "id": "MISC2",
+        "category": "current-after-multiple-updates",
+        "gold": "EUR 455,000",
+        "answer": "EUR 455,000",
+        "correct": true
+      },
+      {
+        "id": "MISC3",
+        "category": "current-after-multiple-updates",
+        "gold": "2026-04-16",
+        "answer": "2026-04-16",
+        "correct": true
+      },
+      {
+        "id": "ABS1",
+        "category": "abstention-never-mentioned",
+        "gold": "unknown",
+        "answer": "unknown",
+        "correct": true
+      },
+      {
+        "id": "ABS2",
+        "category": "abstention-never-mentioned",
+        "gold": "unknown",
+        "answer": "unknown",
+        "correct": true
+      },
+      {
+        "id": "ABS3",
+        "category": "abstention-never-mentioned",
+        "gold": "unknown",
+        "answer": "unknown",
+        "correct": true
+      }
+    ]
+  },
+  {
+    "file": "/tmp/claude-1000/-run-media-emsoft-analytics-Workspace-mark-mark-sdk/c1644daa-fb48-41b6-ac88-042150ae288c/scratchpad/exp2/run/armC/answers.json",
+    "score": 60,
+    "total": 61,
+    "by_category": {
+      "abstention-never-mentioned": "3/3",
+      "current-after-multiple-updates": "18/18",
+      "early-fact-never-updated": "11/11",
+      "exact-id-lookup": "6/6",
+      "multi-hop-ticket-assignee-team": "4/5",
+      "multi-hop-ticket-to-current-owner": "5/5",
+      "original-value-before-changes": "8/8",
+      "ticket-status-after-updates": "5/5"
+    },
+    "rows": [
+      {
+        "id": "CU1",
+        "category": "current-after-multiple-updates",
+        "gold": "Pia Achebe",
+        "answer": "Pia Achebe",
+        "correct": true
+      },
+      {
+        "id": "CU2",
+        "category": "current-after-multiple-updates",
+        "gold": "Eli Brandt",
+        "answer": "Eli Brandt",
+        "correct": true
+      },
+      {
+        "id": "CU3",
+        "category": "current-after-multiple-updates",
+        "gold": "us-west-2",
+        "answer": "us-west-2",
+        "correct": true
+      },
+      {
+        "id": "CU4",
+        "category": "current-after-multiple-updates",
+        "gold": "MySQL 8.0",
+        "answer": "MySQL 8.0",
+        "correct": true
+      },
+      {
+        "id": "CU5",
+        "category": "current-after-multiple-updates",
+        "gold": "PostgreSQL 15",
+        "answer": "PostgreSQL 15",
+        "correct": true
+      },
+      {
+        "id": "CU6",
+        "category": "current-after-multiple-updates",
+        "gold": "8216",
+        "answer": "8216",
+        "correct": true
+      },
+      {
+        "id": "CU7",
+        "category": "current-after-multiple-updates",
+        "gold": "5433",
+        "answer": "5433",
+        "correct": true
+      },
+      {
+        "id": "CU8",
+        "category": "current-after-multiple-updates",
+        "gold": "eu-west-1",
+        "answer": "eu-west-1",
+        "correct": true
+      },
+      {
+        "id": "CU9",
+        "category": "current-after-multiple-updates",
+        "gold": "Emeka Nwosu",
+        "answer": "Emeka Nwosu",
+        "correct": true
+      },
+      {
+        "id": "CU10",
+        "category": "current-after-multiple-updates",
+        "gold": "7214",
+        "answer": "7214",
+        "correct": true
+      },
+      {
+        "id": "CU11",
+        "category": "current-after-multiple-updates",
+        "gold": "5810",
+        "answer": "5810",
+        "correct": true
+      },
+      {
+        "id": "CU12",
+        "category": "current-after-multiple-updates",
+        "gold": "eu-west-1",
+        "answer": "eu-west-1",
+        "correct": true
+      },
+      {
+        "id": "CU13",
+        "category": "current-after-multiple-updates",
+        "gold": "af-south-1",
+        "answer": "af-south-1",
+        "correct": true
+      },
+      {
+        "id": "CU14",
+        "category": "current-after-multiple-updates",
+        "gold": "7107",
+        "answer": "7107",
+        "correct": true
+      },
+      {
+        "id": "CU15",
+        "category": "current-after-multiple-updates",
+        "gold": "PostgreSQL 16",
+        "answer": "PostgreSQL 16",
+        "correct": true
+      },
+      {
+        "id": "HIST1",
+        "category": "original-value-before-changes",
+        "gold": "ap-southeast-1",
+        "answer": "ap-southeast-1",
+        "correct": true
+      },
+      {
+        "id": "HIST2",
+        "category": "original-value-before-changes",
+        "gold": "af-south-1",
+        "answer": "af-south-1",
+        "correct": true
+      },
+      {
+        "id": "HIST3",
+        "category": "original-value-before-changes",
+        "gold": "ap-southeast-1",
+        "answer": "ap-southeast-1",
+        "correct": true
+      },
+      {
+        "id": "HIST4",
+        "category": "original-value-before-changes",
+        "gold": "MongoDB 7",
+        "answer": "MongoDB 7",
+        "correct": true
+      },
+      {
+        "id": "HIST5",
+        "category": "original-value-before-changes",
+        "gold": "MySQL 8.0",
+        "answer": "MySQL 8.0",
+        "correct": true
+      },
+      {
+        "id": "HIST6",
+        "category": "original-value-before-changes",
+        "gold": "us-west-2",
+        "answer": "us-west-2",
+        "correct": true
+      },
+      {
+        "id": "HIST7",
+        "category": "original-value-before-changes",
+        "gold": "CockroachDB 23",
+        "answer": "CockroachDB 23",
+        "correct": true
+      },
+      {
+        "id": "HIST8",
+        "category": "original-value-before-changes",
+        "gold": "Redis 7",
+        "answer": "Redis 7",
+        "correct": true
+      },
+      {
+        "id": "LONG1",
+        "category": "early-fact-never-updated",
+        "gold": "6147",
+        "answer": "6147",
+        "correct": true
+      },
+      {
+        "id": "LONG2",
+        "category": "early-fact-never-updated",
+        "gold": "PostgreSQL 15",
+        "answer": "PostgreSQL 15",
+        "correct": true
+      },
+      {
+        "id": "LONG3",
+        "category": "early-fact-never-updated",
+        "gold": "Dalia Haddad",
+        "answer": "Dalia Haddad",
+        "correct": true
+      },
+      {
+        "id": "LONG4",
+        "category": "early-fact-never-updated",
+        "gold": "MySQL 8.0",
+        "answer": "MySQL 8.0",
+        "correct": true
+      },
+      {
+        "id": "LONG5",
+        "category": "early-fact-never-updated",
+        "gold": "Redis 7",
+        "answer": "Redis 7",
+        "correct": true
+      },
+      {
+        "id": "LONG6",
+        "category": "early-fact-never-updated",
+        "gold": "eu-central-1",
+        "answer": "eu-central-1",
+        "correct": true
+      },
+      {
+        "id": "LONG7",
+        "category": "early-fact-never-updated",
+        "gold": "PostgreSQL 14",
+        "answer": "PostgreSQL 14",
+        "correct": true
+      },
+      {
+        "id": "LONG8",
+        "category": "early-fact-never-updated",
+        "gold": "us-west-2",
+        "answer": "us-west-2",
+        "correct": true
+      },
+      {
+        "id": "LONG9",
+        "category": "early-fact-never-updated",
+        "gold": "7 percent",
+        "answer": "7 percent",
+        "correct": true
+      },
+      {
+        "id": "LONG10",
+        "category": "early-fact-never-updated",
+        "gold": "400 days",
+        "answer": "400 days",
+        "correct": true
+      },
+      {
+        "id": "LONG11",
+        "category": "early-fact-never-updated",
+        "gold": "halcyon-guest-7",
+        "answer": "halcyon-guest-7",
+        "correct": true
+      },
+      {
+        "id": "MH1",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Dalia Haddad",
+        "answer": "Dalia Haddad",
+        "correct": true
+      },
+      {
+        "id": "MH2",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Dana Brandt",
+        "answer": "Dana Brandt",
+        "correct": true
+      },
+      {
+        "id": "MH3",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Ugo Bianchi",
+        "answer": "Ugo Bianchi",
+        "correct": true
+      },
+      {
+        "id": "MH4",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Bola Brandt",
+        "answer": "Bola Brandt",
+        "correct": true
+      },
+      {
+        "id": "MH5",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Cyrus Achebe",
+        "answer": "Cyrus Achebe",
+        "correct": true
+      },
+      {
+        "id": "MH6",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "Data",
+        "answer": "Data",
+        "correct": true
+      },
+      {
+        "id": "MH7",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "ML",
+        "answer": "ML",
+        "correct": true
+      },
+      {
+        "id": "MH8",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "Observability",
+        "answer": "Observability",
+        "correct": true
+      },
+      {
+        "id": "MH9",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "Messaging",
+        "answer": "Messaging",
+        "correct": true
+      },
+      {
+        "id": "MH10",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "Platform",
+        "answer": "Messaging",
+        "correct": false
+      },
+      {
+        "id": "ID1",
+        "category": "exact-id-lookup",
+        "gold": "HAL-2140",
+        "answer": "HAL-2140",
+        "correct": true
+      },
+      {
+        "id": "ID2",
+        "category": "exact-id-lookup",
+        "gold": "HAL-7117",
+        "answer": "HAL-7117",
+        "correct": true
+      },
+      {
+        "id": "ID3",
+        "category": "exact-id-lookup",
+        "gold": "HAL-6220",
+        "answer": "HAL-6220",
+        "correct": true
+      },
+      {
+        "id": "ID4",
+        "category": "exact-id-lookup",
+        "gold": "HAL-7880",
+        "answer": "HAL-7880",
+        "correct": true
+      },
+      {
+        "id": "ID5",
+        "category": "exact-id-lookup",
+        "gold": "HAL-8297",
+        "answer": "HAL-8297",
+        "correct": true
+      },
+      {
+        "id": "ID6",
+        "category": "exact-id-lookup",
+        "gold": "HAL-6993",
+        "answer": "HAL-6993",
+        "correct": true
+      },
+      {
+        "id": "ST1",
+        "category": "ticket-status-after-updates",
+        "gold": "closed",
+        "answer": "closed",
+        "correct": true
+      },
+      {
+        "id": "ST2",
+        "category": "ticket-status-after-updates",
+        "gold": "in progress",
+        "answer": "in progress",
+        "correct": true
+      },
+      {
+        "id": "ST3",
+        "category": "ticket-status-after-updates",
+        "gold": "blocked",
+        "answer": "blocked",
+        "correct": true
+      },
+      {
+        "id": "ST4",
+        "category": "ticket-status-after-updates",
+        "gold": "closed",
+        "answer": "closed",
+        "correct": true
+      },
+      {
+        "id": "ST5",
+        "category": "ticket-status-after-updates",
+        "gold": "in progress",
+        "answer": "in progress",
+        "correct": true
+      },
+      {
+        "id": "MISC1",
+        "category": "current-after-multiple-updates",
+        "gold": "Rosa Delgado",
+        "answer": "Rosa Delgado",
+        "correct": true
+      },
+      {
+        "id": "MISC2",
+        "category": "current-after-multiple-updates",
+        "gold": "EUR 455,000",
+        "answer": "EUR 455,000",
+        "correct": true
+      },
+      {
+        "id": "MISC3",
+        "category": "current-after-multiple-updates",
+        "gold": "2026-04-16",
+        "answer": "2026-04-16",
+        "correct": true
+      },
+      {
+        "id": "ABS1",
+        "category": "abstention-never-mentioned",
+        "gold": "unknown",
+        "answer": "unknown",
+        "correct": true
+      },
+      {
+        "id": "ABS2",
+        "category": "abstention-never-mentioned",
+        "gold": "unknown",
+        "answer": "unknown",
+        "correct": true
+      },
+      {
+        "id": "ABS3",
+        "category": "abstention-never-mentioned",
+        "gold": "unknown",
+        "answer": "unknown",
+        "correct": true
+      }
+    ]
+  }
+]

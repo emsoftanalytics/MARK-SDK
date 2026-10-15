@@ -1,3 +1,6 @@
+"""MarkAgent wrapper: memory injection, registered skills, middleware around runs,
+optional output storage, and creative-continuity memory without media deps.
+"""
 import pytest
 
 from mark import AgentRun, BaseMiddleware, Mark, MiddlewareContext

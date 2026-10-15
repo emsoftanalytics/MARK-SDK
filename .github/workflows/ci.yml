@@ -37,16 +37,33 @@ jobs:
           uv run --extra dev --extra adapters --extra langchain --extra mcp
           pytest
           tests/test_langchain_middleware.py
+          tests/test_langchain_middleware_async.py
+          tests/test_langchain_middleware_robustness.py
+          tests/test_langchain_middleware_bounds.py
+          tests/test_langchain_anticipation.py
+          tests/test_agent_lifecycle.py
+          tests/test_adapter_lifecycle.py
           tests/test_adapters_mcp_tools.py
           tests/test_agent.py
           tests/test_examples.py
           tests/test_install_smoke.py
           tests/test_package_boundaries.py
 
+  fast:
+    name: Vectorised backend tests (numpy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: uv run --extra dev --extra fast pytest
+
   build:
     name: Build distributions
     runs-on: ubuntu-latest
-    needs: [test, adapters]
+    needs: [test, adapters, fast]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -58,5 +75,14 @@ jobs:
           # Generated media demos are not part of the SDK package.
           ! unzip -l dist/*.whl | grep -E "05_image_consistency|image_consistency|mark_image_consistency|gradio|pillow|PIL"
       - run: |
-          # Heavy media dependencies must not be reintroduced through extras.
-          ! grep -E "gradio-client|pillow|PIL" pyproject.toml uv.lock
+          # sdist must not ship local env files, planning docs, or build caches.
+          ! tar tzf dist/*.tar.gz | grep -E "PLAN\.md|/history/|__pycache__|\.pyc|/\.env|\.venv|/dist/"
+      - run: |
+          # Packaged skill assets must ship in the wheel.
+          unzip -l dist/*.whl | grep -q "mark/middlewares/skills/mark-usage/SKILL.md"
+          unzip -l dist/*.whl | grep -q "mark/middlewares/skills/mark-memory-middleware/SKILL.md"
+      - run: |
+          # Media demo dependencies must not be reintroduced as direct extras
+          # (pillow may still arrive transitively, e.g. via fastembed).
+          ! grep -E "gradio-client|pillow|PIL" pyproject.toml
+          ! grep -E '^name = "gradio-client"' uv.lock

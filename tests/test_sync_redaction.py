@@ -1,3 +1,4 @@
+"""Sync redaction of secrets in record content and metadata."""
 from mark import Mark
 from mark.middlewares.sync import redact_records_for_sync
 

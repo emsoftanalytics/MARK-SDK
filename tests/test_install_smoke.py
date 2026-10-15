@@ -4,6 +4,7 @@
 # Import-surface smoke test.
 # Uses only the public API exposed at the package boundary — no internal imports.
 # Validates that the installed package works as documented in README.md.
+"""Import-surface smoke test using only the public package API (README contract)."""
 from __future__ import annotations
 
 from pathlib import Path

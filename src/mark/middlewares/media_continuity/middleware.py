@@ -17,7 +17,10 @@ class MediaContinuityMiddleware(BaseMiddleware):
 
     def before(self, context: MiddlewareContext) -> None:
         if context.operation == "observe":
-            context.payload.setdefault("memory_type", self.memory_type)
+            # observe() always passes memory_type (None by default); only an
+            # explicit caller value should override the configured type.
+            if context.payload.get("memory_type") is None:
+                context.payload["memory_type"] = self.memory_type
             incoming = list(context.payload.get("tags") or [])
             context.payload["tags"] = [*incoming, "continuity", *self.tags]
             metadata = dict(context.payload.get("metadata") or {})

@@ -1,3 +1,6 @@
+"""Built-in middlewares through the runtime: ordering, observe tagging,
+compression, observability, sync, governance, trust bus, media continuity, sandbox.
+"""
 from __future__ import annotations
 
 from pathlib import Path

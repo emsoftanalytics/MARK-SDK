@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
+"""RL data layer: ExperienceTuple validation, ReplayBuffer, StateEncoder,
+RewardComputer, governance signal collection, and the routing logger.
+"""
 from __future__ import annotations
 
 import hashlib

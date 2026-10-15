@@ -2,6 +2,9 @@
 # Copyright (c) 2025 MARK Contributors
 #
 # Tests for JSON → SQLite migration.
+"""JSON to SQLite migration: record/ID/state mapping, block tags, .bak rename,
+corrupt-input handling, and idempotent reopen.
+"""
 from __future__ import annotations
 
 import json

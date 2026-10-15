@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mark-sdk"
-version = "0.2.0a6"
+dynamic = ["version"]
 description = "Local-first cognitive memory runtime for agent applications."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -29,6 +29,9 @@ dependencies = [
   "pydantic>=2.0",
 ]
 
+[project.scripts]
+mark = "mark.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/emsoftanalytics/MARK-SDK"
 Repository = "https://github.com/emsoftanalytics/MARK-SDK.git"
@@ -49,6 +52,15 @@ ollama = [
 ]
 sentence-transformers = [
   "sentence-transformers>=2.7",
+]
+fast = [
+  "numpy>=1.26",
+]
+fastembed = [
+  "fastembed>=0.5",
+]
+model2vec = [
+  "model2vec>=0.4",
 ]
 web = [
   "duckduckgo-search>=6.0",
@@ -144,11 +156,20 @@ exclude = [
   "/tutorial_media_output",
   "/tests",
   "/dist",
+  "/history",
+  "/.claude",
+  "/benchmarks/results",
+  # Generated demo media never ships in the source distribution.
+  "/examples/**/output",
+  "*.mp4",
+  "*.wav",
+  "*.gif",
+  "*.jpg",
+  "*.png",
 ]
 
-[tool.hatch.build.targets.wheel.force-include]
-"src/mark/middlewares/skills/mark-usage/SKILL.md" = "mark/middlewares/skills/mark-usage/SKILL.md"
-"src/mark/middlewares/skills/mark-memory-middleware/SKILL.md" = "mark/middlewares/skills/mark-memory-middleware/SKILL.md"
+[tool.hatch.version]
+path = "src/mark/_version.py"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

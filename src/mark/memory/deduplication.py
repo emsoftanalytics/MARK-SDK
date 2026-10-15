@@ -150,15 +150,35 @@ class DeduplicationConsolidator:
         threshold = similarity_threshold if similarity_threshold is not None else self._threshold
         result    = DeduplicationResult()
 
-        all_fragments = self._store.list_by_agent(self._agent_id, limit=10_000)
-
-        # Optional session filter
         if session_id is not None:
-            all_fragments = [f for f in all_fragments if f.session_id == session_id]
+            all_fragments = self._store.list_by_agent(self._agent_id, session_id=session_id, limit=None)
+        else:
+            all_fragments = self._store.list_by_agent(self._agent_id, limit=None)
+
+        # Sealed-block members are immutable: never merge, delete, or repoint
+        # them. Quarantined/contradicted fragments are audit evidence.
+        from mark.memory.block_chain import sealed_membership
+        from mark.types import MemoryState
+
+        sealed = sealed_membership(self._store, self._agent_id)
+        protected_states = {MemoryState.QUARANTINED, MemoryState.CONTRADICTED}
+        eligible = [
+            f for f in all_fragments
+            if not sealed.protects_fragment(f) and f.state not in protected_states
+        ]
+        if sealed and hasattr(self._store, "nodes_for_fragment"):
+            # A fragment referenced by a sealed node cannot be deleted either
+            # (repointing the node would change its sealed hash).
+            eligible = [
+                f for f in eligible
+                if not any(sealed.protects_node(n) for n in self._store.nodes_for_fragment(f.id))
+            ]
+        result.skipped = len(all_fragments) - len(eligible)
+        all_fragments = eligible
 
         # Separate fragments with embeddings
         embedded = [f for f in all_fragments if f.embedding]
-        result.skipped = len(all_fragments) - len(embedded)
+        result.skipped += len(all_fragments) - len(embedded)
 
         if not embedded:
             return result

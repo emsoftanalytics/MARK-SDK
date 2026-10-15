@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 from mark.embeddings import EmbeddingProvider
-from mark.intelligence import RetrievalPipeline, RetrievalPolicy, RetrievalResult
-from mark.store import LocalMemoryStore
+from mark.intelligence.retrieval import RetrievalPipeline, RetrievalPolicy, RetrievalResult
+from mark.store.sqlite import LocalMemoryStore
 from mark.types import MemoryFragment, MemoryScope, MemoryState
 
 from mark.memory.mark_memory import MarkMemory
@@ -39,6 +40,7 @@ class GlobalMemoryBus:
         publisher: str,
         importance: float = 0.7,
         tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         """Publish content onto the bus."""
         return await self._memory.store(
@@ -48,6 +50,7 @@ class GlobalMemoryBus:
             tags=["global_bus", *(tags or [])],
             source=publisher,
             state=MemoryState.UNVERIFIED,
+            metadata=metadata,
         )
 
     def publish_sync(
@@ -57,6 +60,7 @@ class GlobalMemoryBus:
         publisher: str,
         importance: float = 0.7,
         tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         """Synchronous variant of publish()."""
         return self._memory.store_sync(
@@ -66,6 +70,7 @@ class GlobalMemoryBus:
             tags=["global_bus", *(tags or [])],
             source=publisher,
             state=MemoryState.UNVERIFIED,
+            metadata=metadata,
         )
 
     async def retrieve(
@@ -84,7 +89,7 @@ class GlobalMemoryBus:
         """Synchronous variant of retrieve()."""
         return self._memory.retrieve_sync(query, policy=policy)
 
-    def all_facts(self, limit: int = 200) -> list[MemoryFragment]:
+    def all_facts(self, limit: int | None = 200) -> list[MemoryFragment]:
         """Return all bus facts up to the limit."""
         return self._memory.list(limit=limit)
 

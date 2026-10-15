@@ -1,65 +1,81 @@
-"""Local-first MARK runtime SDK."""
+"""Local-first MARK runtime SDK.
+
+Public names are imported lazily on first access (PEP 562), so `import mark`
+and the `mark` command line start in milliseconds.
+"""
 
 from mark._version import __version__
-from mark.agent import AgentResult, AgentRun, MarkAgent
-from mark.context import ContextBundle, ContextBuilder
-from mark.embeddings import CachedEmbeddingProvider, EmbeddingProvider, HashEmbeddingProvider
-from mark.index import VectorIndex, VectorSearchResult
-from mark.intelligence import (
-    ContextualCompressor,
-    KeywordQueryExpander,
-    LLMContextualCompressor,
-    LLMQueryExpander,
-    NoopCompressor,
-    NoopQueryExpander,
-    QueryExpander,
-    RetrievalPipeline,
-    RetrievalPolicy,
-    RetrievalResult,
-    SessionFilter,
-    SimpleWindowCompressor,
-)
-from mark.memory import (
-    BlockChain,
-    BlockGraph,
-    BlockVerification,
-    ChainVerification,
-    ClusterResult,
-    ConversationMemory,
-    DeduplicationConsolidator,
-    DeduplicationResult,
-    GlobalMemoryBus,
-    GraphNeighborhood,
-    MarkMemory,
-    MarkRuntime,
-    MemoryBlock,
-    MemoryManager,
-    MemoryRecord,
-    MemoryState,
-    MemoryWriteRejection,
-    ObserveEvent,
-    ObserveResult,
-    SimpleMemory,
-    SimpleBlock,
-)
-from mark.intelligence import (
-    DeterministicExtractor,
-    ExtractionMerger,
-    ExtractionResult,
-    ExtractedEntity,
-    ExtractedRelation,
-    LLMStructuredExtractor,
-    StructuredExtraction,
-)
-from mark.plugins import HOOK_OBSERVE_EVENT
-from mark.policies import PolicyDecision, PolicyRegistry
-from mark.runtime import Mark, MarkConfig
-from mark.middlewares.skills import AgentPersona, SkillRegistry, agent_skill, list_packaged_skills, load_skill_text
-from mark.store import JsonMemoryStore, LocalMemoryStore, SessionActivityLog
-from mark.types import BlockLink, BlockStatus
-from mark.types.llm import LLMProvider
 
 _LAZY_EXPORTS = {
+    # Core API (loaded on first access so `import mark` stays fast).
+    "AgentPersona": "mark.middlewares.skills",
+    "Briefing": "mark.context",
+    "ContextWatch": "mark.context",
+    "AgentResult": "mark.agent",
+    "AgentRun": "mark.agent",
+    "BlockChain": "mark.memory",
+    "BlockGraph": "mark.memory",
+    "BlockLink": "mark.types",
+    "BlockStatus": "mark.types",
+    "BlockVerification": "mark.memory",
+    "CachedEmbeddingProvider": "mark.embeddings",
+    "ChainVerification": "mark.memory",
+    "ClusterResult": "mark.memory",
+    "ContextBuilder": "mark.context",
+    "ContextBundle": "mark.context",
+    "ContextualCompressor": "mark.intelligence",
+    "ConversationMemory": "mark.memory",
+    "DeduplicationConsolidator": "mark.memory",
+    "DeduplicationResult": "mark.memory",
+    "DeterministicExtractor": "mark.intelligence",
+    "EmbeddingProvider": "mark.embeddings",
+    "ExtractedEntity": "mark.intelligence",
+    "ExtractedRelation": "mark.intelligence",
+    "ExtractionMerger": "mark.intelligence",
+    "ExtractionResult": "mark.intelligence",
+    "GlobalMemoryBus": "mark.memory",
+    "GraphNeighborhood": "mark.memory",
+    "HOOK_OBSERVE_EVENT": "mark.plugins",
+    "HashEmbeddingProvider": "mark.embeddings",
+    "JsonMemoryStore": "mark.store",
+    "KeywordQueryExpander": "mark.intelligence",
+    "LLMContextualCompressor": "mark.intelligence",
+    "LLMProvider": "mark.types.llm",
+    "LLMQueryExpander": "mark.intelligence",
+    "LLMStructuredExtractor": "mark.intelligence",
+    "LocalMemoryStore": "mark.store",
+    "Mark": "mark.runtime",
+    "MarkAgent": "mark.agent",
+    "MarkConfig": "mark.runtime",
+    "MarkMemory": "mark.memory",
+    "MarkRuntime": "mark.memory",
+    "MemoryBlock": "mark.memory",
+    "MemoryManager": "mark.memory",
+    "MemoryRecord": "mark.memory",
+    "MemoryState": "mark.memory",
+    "MemoryWriteRejection": "mark.memory",
+    "NoopCompressor": "mark.intelligence",
+    "NoopQueryExpander": "mark.intelligence",
+    "ObserveEvent": "mark.memory",
+    "ObserveResult": "mark.memory",
+    "PolicyDecision": "mark.policies",
+    "PolicyRegistry": "mark.policies",
+    "QueryExpander": "mark.intelligence",
+    "RetrievalPipeline": "mark.intelligence",
+    "RetrievalPolicy": "mark.intelligence",
+    "RetrievalResult": "mark.intelligence",
+    "SessionActivityLog": "mark.store",
+    "SessionFilter": "mark.intelligence",
+    "SimpleBlock": "mark.memory",
+    "SimpleMemory": "mark.memory",
+    "SimpleWindowCompressor": "mark.intelligence",
+    "SkillRegistry": "mark.middlewares.skills",
+    "StructuredExtraction": "mark.intelligence",
+    "VectorIndex": "mark.index",
+    "VectorSearchResult": "mark.index",
+    "agent_skill": "mark.middlewares.skills",
+    "list_packaged_skills": "mark.middlewares.skills",
+    "load_skill_text": "mark.middlewares.skills",
     "AuditEntry": "mark.middlewares.governance",
     "BaseMiddleware": "mark.middlewares.base",
     "BusMessage": "mark.middlewares.trust_bus",
@@ -109,17 +125,31 @@ _LAZY_EXPORTS = {
 }
 
 
+# Subpackages reachable as attributes (``import mark; mark.memory.MarkMemory``),
+# exactly as when they were imported eagerly.
+_SUBPACKAGES = {
+    "adapters", "agent", "cli", "context", "embeddings", "index", "intelligence", "memory",
+    "middlewares", "plasticity", "plugins", "policies", "rl", "runtime", "security", "store", "types",
+}
+
+
 def __getattr__(name: str):
-    if name not in _LAZY_EXPORTS:
-        raise AttributeError(f"module 'mark' has no attribute {name!r}")
     from importlib import import_module
 
+    if name in _SUBPACKAGES:
+        module = import_module(f"mark.{name}")
+        globals()[name] = module
+        return module
+    if name not in _LAZY_EXPORTS:
+        raise AttributeError(f"module 'mark' has no attribute {name!r}")
     module = import_module(_LAZY_EXPORTS[name])
     value = getattr(module, name)
     globals()[name] = value
     return value
 
 __all__ = [
+    "Briefing",
+    "ContextWatch",
     "AgentResult",
     "AgentRun",
     "AgentPersona",
@@ -234,3 +264,7 @@ __all__ = [
     "WorldBibleMemory",
     "__version__",
 ]
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_EXPORTS) | _SUBPACKAGES)

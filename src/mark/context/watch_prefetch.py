@@ -1,0 +1,153 @@
+"""Background side of the context watch: anchor detection, prefetch and claim checks.
+
+Threading model: the watch owns at most one worker thread
+(``ThreadPoolExecutor(max_workers=1)``), so prefetches run one at a time and
+in submission order. Shared state (anchors, results, corrections, pending
+futures) is only touched under ``_lock``; the retrieval itself runs outside
+the lock so ``observe()`` and ``briefing()`` never wait on search. A failed
+prefetch is logged and dropped: it must never surface in the agent's turn.
+
+Expects the host class (ContextWatch) to provide ``_memory``, ``_lock``,
+``_anchors``, ``_results``, ``_task_results``, ``_corrections``, ``_turn``,
+``_pending``, ``_executor``, ``_subjects_cache``, ``ttl_turns`` and
+``follow_links``.
+"""
+from __future__ import annotations
+
+import logging
+import re
+import time
+from concurrent.futures import Future
+from typing import Any
+
+from mark.context.watch_support import _TOKEN_RE, _Anchor, _label_for, _mentions_value
+
+# Same logger name as before the split, so log filtering keeps working.
+logger = logging.getLogger("mark.context.watch")
+
+
+class _WatchPrefetchMixin:
+    """Anchor extraction, background prefetch, link anticipation and stale-value checks."""
+
+    def _extract_anchors(self, text: str) -> list[tuple[str, str]]:
+        """(normalised key, label as written) for every anchor and known fact subject in *text*."""
+        from mark.intelligence.query_understanding import _anchor_norm, _contains_anchor, query_anchors
+
+        found: dict[str, str] = {}
+        for key in query_anchors(text):
+            found.setdefault(key, _label_for(text, key))
+        # Known fact subjects are anchors even when written plainly ("pulse metrics").
+        normalised = _anchor_norm(text)
+        for subject in self._known_subjects():
+            if subject not in found and _contains_anchor(normalised, subject):
+                found[subject] = _label_for(text, subject)
+        return list(found.items())
+
+    def _known_subjects(self) -> set[str]:
+        """Fact subjects in memory, cached for 5 s so observe() stays cheap."""
+        stamp, subjects = self._subjects_cache
+        if time.monotonic() - stamp < 5.0:
+            return subjects
+        try:
+            subjects = set(self._memory.facts.subjects())
+        except Exception:  # stores without facts
+            subjects = set()
+        self._subjects_cache = (time.monotonic(), subjects)
+        return subjects
+
+    def _expire(self, turn: int) -> None:
+        """Drop anchors not mentioned for more than ttl_turns turns (caller holds lock)."""
+        for key in [k for k, a in self._anchors.items() if turn - a.last_turn > self.ttl_turns]:
+            self._anchors.pop(key, None)
+            self._results.pop(key, None)
+
+    def _schedule(self, queries: list[str], task: str | None) -> None:
+        """Run a prefetch inline (background=False) or queue it on the single worker."""
+        if self._executor is None:
+            self._prefetch(queries, task)
+            return
+        future = self._executor.submit(self._prefetch, queries, task)
+        with self._lock:
+            self._pending.add(future)
+        future.add_done_callback(self._done)
+
+    def _done(self, future: Future) -> None:
+        """Worker-thread callback: forget the future; log (never raise) its failure."""
+        with self._lock:
+            self._pending.discard(future)
+        error = future.exception()
+        if error is not None:
+            logger.warning("context watch prefetch failed: %s", error)
+
+    def _prefetch(self, queries: list[str], task: str | None) -> None:
+        """Retrieve anchors (and the current task) in one batch, then store results under the lock.
+
+        Anchors that turn out to be known may pull in linked subjects, which
+        are prefetched right after on the same thread.
+        """
+        batch = list(queries) + ([task] if task else [])
+        if not batch:
+            return
+        results = self._memory.retrieve_many_sync(batch)
+        from mark.intelligence.query_understanding import _anchor_norm
+
+        links: list[str] = []
+        with self._lock:
+            for query, result in zip(queries, results):
+                key = _anchor_norm(query)
+                self._results[key] = result
+                anchor = self._anchors.get(key)
+                if anchor is not None:
+                    anchor.known = key not in result.missing_anchors
+                    if anchor.known and not anchor.linked and self.follow_links:
+                        links.extend(self._links_from(anchor, result))
+            if task:
+                self._task_results = {task: results[-1]}
+        if links:
+            self._prefetch(links, None)
+
+    def _links_from(self, anchor: _Anchor, result: Any) -> list[str]:
+        """Subjects named by the anchor's best records: likely next questions (caller holds lock)."""
+        from mark.intelligence.query_understanding import _anchor_norm, _contains_anchor
+
+        labels: list[str] = []
+        for fragment in result.fragments[:3]:
+            if not _contains_anchor(_anchor_norm(fragment.content), anchor.key):
+                continue
+            for key, label in self._extract_anchors(fragment.content):
+                # Only multi-part identifiers (atlas-core, HAL-4433, Mei Lin) are
+                # worth anticipating; short codes and numbers (SEV1, 502) are not.
+                if " " not in key or not re.search(r"[a-z]", key) or key == anchor.key or key in self._anchors:
+                    continue
+                if len(labels) >= self.follow_links:
+                    break
+                self._anchors[key] = _Anchor(key, label, self._turn, self._turn,
+                                             last_seq=anchor.last_seq, linked=True)
+                labels.append(label)
+        return labels
+
+    def _check_claims(self, text: str, keys: list[str]) -> None:
+        """Flag values the agent states that memory knows were superseded."""
+        lowered = text.lower()
+        tokens = set(_TOKEN_RE.findall(lowered))
+        try:
+            facts_view = self._memory.facts
+        except Exception:
+            return
+        for key in keys:
+            try:
+                current = facts_view.current(key)
+            except Exception:
+                return
+            for fact in current:
+                if fact.value.lower() in lowered:
+                    self._corrections.pop(f"{key}|{fact.attribute}", None)
+                    continue
+                history = facts_view.history(fact.subject, fact.attribute)
+                stale = [old for old in history[:-1] if _mentions_value(old.value, lowered, tokens)]
+                if stale:
+                    self._corrections[f"{key}|{fact.attribute}"] = (
+                        f"{fact.subject} {fact.attribute} is {fact.value} now "
+                        f"(since {fact.valid_from.date().isoformat()}); "
+                        f"{stale[-1].value} is outdated."
+                    )

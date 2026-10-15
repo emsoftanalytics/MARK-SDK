@@ -1,3 +1,4 @@
+"""Retrieval policy registry: built-ins, unknown-policy errors, coding policy."""
 from mark import Mark
 from mark.policies import AgentState
 

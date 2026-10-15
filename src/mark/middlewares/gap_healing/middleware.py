@@ -21,8 +21,10 @@ class GapHealingMiddleware(BaseMiddleware):
             return
         context.payload["heal_gaps"] = self.heal_gaps
         context.payload["escalate_on_gap"] = self.escalate_on_gap
-        if self.web_skill is not None:
-            context.payload.setdefault("web_skill", self.web_skill)
+        # The payload always carries a ``web_skill`` key (None by default), so a
+        # plain setdefault would never apply the configured skill.
+        if self.web_skill is not None and context.payload.get("web_skill") is None:
+            context.payload["web_skill"] = self.web_skill
 
 
 __all__ = ["GapHealingMiddleware"]

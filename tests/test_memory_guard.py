@@ -1,3 +1,6 @@
+"""Memory guard: governance quarantines failure artifacts on store_sync, bare
+stores do not, and quarantine_sync stores non-retrievable diagnostics.
+"""
 from mark import GovernanceMiddleware, Mark
 from mark.types import MemoryState
 

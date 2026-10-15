@@ -1,0 +1,652 @@
+[
+  {
+    "file": "/tmp/claude-1000/-run-media-emsoft-analytics-Workspace-mark-mark-sdk/c1644daa-fb48-41b6-ac88-042150ae288c/scratchpad/exp/run/armA/answers.json",
+    "score": 44,
+    "total": 44,
+    "by_category": {
+      "abstention-never-mentioned": "3/3",
+      "current-after-multiple-updates": "13/13",
+      "early-fact-never-updated": "8/8",
+      "exact-id-lookup": "4/4",
+      "multi-hop-ticket-assignee-team": "4/4",
+      "multi-hop-ticket-to-current-owner": "4/4",
+      "original-value-before-changes": "5/5",
+      "ticket-status-after-updates": "3/3"
+    },
+    "rows": [
+      {
+        "id": "CU1",
+        "category": "current-after-multiple-updates",
+        "gold": "Wanjiru Kamau",
+        "answer": "Wanjiru Kamau",
+        "correct": true
+      },
+      {
+        "id": "CU2",
+        "category": "current-after-multiple-updates",
+        "gold": "7438",
+        "answer": "7438",
+        "correct": true
+      },
+      {
+        "id": "CU3",
+        "category": "current-after-multiple-updates",
+        "gold": "Liam O'Connor",
+        "answer": "Liam O'Connor",
+        "correct": true
+      },
+      {
+        "id": "CU4",
+        "category": "current-after-multiple-updates",
+        "gold": "5993",
+        "answer": "5993",
+        "correct": true
+      },
+      {
+        "id": "CU5",
+        "category": "current-after-multiple-updates",
+        "gold": "5289",
+        "answer": "5289",
+        "correct": true
+      },
+      {
+        "id": "CU6",
+        "category": "current-after-multiple-updates",
+        "gold": "eu-west-1",
+        "answer": "eu-west-1",
+        "correct": true
+      },
+      {
+        "id": "CU7",
+        "category": "current-after-multiple-updates",
+        "gold": "us-east-1",
+        "answer": "us-east-1",
+        "correct": true
+      },
+      {
+        "id": "CU8",
+        "category": "current-after-multiple-updates",
+        "gold": "4444",
+        "answer": "4444",
+        "correct": true
+      },
+      {
+        "id": "CU9",
+        "category": "current-after-multiple-updates",
+        "gold": "Oluwaseun Adeyemi",
+        "answer": "Oluwaseun Adeyemi",
+        "correct": true
+      },
+      {
+        "id": "CU10",
+        "category": "current-after-multiple-updates",
+        "gold": "MySQL 8.0",
+        "answer": "MySQL 8.0",
+        "correct": true
+      },
+      {
+        "id": "HIST1",
+        "category": "original-value-before-changes",
+        "gold": "Redis 7",
+        "answer": "Redis 7",
+        "correct": true
+      },
+      {
+        "id": "HIST2",
+        "category": "original-value-before-changes",
+        "gold": "3128",
+        "answer": "3128",
+        "correct": true
+      },
+      {
+        "id": "HIST3",
+        "category": "original-value-before-changes",
+        "gold": "5210",
+        "answer": "5210",
+        "correct": true
+      },
+      {
+        "id": "HIST4",
+        "category": "original-value-before-changes",
+        "gold": "3438",
+        "answer": "3438",
+        "correct": true
+      },
+      {
+        "id": "HIST5",
+        "category": "original-value-before-changes",
+        "gold": "us-east-1",
+        "answer": "us-east-1",
+        "correct": true
+      },
+      {
+        "id": "LONG1",
+        "category": "early-fact-never-updated",
+        "gold": "9895",
+        "answer": "9895",
+        "correct": true
+      },
+      {
+        "id": "LONG2",
+        "category": "early-fact-never-updated",
+        "gold": "eu-central-1",
+        "answer": "eu-central-1",
+        "correct": true
+      },
+      {
+        "id": "LONG3",
+        "category": "early-fact-never-updated",
+        "gold": "MongoDB 7",
+        "answer": "MongoDB 7",
+        "correct": true
+      },
+      {
+        "id": "LONG4",
+        "category": "early-fact-never-updated",
+        "gold": "eu-central-1",
+        "answer": "eu-central-1",
+        "correct": true
+      },
+      {
+        "id": "LONG5",
+        "category": "early-fact-never-updated",
+        "gold": "9892",
+        "answer": "9892",
+        "correct": true
+      },
+      {
+        "id": "LONG6",
+        "category": "early-fact-never-updated",
+        "gold": "7 percent",
+        "answer": "7 percent",
+        "correct": true
+      },
+      {
+        "id": "LONG7",
+        "category": "early-fact-never-updated",
+        "gold": "400 days",
+        "answer": "400 days",
+        "correct": true
+      },
+      {
+        "id": "LONG8",
+        "category": "early-fact-never-updated",
+        "gold": "halcyon-guest-7",
+        "answer": "halcyon-guest-7",
+        "correct": true
+      },
+      {
+        "id": "MH1",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Ugo Bianchi",
+        "answer": "Ugo Bianchi",
+        "correct": true
+      },
+      {
+        "id": "MH2",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Mei Lin",
+        "answer": "Mei Lin",
+        "correct": true
+      },
+      {
+        "id": "MH3",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Chen Wei",
+        "answer": "Chen Wei",
+        "correct": true
+      },
+      {
+        "id": "MH4",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Hana Sato",
+        "answer": "Hana Sato",
+        "correct": true
+      },
+      {
+        "id": "MH5",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "Data",
+        "answer": "Data",
+        "correct": true
+      },
+      {
+        "id": "MH6",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "Edge",
+        "answer": "Edge",
+        "correct": true
+      },
+      {
+        "id": "MH7",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "Edge",
+        "answer": "Edge",
+        "correct": true
+      },
+      {
+        "id": "MH8",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "Messaging",
+        "answer": "Messaging",
+        "correct": true
+      },
+      {
+        "id": "ID1",
+        "category": "exact-id-lookup",
+        "gold": "HAL-6898",
+        "answer": "HAL-6898",
+        "correct": true
+      },
+      {
+        "id": "ID2",
+        "category": "exact-id-lookup",
+        "gold": "HAL-1691",
+        "answer": "HAL-1691",
+        "correct": true
+      },
+      {
+        "id": "ID3",
+        "category": "exact-id-lookup",
+        "gold": "HAL-1041",
+        "answer": "HAL-1041",
+        "correct": true
+      },
+      {
+        "id": "ID4",
+        "category": "exact-id-lookup",
+        "gold": "HAL-2960",
+        "answer": "HAL-2960",
+        "correct": true
+      },
+      {
+        "id": "ST1",
+        "category": "ticket-status-after-updates",
+        "gold": "in progress",
+        "answer": "in progress",
+        "correct": true
+      },
+      {
+        "id": "ST2",
+        "category": "ticket-status-after-updates",
+        "gold": "resolved",
+        "answer": "resolved",
+        "correct": true
+      },
+      {
+        "id": "ST3",
+        "category": "ticket-status-after-updates",
+        "gold": "resolved",
+        "answer": "resolved",
+        "correct": true
+      },
+      {
+        "id": "MISC1",
+        "category": "current-after-multiple-updates",
+        "gold": "Rosa Delgado",
+        "answer": "Rosa Delgado",
+        "correct": true
+      },
+      {
+        "id": "MISC2",
+        "category": "current-after-multiple-updates",
+        "gold": "EUR 455,000",
+        "answer": "EUR 455,000",
+        "correct": true
+      },
+      {
+        "id": "MISC3",
+        "category": "current-after-multiple-updates",
+        "gold": "2026-04-16",
+        "answer": "2026-04-16",
+        "correct": true
+      },
+      {
+        "id": "ABS1",
+        "category": "abstention-never-mentioned",
+        "gold": "unknown",
+        "answer": "unknown",
+        "correct": true
+      },
+      {
+        "id": "ABS2",
+        "category": "abstention-never-mentioned",
+        "gold": "unknown",
+        "answer": "unknown",
+        "correct": true
+      },
+      {
+        "id": "ABS3",
+        "category": "abstention-never-mentioned",
+        "gold": "unknown",
+        "answer": "unknown",
+        "correct": true
+      }
+    ]
+  },
+  {
+    "file": "/tmp/claude-1000/-run-media-emsoft-analytics-Workspace-mark-mark-sdk/c1644daa-fb48-41b6-ac88-042150ae288c/scratchpad/exp/run/armB/answers.json",
+    "score": 44,
+    "total": 44,
+    "by_category": {
+      "abstention-never-mentioned": "3/3",
+      "current-after-multiple-updates": "13/13",
+      "early-fact-never-updated": "8/8",
+      "exact-id-lookup": "4/4",
+      "multi-hop-ticket-assignee-team": "4/4",
+      "multi-hop-ticket-to-current-owner": "4/4",
+      "original-value-before-changes": "5/5",
+      "ticket-status-after-updates": "3/3"
+    },
+    "rows": [
+      {
+        "id": "CU1",
+        "category": "current-after-multiple-updates",
+        "gold": "Wanjiru Kamau",
+        "answer": "Wanjiru Kamau",
+        "correct": true
+      },
+      {
+        "id": "CU2",
+        "category": "current-after-multiple-updates",
+        "gold": "7438",
+        "answer": "7438",
+        "correct": true
+      },
+      {
+        "id": "CU3",
+        "category": "current-after-multiple-updates",
+        "gold": "Liam O'Connor",
+        "answer": "Liam O'Connor",
+        "correct": true
+      },
+      {
+        "id": "CU4",
+        "category": "current-after-multiple-updates",
+        "gold": "5993",
+        "answer": "5993",
+        "correct": true
+      },
+      {
+        "id": "CU5",
+        "category": "current-after-multiple-updates",
+        "gold": "5289",
+        "answer": "5289",
+        "correct": true
+      },
+      {
+        "id": "CU6",
+        "category": "current-after-multiple-updates",
+        "gold": "eu-west-1",
+        "answer": "eu-west-1",
+        "correct": true
+      },
+      {
+        "id": "CU7",
+        "category": "current-after-multiple-updates",
+        "gold": "us-east-1",
+        "answer": "us-east-1",
+        "correct": true
+      },
+      {
+        "id": "CU8",
+        "category": "current-after-multiple-updates",
+        "gold": "4444",
+        "answer": "4444",
+        "correct": true
+      },
+      {
+        "id": "CU9",
+        "category": "current-after-multiple-updates",
+        "gold": "Oluwaseun Adeyemi",
+        "answer": "Oluwaseun Adeyemi",
+        "correct": true
+      },
+      {
+        "id": "CU10",
+        "category": "current-after-multiple-updates",
+        "gold": "MySQL 8.0",
+        "answer": "MySQL 8.0",
+        "correct": true
+      },
+      {
+        "id": "HIST1",
+        "category": "original-value-before-changes",
+        "gold": "Redis 7",
+        "answer": "Redis 7",
+        "correct": true
+      },
+      {
+        "id": "HIST2",
+        "category": "original-value-before-changes",
+        "gold": "3128",
+        "answer": "3128",
+        "correct": true
+      },
+      {
+        "id": "HIST3",
+        "category": "original-value-before-changes",
+        "gold": "5210",
+        "answer": "5210",
+        "correct": true
+      },
+      {
+        "id": "HIST4",
+        "category": "original-value-before-changes",
+        "gold": "3438",
+        "answer": "3438",
+        "correct": true
+      },
+      {
+        "id": "HIST5",
+        "category": "original-value-before-changes",
+        "gold": "us-east-1",
+        "answer": "us-east-1",
+        "correct": true
+      },
+      {
+        "id": "LONG1",
+        "category": "early-fact-never-updated",
+        "gold": "9895",
+        "answer": "9895",
+        "correct": true
+      },
+      {
+        "id": "LONG2",
+        "category": "early-fact-never-updated",
+        "gold": "eu-central-1",
+        "answer": "eu-central-1",
+        "correct": true
+      },
+      {
+        "id": "LONG3",
+        "category": "early-fact-never-updated",
+        "gold": "MongoDB 7",
+        "answer": "MongoDB 7",
+        "correct": true
+      },
+      {
+        "id": "LONG4",
+        "category": "early-fact-never-updated",
+        "gold": "eu-central-1",
+        "answer": "eu-central-1",
+        "correct": true
+      },
+      {
+        "id": "LONG5",
+        "category": "early-fact-never-updated",
+        "gold": "9892",
+        "answer": "9892",
+        "correct": true
+      },
+      {
+        "id": "LONG6",
+        "category": "early-fact-never-updated",
+        "gold": "7 percent",
+        "answer": "7 percent",
+        "correct": true
+      },
+      {
+        "id": "LONG7",
+        "category": "early-fact-never-updated",
+        "gold": "400 days",
+        "answer": "400 days",
+        "correct": true
+      },
+      {
+        "id": "LONG8",
+        "category": "early-fact-never-updated",
+        "gold": "halcyon-guest-7",
+        "answer": "halcyon-guest-7",
+        "correct": true
+      },
+      {
+        "id": "MH1",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Ugo Bianchi",
+        "answer": "Ugo Bianchi",
+        "correct": true
+      },
+      {
+        "id": "MH2",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Mei Lin",
+        "answer": "Mei Lin",
+        "correct": true
+      },
+      {
+        "id": "MH3",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Chen Wei",
+        "answer": "Chen Wei",
+        "correct": true
+      },
+      {
+        "id": "MH4",
+        "category": "multi-hop-ticket-to-current-owner",
+        "gold": "Hana Sato",
+        "answer": "Hana Sato",
+        "correct": true
+      },
+      {
+        "id": "MH5",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "Data",
+        "answer": "Data",
+        "correct": true
+      },
+      {
+        "id": "MH6",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "Edge",
+        "answer": "Edge",
+        "correct": true
+      },
+      {
+        "id": "MH7",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "Edge",
+        "answer": "Edge",
+        "correct": true
+      },
+      {
+        "id": "MH8",
+        "category": "multi-hop-ticket-assignee-team",
+        "gold": "Messaging",
+        "answer": "Messaging",
+        "correct": true
+      },
+      {
+        "id": "ID1",
+        "category": "exact-id-lookup",
+        "gold": "HAL-6898",
+        "answer": "HAL-6898",
+        "correct": true
+      },
+      {
+        "id": "ID2",
+        "category": "exact-id-lookup",
+        "gold": "HAL-1691",
+        "answer": "HAL-1691",
+        "correct": true
+      },
+      {
+        "id": "ID3",
+        "category": "exact-id-lookup",
+        "gold": "HAL-1041",
+        "answer": "HAL-1041",
+        "correct": true
+      },
+      {
+        "id": "ID4",
+        "category": "exact-id-lookup",
+        "gold": "HAL-2960",
+        "answer": "HAL-2960",
+        "correct": true
+      },
+      {
+        "id": "ST1",
+        "category": "ticket-status-after-updates",
+        "gold": "in progress",
+        "answer": "in progress",
+        "correct": true
+      },
+      {
+        "id": "ST2",
+        "category": "ticket-status-after-updates",
+        "gold": "resolved",
+        "answer": "resolved",
+        "correct": true
+      },
+      {
+        "id": "ST3",
+        "category": "ticket-status-after-updates",
+        "gold": "resolved",
+        "answer": "resolved",
+        "correct": true
+      },
+      {
+        "id": "MISC1",
+        "category": "current-after-multiple-updates",
+        "gold": "Rosa Delgado",
+        "answer": "Rosa Delgado",
+        "correct": true
+      },
+      {
+        "id": "MISC2",
+        "category": "current-after-multiple-updates",
+        "gold": "EUR 455,000",
+        "answer": "EUR 455,000",
+        "correct": true
+      },
+      {
+        "id": "MISC3",
+        "category": "current-after-multiple-updates",
+        "gold": "2026-04-16",
+        "answer": "2026-04-16",
+        "correct": true
+      },
+      {
+        "id": "ABS1",
+        "category": "abstention-never-mentioned",
+        "gold": "unknown",
+        "answer": "unknown",
+        "correct": true
+      },
+      {
+        "id": "ABS2",
+        "category": "abstention-never-mentioned",
+        "gold": "unknown",
+        "answer": "unknown",
+        "correct": true
+      },
+      {
+        "id": "ABS3",
+        "category": "abstention-never-mentioned",
+        "gold": "unknown",
+        "answer": "unknown",
+        "correct": true
+      }
+    ]
+  }
+]

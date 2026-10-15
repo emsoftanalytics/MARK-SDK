@@ -26,13 +26,34 @@ Usage (from a local Mark instance directly)::
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Annotated, Any
+
+from pydantic import Field
+
+from mark.adapters.backend import call_backend_off_loop as _backend_call
 
 if TYPE_CHECKING:
     from mark.adapters.backend import MarkBackend
 
 
+#: Importance is a normalised score; the JSON schema advertises the bounds so
+#: MCP clients see them, and pydantic rejects out-of-range values.
+Importance = Annotated[float, Field(ge=0.0, le=1.0)]
+
+
+
 def _require_mcp() -> Any:
+    """Return the high-level MCP server class for the installed ``mcp`` SDK.
+
+    mcp 2.x renamed ``FastMCP`` to ``MCPServer``; mcp 1.x ships ``FastMCP``.
+    Both expose the same ``tool()`` decorator / ``run()`` surface used here.
+    """
+    try:
+        from mcp.server.mcpserver import MCPServer
+        return MCPServer
+    except ImportError:
+        pass
     try:
         from mcp.server.fastmcp import FastMCP
         return FastMCP
@@ -50,6 +71,7 @@ def create_mark_mcp_server(
     default_agent_id: str = "__mark__",
     default_blocks: list[str] | None = None,
     compress: bool = False,
+    allowed_agent_ids: Iterable[str] | None = None,
 ) -> Any:
     """
     Create a FastMCP server that exposes MARK memory as MCP tools.
@@ -66,6 +88,17 @@ def create_mark_mcp_server(
         default_agent_id: Agent namespace for all memory operations.
         default_blocks:   Optional graph block ids used when retrieval omits blocks.
         compress:         Opt-in local/developer-LLM compression for retrieval.
+        allowed_agent_ids: Optional allow-list of agent namespaces. Every tool
+                          accepts an ``agent_id`` argument, so by default an
+                          MCP client may read and write *any* namespace in the
+                          store. Pass a set of ids to restrict clients; calls
+                          naming any other namespace are rejected.
+                          ``default_agent_id`` is always allowed.
+
+    Namespaces:
+        The ``agent_id`` tool parameter lets MCP clients choose the memory
+        namespace (empty string → ``default_agent_id``). Use
+        ``allowed_agent_ids`` when the server is exposed to untrusted clients.
 
     Returns:
         A ``FastMCP`` server instance. Call ``.run()`` to start it
@@ -78,6 +111,15 @@ def create_mark_mcp_server(
     """
     FastMCP = _require_mcp()
     server = FastMCP(name)
+    allowed: set[str] | None = (
+        None if allowed_agent_ids is None else {*allowed_agent_ids, default_agent_id}
+    )
+
+    def _resolve_agent(agent_id: str) -> tuple[str, str | None]:
+        resolved = agent_id or default_agent_id
+        if allowed is not None and resolved not in allowed:
+            return resolved, f"agent_id {resolved!r} is not allowed on this MARK MCP server"
+        return resolved, None
 
     @server.tool()
     async def mark_retrieve(
@@ -96,9 +138,14 @@ def create_mark_mcp_server(
         evidence the agent should use before starting work.
         Example query: "FastAPI endpoint conventions and project structure".
         """
-        result = await backend.retrieve(
+        resolved, denied = _resolve_agent(agent_id)
+        if denied:
+            return f"MARK retrieve failed: {denied}"
+        result = await _backend_call(
+            backend,
+            "retrieve",
             query,
-            agent_id=agent_id or default_agent_id,
+            agent_id=resolved,
             session_id=session_id,
             session_prefix=session_prefix,
             tags=tags,
@@ -122,7 +169,7 @@ def create_mark_mcp_server(
         session_id: str | None = None,
         tags: list[str] | None = None,
         source: str = "mcp",
-        importance: float = 0.5,
+        importance: Importance = 0.5,
     ) -> str:
         """Record an episodic observation after completing meaningful work.
 
@@ -130,9 +177,14 @@ def create_mark_mcp_server(
         MARK structures the observation into memory so future agents can learn from it.
         Example: "Implemented Product CRUD with Pydantic model in routers/products.py".
         """
-        result = await backend.observe(
+        resolved, denied = _resolve_agent(agent_id)
+        if denied:
+            return f"MARK observe failed: {denied}"
+        result = await _backend_call(
+            backend,
+            "observe",
             content,
-            agent_id=agent_id or default_agent_id,
+            agent_id=resolved,
             session_id=session_id,
             tags=tags,
             source=source,
@@ -150,7 +202,7 @@ def create_mark_mcp_server(
         session_id: str | None = None,
         tags: list[str] | None = None,
         source: str = "mcp",
-        importance: float = 0.8,
+        importance: Importance = 0.8,
         canonical: bool = False,
     ) -> str:
         """Write a durable, reusable memory fragment to MARK.
@@ -162,9 +214,14 @@ def create_mark_mcp_server(
         write_tags = list(tags or [])
         if canonical and "canonical" not in write_tags:
             write_tags.append("canonical")
-        result = await backend.write(
+        resolved, denied = _resolve_agent(agent_id)
+        if denied:
+            return f"MARK write failed: {denied}"
+        result = await _backend_call(
+            backend,
+            "write",
             content,
-            agent_id=agent_id or default_agent_id,
+            agent_id=resolved,
             session_id=session_id,
             tags=write_tags or None,
             source=source,
@@ -186,6 +243,7 @@ def create_mark_mcp_server_from_local(
     agent_id: str = "__mark__",
     default_blocks: list[str] | None = None,
     compress: bool = False,
+    allowed_agent_ids: Iterable[str] | None = None,
 ) -> Any:
     """
     Convenience wrapper: create a MARK MCP server directly from a
@@ -211,6 +269,7 @@ def create_mark_mcp_server_from_local(
         default_agent_id=agent_id,
         default_blocks=default_blocks,
         compress=compress,
+        allowed_agent_ids=allowed_agent_ids,
     )
 
 

@@ -31,12 +31,17 @@ class GovernanceMiddleware(BaseMiddleware):
             "passed": result.passed,
             "reason": result.reason,
         }
+        if result.truncated:
+            metadata["mark_governance"]["truncated"] = True
+            metadata["mark_governance"]["original_length"] = result.original_length
         context.payload["metadata"] = metadata
 
         if not result.passed:
             tags = list(context.payload.get("tags") or [])
             context.payload["tags"] = [*tags, "mark:governance", "mark:quarantined"]
-            if self.quarantine_on_reject and context.operation == "store":
+            # Rejected observations are quarantined exactly like rejected
+            # stores: kept for audit, never indexed, structured, or published.
+            if self.quarantine_on_reject:
                 context.payload["state"] = MemoryState.QUARANTINED
                 context.payload["importance"] = 0.0
                 context.payload["confidence"] = 0.0

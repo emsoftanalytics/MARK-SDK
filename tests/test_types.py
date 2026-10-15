@@ -1,3 +1,6 @@
+"""Core types: fragment state transitions/TTL, blocks, source attribution and
+gap reports, document nodes and edges.
+"""
 from datetime import datetime, timedelta, timezone
 
 import pytest
