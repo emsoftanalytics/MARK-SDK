@@ -172,7 +172,7 @@ and do not change which fragments are retrievable.
 | Expansion and rerank | `graph_expansion.py`, `reranker.py` | Pull in graph neighbours with damped scores, penalise contradicted fragments, apply bounded priors (importance, confidence). |
 | Temporal order | `temporal_order.py`, `query_understanding.py` | For "now" or "original" questions, reorder records about the asked subject by event time. Same-day events keep their order. |
 | Feedback | `retrieval_feedback.py` | Record access. Reinforce importance only for results with real query evidence (`ReinforceMode`). |
-| Reporting | `retrieval_reporting.py`, `fact_relevance.py` | Attach the facts for the subjects in the query that answer it (the attribute asked about, or all for an open question), list `missing_anchors`, and build the gap report. |
+| Reporting | `retrieval_reporting.py`, `fact_relevance.py` | Attach the facts for the subjects in the query that answer it (the attribute asked about, the role a who-question names, or all for an open question), list `missing_anchors`, and build the gap report. |
 | Compression | `retrieval_pipeline.py` | Optional, when a compressor is configured and requested. |
 
 The result is a `RetrievalResult` (`intelligence/retrieval_result.py`) with

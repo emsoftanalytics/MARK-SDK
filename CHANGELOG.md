@@ -84,7 +84,10 @@ This project follows semantic versioning for public package releases.
 - The default embedder is still the deterministic hash embedder; semantic
   models are opt-in.
 - `RetrievalResult.facts` contains only the facts that answer the query (the
-  attribute asked about, or all of them for an open question).
+  attribute asked about, the role a who-question names, such as `owner` for
+  "Who owns X?" or `assignee` for "Who is assigned to X?", or all of them for
+  an open question). A who-question about a subject without that fact
+  returns no facts rather than unrelated ones.
 - Briefings no longer report subjects that only the model mentioned as "Not
   in memory"; such subjects appear once memory confirms them. Bare numbers
   (ports, counts, years, dates) are never reported as unknown subjects or as

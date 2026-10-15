@@ -76,3 +76,33 @@ def test_cli_recall_shows_only_relevant_facts(tmp_path, capsys) -> None:
     assert main(["--db", db, "--no-server", "recall", "Which port does atlas-core use?"]) == 0
     out = capsys.readouterr().out
     assert "port = 4444" in out and "owner" not in out
+
+
+@pytest.fixture()
+def people():
+    runtime = MarkRuntime.local()
+    memory = runtime.memory("ops")
+    memory.facts.set("billing", "port", "8080")
+    memory.facts.set("billing", "region", "eu-west-1")
+    memory.facts.set("HAL-7", "status", "open")
+    memory.facts.set("HAL-7", "assignee", "Mei Lin")
+    memory.facts.set("search", "manager", "Ana Costa")
+    memory.facts.set("search", "lead", "Bo Kim")
+    memory.facts.set("search", "port", "9200")
+    memory.facts.set("Mei Lin", "team", "Search")
+    memory.facts.set("Mei Lin", "location", "Berlin")
+    yield memory
+    runtime.shutdown()
+
+
+@pytest.mark.parametrize("query, expected", [
+    ("Who owns billing?", []),                        # no owner fact: not the port or region
+    ("Who currently owns billing?", []),
+    ("Who is assigned to HAL-7?", ["assignee"]),      # assigned -> assignee
+    ("Who manages search?", ["manager"]),             # manages -> manager
+    ("Who leads search now?", ["lead"]),
+    ("Who is Mei Lin?", ["location", "team"]),        # open question about a person
+    ("Tell me about billing", ["port", "region"]),
+])
+def test_who_questions_select_the_agent_noun(people, query: str, expected: list[str]) -> None:
+    assert _attributes(people, query) == expected
