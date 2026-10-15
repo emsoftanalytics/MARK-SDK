@@ -51,7 +51,7 @@ forward itself.
 | `markcli.py` | The `mark` CLI used by arm B |
 | `grade.py` | Strict, LLM-free grader (exact value or alias; hedges listing competing values are wrong) |
 | `prompts.md` | Verbatim session prompt templates |
-| `results/` | Run log, both arms' final memory and answers, graded results |
+| `results/` | Run 1: run log, both arms' final memory and answers, graded results, `RESULTS.md` |
 
 ## Reproduce
 
