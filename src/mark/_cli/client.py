@@ -5,6 +5,7 @@ Standard library only: when a server answers, the client never imports MARK.
 from __future__ import annotations
 
 import hmac
+import http.client
 import json
 import secrets
 import sys
@@ -99,7 +100,7 @@ def stop_server(db: Path, *, timeout: float = 10.0) -> bool:
         return False
     try:
         _call_server(server, "stop", {})
-    except (OSError, RuntimeError, ValueError):
+    except (OSError, RuntimeError, ValueError, http.client.HTTPException):
         pass  # it may close the connection while stopping; confirm below
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
