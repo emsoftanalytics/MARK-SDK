@@ -12,8 +12,9 @@ search, keeps a small working set of relevant facts and memories warm:
    each anchor came up; anchors that fall out of the conversation decay away.
 3. **Brief.** :meth:`ContextWatch.briefing` returns a compact, LLM-friendly
    block grouped by subject — current facts first, then the most relevant
-   records — within a character budget. It never blocks on search unless the
-   caller asks it to wait.
+   records — within a character budget, or a hard token budget
+   (``budget_tokens``, priority-filled; see ``mark.context.budget``). It
+   never blocks on search unless the caller asks it to wait.
 4. **Correct.** When the agent states a value that memory knows was
    superseded ("atlas-core listens on 9239" after it moved to 4444), the next
    briefing leads with a correction. Only values found in a fact's history
@@ -43,7 +44,9 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
+from mark.context.budget import BudgetItem, ContextBudget, as_budget
 from mark.context.watch_messages import _WatchMessagesMixin, inject
+from mark.context.watch_render import briefing_items, render_briefing, render_chars
 from mark.context.watch_prefetch import _WatchPrefetchMixin
 # Some of these are not used here; they stay importable from this module.
 from mark.context.watch_support import (
@@ -73,6 +76,9 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
     ttl_turns       turns an anchor stays active without being mentioned
     line_chars      maximum length of one record bullet
     background      prefetch on a worker thread (False: inline, deterministic)
+    budget_tokens   hard token cap (int or ContextBudget); replaces budget_chars
+    token_counter   ``str -> int`` for budget_tokens (default: ceil(chars / 4))
+    budget_fill     True: lift max_anchors/per_anchor and fill up to budget_tokens
     """
 
     def __init__(
@@ -85,6 +91,9 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
         ttl_turns: int = 6,
         background: bool = True,
         line_chars: int = 240,
+        budget_tokens: int | ContextBudget | None = None,
+        token_counter: Any = None,
+        budget_fill: bool = False,
     ) -> None:
         self._memory = memory
         self.budget_chars = budget_chars
@@ -92,6 +101,7 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
         self.per_anchor = per_anchor
         self.ttl_turns = ttl_turns
         self.line_chars = line_chars
+        self.budget = as_budget(budget_tokens, token_counter, budget_fill)
         self._lock = threading.RLock()
         self._anchors: dict[str, _Anchor] = {}
         self._results: dict[str, Any] = {}          # anchor key -> RetrievalResult
@@ -162,11 +172,19 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
 
     # ── output ────────────────────────────────────────────────────────────────
 
-    def briefing(self, *, wait: float = 0.0) -> Briefing:
-        """Assemble the current briefing. ``wait`` > 0 lets running prefetches finish first."""
+    def briefing(self, *, wait: float = 0.0, budget_tokens: Any = None) -> Briefing:
+        """Assemble the current briefing. ``wait`` > 0 lets running prefetches finish first.
+
+        ``budget_tokens`` (an int or a :class:`ContextBudget`) overrides the
+        watch's own token budget for this call. With a token budget the
+        briefing is priority-filled under a hard cap and ``Briefing.usage``
+        reports what was kept; without one the ``budget_chars`` renderer runs.
+        """
         started = time.perf_counter()
         if wait > 0:
             self.flush(timeout=wait)
+        budget = as_budget(budget_tokens) if budget_tokens is not None else self.budget
+        lifted = budget is not None and budget.fill   # fill: the budget, not the counts, limits
         # Snapshot shared state under the lock, then render without holding it,
         # so a running prefetch is never blocked by (or blocks) a briefing.
         with self._lock:
@@ -174,71 +192,38 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
             active = sorted(
                 (a for a in self._anchors.values() if a.known is not False),
                 key=lambda a: (not a.linked, a.last_seq, a.mentions), reverse=True,
-            )[: self.max_anchors]
-            unknown = [a.label for a in self._anchors.values()
-                       if a.known is False and not a.linked and self._turn - a.last_turn <= 1]
-            results = {a.key: self._results.get(a.key) for a in active}
-            task_result = self._task_results.get(self._task)
-            corrections = list(self._corrections.values())
+            )[: None if lifted else self.max_anchors]
+            snapshot = {
+                "active": active,
+                "unknown": [a.label for a in self._anchors.values()
+                            if a.known is False and not a.linked and self._turn - a.last_turn <= 1],
+                "results": {a.key: self._results.get(a.key) for a in active},
+                "task_result": self._task_results.get(self._task),
+                "corrections": list(self._corrections.values()),
+            }
             pending = len(self._pending)
 
-        lines: list[str] = []
-        used = 0
-        shown: list[str] = []
-
-        def add(line: str) -> bool:
-            nonlocal used
-            if used + len(line) + 1 > self.budget_chars:
-                return False
-            lines.append(line)
-            used += len(line) + 1
-            return True
-
-        if corrections:
-            add("Corrections (memory has newer values):")
-            for text in corrections:
-                add(f"- {text}")
-        seen_ids: set[str] = set()
-        for anchor in active:
-            result = results.get(anchor.key)
-            if result is None:
-                continue
-            facts = [f for f in getattr(result, "facts", []) if f.is_current]
-            records = [
-                f for f in result.fragments
-                if f.id not in seen_ids and _contains_anchor(_anchor_norm(f.content), anchor.key)
-            ][: self.per_anchor]
-            records.sort(key=_timeline_key, reverse=True)  # newest first, undated last
-            if not facts and not records:
-                continue
-            if not add(f"{anchor.label}{' (linked)' if anchor.linked else ''}:"):
-                break
-            for fact in facts:
-                add(f"- {fact.attribute}: {fact.value} (since {fact.valid_from.date().isoformat()})")
-            for fragment in records:
-                if add(f"- {_one_line(fragment.content, self.line_chars)}"):
-                    seen_ids.add(fragment.id)
-                    shown.append(fragment.id)
-        if task_result is not None:
-            extra = [f for f in task_result.fragments if f.id not in seen_ids][: self.per_anchor]
-            if extra:
-                add("Related to the current request:")
-                for fragment in extra:
-                    if add(f"- {_one_line(fragment.content, self.line_chars)}"):
-                        seen_ids.add(fragment.id)
-                        shown.append(fragment.id)
-        if unknown:
-            add("Not in memory: " + ", ".join(unknown) + " (say so rather than guessing).")
-        body = "\n".join(lines)
-        text = f"<mark_briefing>\n{body}\n</mark_briefing>" if body else ""
+        usage = None
+        items: tuple[BudgetItem, ...] = ()
+        if budget is None:
+            text, shown = render_chars(snapshot, budget_chars=self.budget_chars,
+                                       per_anchor=self.per_anchor, line_chars=self.line_chars)
+        else:
+            items = tuple(briefing_items(snapshot, per_anchor=None if lifted else self.per_anchor,
+                                         line_chars=self.line_chars))
+            fit = budget.fit(items, render_briefing)
+            text, usage = fit.text, fit.usage
+            shown = [item.ref for item in fit.items if item.ref]
         return Briefing(
             text=text,
             anchors=[a.label for a in active],
-            corrections=corrections,
-            unknown=unknown,
+            corrections=snapshot["corrections"],
+            unknown=snapshot["unknown"],
             memory_ids=shown,
             pending=pending,
             latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            usage=usage,
+            items=items,
         )
 
     def flush(self, timeout: float | None = None) -> bool:
