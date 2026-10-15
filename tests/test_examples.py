@@ -22,13 +22,30 @@ def test_live_example_runner_imports_all_examples():
     spec.loader.exec_module(module)
 
     expected = [
-        "01_local_memory_live.py",
-        "02_agent_ab_live.py",
-        "03_sessions_and_observe_live.py",
-        "04_sync_envelope_live.py",
+        "01_remember_and_recall.py",
+        "02_agent_with_memory.py",
+        "03_sessions.py",
+        "04_facts_over_time.py",
+        "05_context_watch.py",
+        "06_safe_sync.py",
     ]
 
     assert module.EXAMPLES == expected
+    assert all((example_dir / name).exists() for name in expected)
+
+
+def test_all_examples_run_offline():
+    """Every example runs end to end with no network (LLM examples print their prompts)."""
+    import os
+    import subprocess
+
+    env = {key: value for key, value in os.environ.items() if key != "MARK_LLM_URL"}
+    result = subprocess.run(
+        [sys.executable, str(_example_dir() / "run_live_examples.py")],
+        capture_output=True, text=True, env=env, timeout=300,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert "All examples passed." in result.stdout
 
 
 def test_getting_started_notebook_is_valid_json_and_documents_usage_groups():

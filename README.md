@@ -356,7 +356,7 @@ ordinary short-term context and once with MARK-backed recall.
 
 | Scenario | Without MARK | With MARK | What to inspect |
 | --- | --- | --- | --- |
-| Coding agent | The agent answers from the current prompt only. Project conventions must be repeated. | MARK recalls stored conventions before the model reasons. | `examples/02_agent_ab_live.py` and `examples/getting_started_with_mark.ipynb` |
+| Coding agent | The agent answers from the current prompt only. Project conventions must be repeated. | MARK recalls stored conventions before the model reasons. | `examples/02_agent_with_memory.py` and `examples/getting_started_with_mark.ipynb` |
 | LangChain agent | Message history is whatever LangChain keeps in the active loop. | `MarkAgentMiddleware` retrieves compact memory before model calls and observes useful tool/model evidence. | README section 5 and the tutorial notebook |
 | Creative continuity | A generator without MARK only sees its prompt and short-term carryover. | A MARK-aware agent recalls canonical identity/world facts and writes continuity observations between steps. | `MarkAgent`, sessions, and `world_bible` |
 
@@ -417,12 +417,10 @@ See [examples/](examples/) for runnable developer usage tests and walkthroughs:
 python examples/run_live_examples.py
 ```
 
-The live examples cover:
-
-- local project memory storage and retrieval,
-- A/B agent usage with and without MARK context injection,
-- session-aware `observe()` continuity retrieval,
-- redacted sync envelope preparation.
+The examples cover recalling memory, an LLM answering with and without MARK,
+sessions, facts that change over time, anticipatory context with
+`ContextWatch`, and redacted sync. Examples that need a model call any local
+OpenAI-compatible server (Ollama, LM Studio, llama.cpp) via `MARK_LLM_URL`.
 
 The notebook in [examples/](examples/) provides a longer step-by-step
 walkthrough for memory, retrieval, sessions, middleware, tools, MCP exposure,

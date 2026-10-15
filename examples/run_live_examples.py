@@ -1,29 +1,24 @@
-"""Run all live MARK examples as developer usage tests.
+"""Run every example as a quick usage test.
 
-Run:
-    python examples/run_live_examples.py
+Run:  python examples/run_live_examples.py
 """
-from __future__ import annotations
-
 import runpy
+import sys
 from pathlib import Path
 
-
 EXAMPLES = [
-    "01_local_memory_live.py",
-    "02_agent_ab_live.py",
-    "03_sessions_and_observe_live.py",
-    "04_sync_envelope_live.py",
+    "01_remember_and_recall.py",
+    "02_agent_with_memory.py",
+    "03_sessions.py",
+    "04_facts_over_time.py",
+    "05_context_watch.py",
+    "06_safe_sync.py",
 ]
 
-
-def main() -> None:
-    root = Path(__file__).resolve().parent
+if __name__ == "__main__":
+    folder = Path(__file__).resolve().parent
+    sys.path.insert(0, str(folder))  # lets examples import the shared _llm helper
     for script in EXAMPLES:
         print(f"\n== {script} ==")
-        runpy.run_path(str(root / script), run_name="__main__")
-    print("\nAll live examples passed")
-
-
-if __name__ == "__main__":
-    main()
+        runpy.run_path(str(folder / script), run_name="__main__")
+    print("\nAll examples passed.")
