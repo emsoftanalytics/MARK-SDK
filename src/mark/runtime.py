@@ -136,14 +136,16 @@ class Mark(MarkConfigureMixin):
                              FactExtractor (e.g. LLMFactExtractor, queued).
 
         The .mark/ directory is created under project_path if it does not
-        exist. SQLite database is at .mark/memory.db.
+        exist (mode 0700 on POSIX). SQLite database is at .mark/memory.db
+        (created 0600).
         """
+        from mark._private_fs import ensure_private_dir
         from mark.memory.runtime import MarkRuntime
 
         project  = Path(project_path).expanduser().resolve()
         mark_dir = (Path(store_path).expanduser().resolve()
                     if store_path else project / ".mark")
-        mark_dir.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(mark_dir)  # 0700 when MARK creates it; existing dirs untouched
         db_path = mark_dir / "memory.db"
 
         runtime = MarkRuntime.local(
@@ -248,7 +250,14 @@ class Mark(MarkConfigureMixin):
         agent_id: str = "mark-agent",
         max_context_chars: int = 6000,
     ) -> MarkAgent:
-        """Wrap an LLM callable with MARK memory, policies, and skills."""
+        """Wrap an LLM callable with MARK memory, policies, and skills.
+
+        Note: ``agent_id`` defaults to ``"mark-agent"``, unlike the
+        ``"__mark__"`` default used elsewhere (``observe``, the CLI). It
+        labels the agent in middleware and skill contexts and in the
+        ``agent:<id>`` tag on stored outputs; memory is still read from and
+        written to ``self.memory``. Pass ``agent_id="__mark__"`` to match.
+        """
         skill_prompt = ""
         runtime_skill_prompt = getattr(self.runtime, "skill_prompt", None)
         if callable(runtime_skill_prompt):

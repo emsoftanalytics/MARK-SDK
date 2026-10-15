@@ -123,15 +123,26 @@ MARK filters on the plaintext fields in SQL. Do not put secrets in them.
 Encrypted stores never build the plaintext keyword (FTS5) index, so recall
 uses vector search only.
 
+A store remembers whether it is encrypted (a marker in its `schema_info`
+table; stores created by older versions are detected from their content the
+first time they are opened). Opening an encrypted store without a provider
+raises `EncryptionRequiredError`, and a wrong key or passphrase raises
+`EncryptionKeyError`, instead of returning garbage or writing plaintext into
+it. Encryption cannot be switched on for a store that already holds plaintext
+memories (`PlaintextStoreError`); start a new store instead. All three
+subclass `mark.errors.StoreEncryptionError`.
+
 Keep keys and passphrases outside the repository. Use environment variables
 or your application's secret manager.
 
 ## The `mark` command and `mark serve`
 
 The CLI opens a local SQLite file and does not encrypt it (use the Python API
-for encrypted stores). The database file and the `.mark/` directory are
-created with your default file permissions; on a shared machine, restrict
-them yourself.
+for encrypted stores); it refuses to open an encrypted store. On POSIX
+systems, a database file MARK creates is mode `0600` (its `-wal` and `-shm`
+files inherit that), and a `.mark/` (or other store) directory MARK creates
+is mode `0700`. Directories and database files that already exist keep their
+permissions. This applies to the Python API as well as the CLI.
 
 `mark serve` keeps a store open for fast command-line calls. Its design:
 

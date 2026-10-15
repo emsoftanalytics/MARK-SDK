@@ -1,6 +1,6 @@
 """``mark`` command line: local memory for agents and scripts.
 
-    mark [--db PATH] [--agent ID] <command> ...
+    mark [--db PATH] [--agent ID] [--no-server] <command> ...
 
     ingest FILE [--session S] [--tag T ...]      store each non-empty line as a memory
            [--extract-facts]                     ... and extract facts from each line
@@ -8,21 +8,25 @@
     recall QUERY [-k N] [--chronological] [--json]
                                                  hybrid recall (facts first, then memories)
     recall-many [FILE|-] [-k N] [--json]         one query per line (or a JSON list)
-    fact set SUBJECT ATTRIBUTE VALUE [--valid-from T]
+    fact set SUBJECT ATTRIBUTE VALUE [--valid-from T] [--correction]
+                                                 record a value (--correction replaces
+                                                 the value(s) recorded for that time)
     fact get SUBJECT [ATTRIBUTE]                 current value(s)
     fact history SUBJECT ATTRIBUTE               every value over time
+    fact retract SUBJECT [ATTRIBUTE] [--value V] withdraw facts recorded by mistake
+                                                 (kept for audit)
     timeline SUBJECT [ATTRIBUTE] [--limit N] [--since T] [--until T] [--json]
                                                  everything about SUBJECT, oldest first
-    stats                                        number of retrievable memories
-    serve [--port N]                             keep MARK warm for fast calls
+    stats                                        number of memories and current facts
+    serve [--host H] [--port N]                  keep MARK warm (loopback only)
 
 The database comes from ``--db`` or ``$MARK_DB`` (default ``./.mark/memory.db``),
 the agent namespace from ``--agent`` or ``$MARK_AGENT`` (default ``__mark__``).
 
 When ``mark serve`` is running for the same database, every other command is
-sent to it over loopback HTTP instead of loading MARK in-process: a call then
-costs one small Python start-up plus milliseconds of search, instead of
-importing and opening MARK each time. The server binds to loopback only and
+sent to it over loopback HTTP instead of loading MARK in-process (``--no-server``
+forces in-process): a call then costs one small Python start-up plus
+milliseconds of search, instead of importing and opening MARK each time. The server binds to loopback only and
 requires a random token stored next to the database in a 0600 state file.
 
 This module imports only the standard library at start-up; MARK itself is
@@ -165,7 +169,11 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     db = _db_path(args.db)
     if args.cmd == "serve":
-        serve(db, args.host, args.port)
+        try:
+            serve(db, args.host, args.port)
+        except RuntimeError as exc:  # e.g. an encrypted store (StoreEncryptionError)
+            print(f"mark: {exc}", file=sys.stderr)
+            return 1
         return 0
 
     agent = args.agent
