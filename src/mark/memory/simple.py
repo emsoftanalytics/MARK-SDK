@@ -1,110 +1,30 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
-"""SimpleMemory: the ergonomic block/write/retrieve surface for scripts."""
+"""SimpleMemory: the ergonomic block/write/retrieve surface for scripts.
+
+Everything is stored under one reserved agent (``__mark__``) of the full
+MarkRuntime; blocks are tag scopes (see :mod:`mark.memory.simple_block`) and
+graph helpers are forwarded by :mod:`mark.memory.simple_graph`. ``SimpleBlock``
+and ``_fragment_to_record`` are re-exported here for backward compatibility.
+"""
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 from mark.context.builder import ContextBundle
-from mark.memory.graph import GraphNeighborhood
+from mark.memory.graph import GraphNeighborhood  # noqa: F401  (re-export)
 from mark.memory.observe import ObserveResult
-from mark.memory.record import MemoryRecord, MemoryState
+from mark.memory.record import MemoryRecord, MemoryState  # noqa: F401  (MemoryState re-export)
+from mark.memory.simple_block import SimpleBlock, _fragment_to_record
+from mark.memory.simple_graph import SimpleGraphMixin
 from mark.types import MemoryTier
-from mark.types.graph import EdgeRelation, NodeType
+from mark.types.graph import EdgeRelation, NodeType  # noqa: F401  (re-export)
 
+#: Reserved agent id that owns every SimpleMemory write.
 _SIMPLE_AGENT = "__mark__"
 
 
-def _fragment_to_record(frag: Any, block_id: str) -> MemoryRecord:
-    """Convert a MemoryFragment to a MemoryRecord for backward-compat API surface."""
-    return MemoryRecord(
-        id         = frag.id,
-        block_id   = block_id,
-        content    = frag.content,
-        importance = frag.importance,
-        confidence = frag.confidence,
-        state      = MemoryState.RAW,
-        source     = frag.source or "local",
-        metadata   = dict(frag.metadata),
-        created_at = frag.created_at,
-    )
-
-
-class SimpleBlock:
-    """
-    A named memory container in the simple API.
-
-    Writes are stored as MemoryFragments tagged with the block label,
-    so they can be scoped during retrieval with blocks=[...].
-    """
-
-    def __init__(self, label: str, mark_memory: Any) -> None:
-        self._label  = label
-        self._memory = mark_memory
-
-    @property
-    def label(self) -> str:
-        """Return the display label."""
-        return self._label
-
-    @property
-    def id(self) -> str:
-        """Block identifier — equals the label in the simple API."""
-        return self._label
-
-    def write(
-        self,
-        content:    str,
-        *,
-        importance: float = 0.5,
-        confidence: float = 0.5,
-        metadata:   dict[str, Any] | None = None,
-        source:     str = "local",
-        state:      MemoryState = MemoryState.RAW,
-    ) -> MemoryRecord:
-        """Write content to this block. Returns a MemoryRecord."""
-        frag_id = self._memory.store_sync(
-            content,
-            importance = importance,
-            confidence = confidence,
-            tags       = [f"block:{self._label}"],
-            source     = source,
-            metadata   = metadata or {},
-        )
-        # Fetch the stored fragment so created_at matches what is persisted
-        stored = self._memory._store.get(frag_id)
-        if stored is not None:
-            return _fragment_to_record(stored, self._label)
-
-        # Fallback — should not happen, but never raise on write
-        from datetime import datetime, timezone
-        return MemoryRecord(
-            id         = frag_id,
-            block_id   = self._label,
-            content    = content,
-            importance = importance,
-            confidence = confidence,
-            state      = state,
-            source     = source,
-            metadata   = metadata or {},
-            created_at = datetime.now(timezone.utc),
-        )
-
-    def records(self) -> list[MemoryRecord]:
-        """Return all records stored in this block."""
-        tag = f"block:{self._label}"
-        return [
-            _fragment_to_record(f, self._label)
-            for f in self._memory.list()
-            if tag in f.tags
-        ]
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize all blocks and records to a plain dictionary."""
-        return {"id": self._label, "label": self._label, "kind": "simple"}
-
-
-class SimpleMemory:
+class SimpleMemory(SimpleGraphMixin):
     """
     Simple memory API — the surface exposed by Mark.local().
 
@@ -317,52 +237,5 @@ class SimpleMemory:
             hook(record_id=record_id, score=score, agent_id=fragment.agent_id)
         return True
 
-    # ── graph API (delegates to the underlying MarkMemory) ───────────────────
-
-    def node(
-        self,
-        label: str,
-        node_type: "NodeType | str" = NodeType.CONCEPT,
-        *,
-        fragment_id: str | None = None,
-        weight: float = 1.0,
-    ) -> "Any":
-        """Get or create a named concept node in the simple agent's graph."""
-        return self._mark_memory.node(label, node_type,
-                                      fragment_id=fragment_id, weight=weight)
-
-    def attach_node(
-        self,
-        fragment_id: str,
-        label: str,
-        node_type: "NodeType | str" = NodeType.ENTITY,
-        *,
-        weight: float = 1.0,
-    ) -> "Any":
-        """Associate a fragment with a named concept node."""
-        return self._mark_memory.attach_node(fragment_id, label, node_type,
-                                             weight=weight)
-
-    def link_nodes(
-        self,
-        label_a: str,
-        label_b: str,
-        relation: "EdgeRelation | str",
-        *,
-        weight: float = 1.0,
-    ) -> "Any":
-        """Create a directed edge between two named nodes."""
-        return self._mark_memory.link_nodes(label_a, label_b, relation, weight=weight)
-
-    def unlink(
-        self,
-        label_a: str,
-        label_b: str,
-        relation: "EdgeRelation | str | None" = None,
-    ) -> int:
-        """Remove directed edges from label_a → label_b. Returns count removed."""
-        return self._mark_memory.unlink(label_a, label_b, relation)
-
-    def neighborhood(self, label: str, *, depth: int = 2) -> GraphNeighborhood:
-        """Return the graph neighbourhood around a named concept node."""
-        return self._mark_memory.neighborhood(label, depth=depth)
+    # Graph API (node / attach_node / link_nodes / unlink / neighborhood) is
+    # inherited from SimpleGraphMixin and forwards to the underlying MarkMemory.
