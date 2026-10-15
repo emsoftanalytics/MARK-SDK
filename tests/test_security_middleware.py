@@ -62,7 +62,9 @@ def test_gap_healing_evidence_goes_through_middleware(tmp_path: Path) -> None:
 
 
 def test_gap_healing_rejected_evidence_is_quarantined(tmp_path: Path) -> None:
-    with Mark.local(tmp_path, middleware=[GovernanceMiddleware()]) as mark:
+    from mark.middlewares.governance import ConsolidationGate, FailureFilter
+
+    with Mark.local(tmp_path, middleware=[GovernanceMiddleware(gate=ConsolidationGate(failure=FailureFilter()))]) as mark:
         mem = mark.runtime.memory("healer")
         result = mem.retrieve_sync("What happened?", session_id="s1", heal_gaps=True,
                                    web_skill=_EvidenceSkill("Traceback (most recent call last)"))

@@ -24,10 +24,14 @@ class ConsolidationGate:
     Orchestrates local governance gates before memory promotion.
 
     Pipeline order:
-      1. ContentSanitizer    — redact PII, normalise length
+      1. ContentSanitizer    — redact secrets + PII, normalise whitespace
       2. ValidationGate      — reject empty / low-confidence content
-      3. FailureFilter       — reject stack traces and error artifacts
-      4. DuplicateHashGate   — reject exact-duplicate content (optional)
+      3. FailureFilter       — reject stack traces and error artifacts (opt-in)
+      4. DuplicateHashGate   — reject exact-duplicate content (opt-in)
+
+    Since 0.2.0a10 the FailureFilter is off by default: agents must be able
+    to remember errors, stack traces and HTTP failures together with their
+    fixes. Pass ``failure=FailureFilter()`` to restore the old quarantine.
 
     Registered governance extensions can add LLM evaluation, policy packs, and
     immutable audit trails.
@@ -43,7 +47,7 @@ class ConsolidationGate:
     ) -> None:
         self._sanitizer  = sanitizer  or ContentSanitizer()
         self._validation = validation or ValidationGate()
-        self._failure    = failure    or FailureFilter()
+        self._failure    = failure    # optional — None means errors are kept
         self._dedup      = dedup      # optional — None means skip
 
     def check(
@@ -68,9 +72,10 @@ class ConsolidationGate:
         if not v.passed:
             return result(False, v.reason)
 
-        f = self._failure.check(cleaned)
-        if not f.passed:
-            return result(False, f.reason)
+        if self._failure is not None:
+            f = self._failure.check(cleaned)
+            if not f.passed:
+                return result(False, f.reason)
 
         if self._dedup is not None:
             d = self._dedup.check(cleaned)
