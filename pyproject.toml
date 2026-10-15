@@ -153,6 +153,16 @@ exclude = [
   "/tutorial_media_output",
   "/tests",
   "/dist",
+  "/history",
+  "/.claude",
+  "/benchmarks/results",
+  # Generated demo media never ships in the source distribution.
+  "/examples/**/output",
+  "*.mp4",
+  "*.wav",
+  "*.gif",
+  "*.jpg",
+  "*.png",
 ]
 
 [tool.hatch.version]
