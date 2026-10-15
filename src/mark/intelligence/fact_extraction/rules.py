@@ -93,10 +93,19 @@ class RulePack:
     #: ("Bo Kim is assigned to OPS-17" -> OPS-17.assignee = Bo Kim).
     swap_when_value_is_id: bool = False
     confidence: float = 0.8
+    #: Optional cheap pre-checks (speed-ups only; they never change results):
+    #: at least one of ``trigger_words`` must occur as a word in the clause, and
+    #: ``trigger`` (a regex) must be found in it, for any pattern to match.
+    trigger_words: tuple[str, ...] = ()
+    trigger: str | None = None
 
     def compiled(self) -> tuple[re.Pattern[str], ...]:
         """Patterns with placeholders expanded, compiled case-insensitively."""
         return tuple(_compile(p) for p in self.patterns)
+
+    def compiled_trigger(self) -> re.Pattern[str] | None:
+        """The trigger compiled case-insensitively (None: always try the patterns)."""
+        return re.compile(self.trigger, re.IGNORECASE) if self.trigger else None
 
 
 def _compile(pattern: str) -> re.Pattern[str]:

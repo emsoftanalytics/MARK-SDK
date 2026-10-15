@@ -52,6 +52,7 @@ CHANGES = RulePack(
                      "re-homed": "location", "reassigned": "assignee", "renamed": "name",
                      "upgraded": "version", "downgraded": "version", "bumped": "version"},
     confidence=0.8,
+    trigger_words=tuple(_CHANGE_VERBS.split("|")),
 )
 
 OWNERSHIP = RulePack(
@@ -74,6 +75,7 @@ OWNERSHIP = RulePack(
                      "lead": "lead", "manager": "manager"},
     attribute_from_value=False,
     confidence=0.85,
+    trigger_words=('owned', 'maintained', 'managed', 'ownership', 'owns', 'maintains', 'leads', 'took', 'owner', 'maintainer', 'lead', 'manager'),
 )
 
 _STATUS_WORDS = r"status|state|stage|phase|priority|severity"
@@ -90,6 +92,7 @@ STATUS = RulePack(
     value_case="lower",
     value_map={"in-progress": "in progress", "inprogress": "in progress", "wip": "in progress"},
     confidence=0.85,
+    trigger_words=('status', 'state', 'stage', 'phase', 'priority', 'severity', 'marked', 'set'),
 )
 
 MEMBERSHIP = RulePack(
@@ -97,6 +100,7 @@ MEMBERSHIP = RulePack(
     # Only the attribute noun in the value says what was joined ("the Data team").
     patterns=(r"^{S}\s+(?:has\s+)?(?:joined|was\s+added\s+to|was\s+moved\s+into)\s+(?:the\s+)?{V}",),
     confidence=0.75,
+    trigger_words=('joined', 'added', 'moved'),
 )
 
 ASSIGNMENT = RulePack(
@@ -105,6 +109,7 @@ ASSIGNMENT = RulePack(
     verb_attributes={"assigned": "assignee", "reassigned": "assignee", "handed over": "assignee"},
     swap_when_value_is_id=True,
     confidence=0.8,
+    trigger_words=('assigned', 'reassigned', 'handed'),
 )
 
 # ── present-tense descriptions ───────────────────────────────────────────────
@@ -124,6 +129,7 @@ LISTENING = RulePack(
               rf"^{{S}}\s+{NOW}(?:uses|is\s+using|exposes|serves\s+on)\s+(?:tcp\s+|udp\s+)?port\s+(?P<value>\d{{2,5}})(?![\d.:])",),
     attribute="port",
     confidence=0.8,
+    trigger_words=('listens', 'listen', 'listening', 'binds', 'bind', 'bound', 'port'),
 )
 
 REGION = RulePack(
@@ -132,6 +138,7 @@ REGION = RulePack(
               rf"(?P<value>{_REGION_ID})",),
     attribute="region",
     confidence=0.8,
+    trigger=r"\d",
 )
 
 PLACEMENT = RulePack(
@@ -140,6 +147,7 @@ PLACEMENT = RulePack(
     # "is hosted in the Frankfurt datacenter"; "runs in production" is dropped.
     patterns=(rf"^{{S}}\s+{NOW}(?:{_PLACE_VERBS})\s+(?:on|in|at|from)\s+(?:the\s+)?{{V}}",),
     confidence=0.75,
+    trigger_words=('runs', 'listens', 'serves', 'lives', 'resides', 'sits', 'operates', 'running', 'listening', 'served', 'exposed', 'deployed', 'hosted', 'located', 'available', 'reachable'),
 )
 
 # A capitalised place name of 1-3 words ("Berlin", "São Paulo", "the UK").
@@ -153,6 +161,7 @@ LOCATION = RulePack(
     attribute="location",
     attribute_from_value=False,
     confidence=0.75,
+    trigger_words=('works', 'work', 'working', 'based', 'lives', 'living', 'located'),
 )
 
 # Well-known database products: "uses" alone is too vague to name an
@@ -177,6 +186,7 @@ DATASTORE = RulePack(
     verb_attributes={"": "datastore"},
     attribute_from_value=False,
     confidence=0.75,
+    trigger_words=('uses', 'using', 'relies', 'backed', 'runs', 'stores'),
 )
 
 REPORTING = RulePack(
@@ -185,6 +195,7 @@ REPORTING = RulePack(
     attribute="manager",
     attribute_from_value=False,
     confidence=0.75,
+    trigger_words=('reports', 'reporting', 'report'),
 )
 
 KEY_VALUE = RulePack(
@@ -194,6 +205,7 @@ KEY_VALUE = RulePack(
         r"^(?P<subject>[^\W_][\w-]*)\.(?P<attribute_free>[a-z][\w-]*)\s*=\s*{V}",
     ),
     confidence=0.7,
+    trigger=r"[:=]|->|\bis\b",
 )
 
 #: The built-in packs, in the order they are tried (earlier packs win a slot).

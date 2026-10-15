@@ -45,6 +45,7 @@ from mark.intelligence.fact_extraction.structured import attribute_key, extract_
 
 #: Non-regex features that can be named in ``packs`` like a pack.
 FEATURES = frozenset({"structured", "steps"})
+_WORD = re.compile(r"[\w'’-]+")
 _ORPHAN_FIELD = re.compile(r"^(?P<key>[A-Za-z][\w .-]{0,30}?)\s*[:=]\s*(?P<value>\S.*)$")
 
 
@@ -74,7 +75,8 @@ class PatternFactExtractor:
             raise ValueError("user_subject must be a non-empty name")
         self.user_subject = str(user_subject).strip()
         self.packs: tuple[RulePack, ...] = tuple(chosen)
-        self._compiled = [(pack, pack.compiled()) for pack in self.packs]
+        self._compiled = [(pack, frozenset(pack.trigger_words), pack.compiled_trigger(), pack.compiled())
+                          for pack in self.packs]
 
     def extract(self, text: str, *, occurred_at: datetime | None = None) -> list[FactCandidate]:
         """Facts stated in *text*, in text order; ``valid_from`` from inline dates only."""
@@ -169,7 +171,11 @@ class PatternFactExtractor:
         valid_from = parse_stamp(inline.group(1), None) if inline else when
         out: list[FactCandidate] = []
         claimed: set[tuple[str, str]] = set()
-        for pack, patterns in self._compiled:
+        words = set(_WORD.findall(clause.lower()))
+        for pack, trigger_words, trigger, patterns in self._compiled:
+            # Cheap pre-checks: skip packs none of whose patterns can match.
+            if (trigger_words and trigger_words.isdisjoint(words)) or (trigger and not trigger.search(clause)):
+                continue
             for pattern in patterns:
                 match = pattern.match(clause)
                 if match is None:

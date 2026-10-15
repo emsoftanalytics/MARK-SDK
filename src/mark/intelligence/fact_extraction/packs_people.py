@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from mark.intelligence.fact_extraction.personal import USER_TOKEN
 from mark.intelligence.fact_extraction.rules import NOW, OBJECT_SUBJECT, PARTY, RulePack
-from mark.intelligence.fact_extraction.vocab import DIET_ALT, OCCUPATION_ALT, PERSONAL_ALT
+from mark.intelligence.fact_extraction.vocab import DIET_ALT, DIETS, OCCUPATION_ALT, PERSONAL_ALT, PERSONAL_WORDS
 
 # A person: the user placeholder or 1-3 capitalised words ("Dr. Bello", "Mei Lin").
 _NAME = r"(?-i:[A-Z][\w'’.-]*)(?:\s+(?-i:[A-Z][\w'’.-]*)){0,2}"
@@ -40,6 +40,7 @@ PERSONAL_RELATION = RulePack(
     patterns=(rf"^{{S}}\s+(?P<attribute>{PERSONAL_ALT})\s+(?:is|was|is\s+now)\s+(?:called\s+|named\s+)?{_NAME_VALUE}",),
     attribute_from_value=False,
     confidence=0.75,
+    trigger_words=PERSONAL_WORDS,
 )
 
 PERSONAL_DETAIL = RulePack(
@@ -48,6 +49,7 @@ PERSONAL_DETAIL = RulePack(
               r"(?:on\s+)?{V}",),
     attribute_from_value=False,
     confidence=0.7,
+    trigger_words=PERSONAL_WORDS,
 )
 
 DIET = RulePack(
@@ -58,6 +60,7 @@ DIET = RulePack(
     value_case="lower",
     attribute_from_value=False,
     confidence=0.8,
+    trigger_words=DIETS,
 )
 
 HEALTH = RulePack(
@@ -67,6 +70,7 @@ HEALTH = RulePack(
     attribute="allergy",
     attribute_from_value=False,
     confidence=0.8,
+    trigger_words=('allergic', 'allergy', 'allergies'),
 )
 
 WORK = RulePack(
@@ -79,6 +83,7 @@ WORK = RulePack(
     attribute="occupation",
     attribute_from_value=False,
     confidence=0.75,
+    trigger_words=('as', 'a', 'an'),
 )
 
 EMPLOYER = RulePack(
@@ -90,6 +95,7 @@ EMPLOYER = RulePack(
     attribute="employer",
     attribute_from_value=False,
     confidence=0.75,
+    trigger_words=('works', 'working', 'employed'),
 )
 
 BIRTH = RulePack(
@@ -98,6 +104,7 @@ BIRTH = RulePack(
     attribute="birthday",
     attribute_from_value=False,
     confidence=0.8,
+    trigger_words=('born',),
 )
 BIRTH_YEAR = RulePack(
     name="birth_year",
@@ -105,6 +112,7 @@ BIRTH_YEAR = RulePack(
     attribute="birth year",
     attribute_from_value=False,
     confidence=0.8,
+    trigger_words=('born',),
 )
 
 MEASUREMENTS = RulePack(
@@ -115,6 +123,7 @@ MEASUREMENTS = RulePack(
                      "deep": "depth", "thick": "thickness", "weighs": "weight"},
     attribute_from_value=False,
     confidence=0.8,
+    trigger_words=('tall', 'long', 'wide', 'high', 'deep', 'thick', 'weighs'),
 )
 
 AGE = RulePack(
@@ -124,6 +133,7 @@ AGE = RulePack(
     attribute="age",
     attribute_from_value=False,
     confidence=0.8,
+    trigger=r"\d",
 )
 
 PRICE = RulePack(
@@ -133,6 +143,7 @@ PRICE = RulePack(
     attribute="price",
     attribute_from_value=False,
     confidence=0.8,
+    trigger=r"\d",
 )
 
 PREFERENCE = RulePack(
@@ -148,6 +159,7 @@ PREFERENCE = RulePack(
                "cannot stand": "hates"},
     attribute_from_value=False,
     confidence=0.7,
+    trigger_words=('prefers', 'likes', 'loves', 'enjoys', 'adores', 'hates', 'dislikes', 'detests', 'stand'),
 )
 
 _ROLES = ("principal", "head", "headteacher", "director", "ceo", "cto", "cfo", "coo", "founder", "co-founder",
@@ -164,6 +176,7 @@ RELATIONS = RulePack(
                      **{role: role for role in _ROLES}},
     attribute_from_value=False,
     confidence=0.75,
+    trigger_words=('manages', 'supervises', 'mentors', 'coaches', 'of'),
 )
 
 _WEEKDAYS_MONTHS = (r"(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|tonight|"
@@ -177,6 +190,7 @@ RELOCATION = RulePack(
     attribute="location",
     attribute_from_value=False,
     confidence=0.75,
+    trigger_words=('moved', 'relocated'),
 )
 
 #: People/thing packs, tried after the generic state-change packs.

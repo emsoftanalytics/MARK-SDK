@@ -40,6 +40,8 @@ PERSONAL_ATTRIBUTES: tuple[str, ...] = tuple(sorted(
 #: Relation nouns only (people and pets), for "my sister Ines lives in Faro".
 RELATION_ALT = "|".join(re.escape(w).replace(r"\ ", r"\s+") for w in sorted({w for w in _RELATIONS if w}, key=len,
                                                                               reverse=True))
+#: First words of the personal nouns: a clause without one cannot match them.
+PERSONAL_WORDS: tuple[str, ...] = tuple(sorted({w.split()[0] for w in PERSONAL_ATTRIBUTES} | {"favourite", "favorite"}))
 # "favourite <anything>" is a preference slot even when the noun is not listed.
 _FAVOURITE = r"favou?rite\s+[a-z]+(?:\s+[a-z]+)?"
 PERSONAL_ALT = _FAVOURITE + "|" + "|".join(re.escape(w).replace(r"\ ", r"\s+") for w in PERSONAL_ATTRIBUTES)

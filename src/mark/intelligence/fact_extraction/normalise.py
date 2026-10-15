@@ -37,11 +37,10 @@ _TRAILING_FILLER = re.compile(
     r"|immediately|effective\s+immediately|in\s+production|last\s+(?:night|week|year|spring|summer|autumn|winter)"
     r"|this\s+(?:morning|week|year))$",
     re.IGNORECASE)
-_WORDS = sorted(ATTRIBUTE_WORDS, key=len, reverse=True)
-_ALT = "|".join(re.escape(w).replace(r"\ ", r"\s+") for w in _WORDS)
-_VALUE_PREFIX = re.compile(rf"^(?:the\s+)?({_ALT})\s+(?!of\b)(.+)$", re.IGNORECASE)
-_VALUE_SUFFIX = re.compile(rf"^(.+?)\s+({_ALT})$", re.IGNORECASE)
-_SUBJECT_SUFFIX = re.compile(rf"^(.+?)(?:['’]s)?\s+({_ALT})$", re.IGNORECASE)
+# Attribute nouns as word tuples: peeling compares the first/last 1-3 words
+# with a set, which is much cheaper than a regex alternation over all nouns.
+_NOUNS = frozenset(tuple(w.lower().split()) for w in ATTRIBUTE_WORDS)
+_LONGEST = max(len(n) for n in _NOUNS)
 # "Maya's office is in Oslo": a preposition before a place name is not part of it.
 _PLACE_PREPOSITION = re.compile(r"^(?:in|at)\s+(?=(?-i:[A-Z]))", re.IGNORECASE)
 # An infinitive is a plan, never a value ("My plan is to finish by Friday").
@@ -63,10 +62,10 @@ def build_candidate(pack: RulePack, groups: dict[str, str | None], valid_from: d
     # "svc-a port changed ..." names the attribute after the subject; packs whose
     # verb fixes the attribute keep the subject whole ("Ana leads the Mobile squad").
     peel_subject = pack.attribute_from_value and len(subject.split()) > 1
-    subject_match = _SUBJECT_SUFFIX.match(subject) if peel_subject else None
+    subject_match = _peel_suffix(subject, possessive=True) if peel_subject else None
     subject_attr = ""
     if subject_match:
-        subject, subject_attr = subject_match.group(1), subject_match.group(2).lower()
+        subject, subject_attr = subject_match
     subject = re.sub(r"['’]s$", "", _KIND_PREFIX.sub("", subject).strip())
     subject = _KIND_SUFFIX.sub(r"\1", subject)
     verb = re.sub(r"\s+", " ", (groups.get("verb") or "").lower())
@@ -98,11 +97,24 @@ def build_candidate(pack: RulePack, groups: dict[str, str | None], valid_from: d
 
 
 def peel_value(value: str) -> tuple[str, str]:
-    """Split an attribute noun off a value: 'port 4444' -> ('4444', 'port')."""
-    prefix = _VALUE_PREFIX.match(value)
-    if prefix:
-        return clean_text(prefix.group(2)), prefix.group(1).lower()
-    suffix = _VALUE_SUFFIX.match(value)
-    if suffix:
-        return clean_text(suffix.group(1)), suffix.group(2).lower()
-    return value, ""
+    """Split an attribute noun off a value: 'port 4444' -> ('4444', 'port'), 'the Data team' -> ('Data', 'team')."""
+    words = value.split()
+    start = 1 if words and words[0].lower() == "the" else 0
+    for size in range(min(_LONGEST, len(words) - start - 1), 0, -1):   # prefix, longest noun first
+        head = tuple(w.lower() for w in words[start:start + size])
+        if head in _NOUNS and words[start + size].lower() != "of":
+            return clean_text(" ".join(words[start + size:])), " ".join(head)
+    return _peel_suffix(value) or (value, "")
+
+
+def _peel_suffix(text: str, possessive: bool = False) -> tuple[str, str] | None:
+    """'<rest> <noun>' -> (rest, noun) for a trailing attribute noun; None if there is none."""
+    words = text.split()
+    for size in range(min(_LONGEST, len(words) - 1), 0, -1):
+        tail = tuple(w.lower() for w in words[-size:])
+        if tail in _NOUNS:
+            rest = " ".join(words[:-size])
+            if possessive:
+                rest = re.sub(r"['’]s$", "", rest)
+            return (clean_text(rest) if not possessive else rest), " ".join(tail)
+    return None
