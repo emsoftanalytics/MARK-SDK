@@ -37,6 +37,11 @@ class CachedEmbeddingProvider(EmbeddingProvider):
         """The wrapped provider's fingerprint (caching does not change the space)."""
         return self._inner.fingerprint
 
+    @property
+    def semantic(self) -> bool:
+        """Whether the wrapped provider embeds meaning (caching does not change it)."""
+        return getattr(self._inner, "semantic", True)
+
     def embed(self, text: str) -> list[float]:
         """Return the embedding vector for the text."""
         return self.embed_batch([text])[0]

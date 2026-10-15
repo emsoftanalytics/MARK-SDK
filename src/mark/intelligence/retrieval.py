@@ -62,6 +62,7 @@ from mark.intelligence.retrieval_policy import (
     _RETRIEVABLE_STATES,
     BUILTIN_POLICIES,
     RRF_K,
+    FusionConfig,
     QueryAnalyzer,
     ReinforceMode,
     RetrievalPolicy,

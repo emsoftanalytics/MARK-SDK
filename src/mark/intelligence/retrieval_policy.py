@@ -101,6 +101,39 @@ _CHANNEL_DEPTH_MIN = 50
 # Graph neighbours inherit a damped share of the seed score per hop.
 _GRAPH_HOP_DECAY = 0.5
 
+_FUSION_MODES = ("auto", "rrf", "score")
+
+
+@dataclass(frozen=True)
+class FusionConfig:
+    """How the vector and lexical channels are combined into seed scores.
+
+    mode                   "auto": RRF for lexical embedders (the hash
+                           default), score fusion for semantic ones;
+                           "rrf" / "score" force one strategy.
+    lexical_weight         share of term coverage in score fusion for plain
+                           natural-language queries.
+    anchor_lexical_weight  share of term coverage when the query names an
+                           identifier or name that occurs in a candidate.
+
+    Defaults are measured (benchmarks/embeddings/tune_fusion.py): the
+    lexical weight on half of the paraphrase set, checked on the other half;
+    the anchor weight on the retention A/B log, whose questions all name a
+    service or ticket (flat optimum 0.6-0.9). With a semantic embedder,
+    equal-weight RRF let a memory sharing one stray word with the query
+    outrank the vector channel's best paraphrase match.
+    """
+    mode: str = "auto"
+    lexical_weight: float = 0.1
+    anchor_lexical_weight: float = 0.7
+
+    def __post_init__(self) -> None:
+        if self.mode not in _FUSION_MODES:
+            raise ValueError(f"fusion mode must be one of {_FUSION_MODES}, got {self.mode!r}")
+        for name in ("lexical_weight", "anchor_lexical_weight"):
+            if not 0.0 <= getattr(self, name) <= 1.0:
+                raise ValueError(f"{name} must be within [0, 1]")
+
 
 @dataclass(frozen=True)
 class SessionFilter:

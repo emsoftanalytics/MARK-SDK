@@ -35,6 +35,7 @@ from mark.intelligence.retrieval_policy import (
     _CHANNEL_DEPTH_MIN,
     _RETRIEVABLE_STATES,
     BUILTIN_POLICIES,
+    FusionConfig,
     QueryAnalyzer,
     ReinforceMode,
     RetrievalPolicy,
@@ -70,6 +71,7 @@ class RetrievalPipeline(_IndexSyncMixin, _FusionMixin, _ReinforcementMixin, _Rep
         query_expander: QueryExpander | None = None,
         top_k_with_llm: int = 20,
         reinforce: ReinforceMode | str = ReinforceMode.RELEVANT,
+        fusion: FusionConfig | None = None,
     ) -> None:
         # VectorIndex defines __len__, so an empty index is falsy: never use `or`.
         self._store = store
@@ -83,6 +85,7 @@ class RetrievalPipeline(_IndexSyncMixin, _FusionMixin, _ReinforcementMixin, _Rep
         self._query_expander: QueryExpander     = query_expander or NoopQueryExpander()
         self._top_k_with_llm = max(1, top_k_with_llm)
         self._reinforce = ReinforceMode(reinforce)
+        self._fusion = fusion if fusion is not None else FusionConfig()
         self._hebbian = HebbianReinforcement()
         self._coact   = EdgeCoActivation()
         # Serialises index sync / rebuilds; agents whose embedder fingerprint
@@ -107,6 +110,10 @@ class RetrievalPipeline(_IndexSyncMixin, _FusionMixin, _ReinforcementMixin, _Rep
     def configure_reinforce(self, mode: ReinforceMode | str) -> None:
         """Set how retrieval feeds back into plasticity (relevant | all | none)."""
         self._reinforce = ReinforceMode(mode)
+
+    def configure_fusion(self, fusion: FusionConfig) -> None:
+        """Set how vector and lexical evidence are fused (see FusionConfig)."""
+        self._fusion = fusion
 
     # ── Read path ─────────────────────────────────────────────────────────────
     # (The write path, index_fragment / index_fragments, lives in _IndexSyncMixin.)
@@ -197,10 +204,12 @@ class RetrievalPipeline(_IndexSyncMixin, _FusionMixin, _ReinforcementMixin, _Rep
             if expand and not isinstance(self._query_expander, NoopQueryExpander)
             else [query]
         )
-        fused, cosine, channels = self._fuse_channels(query_texts, agent_id, allowed_ids, scope_ids, depth)
+        fused, cosine, channels, vector_norm = self._fuse_channels(
+            query_texts, agent_id, allowed_ids, scope_ids, depth,
+        )
         query_terms = _content_terms(query)
         fragments_by_id, relevance, seed_scores = self._score_seeds(
-            query_terms, len(query_texts), fused, cosine, depth,
+            query, query_terms, len(query_texts), fused, cosine, vector_norm, depth,
         )
         expanded_scores, contradiction_ids = self._expand_seeds(
             spec, seed_scores, effective_top_k, agent_id, allowed_ids,
