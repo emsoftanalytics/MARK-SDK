@@ -1,3 +1,6 @@
+"""MarkAgentMiddleware sync hooks: bounded context retrieval, tool-result queuing,
+wrap_model_call logging, missing system messages, and running-loop safety.
+"""
 from __future__ import annotations
 
 from types import SimpleNamespace

@@ -1,3 +1,4 @@
+"""Packaging/versioning: single-sourced version, regular-package import, wheel config."""
 try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.10

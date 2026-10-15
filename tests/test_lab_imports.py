@@ -1,3 +1,6 @@
+"""Core lab components: SQLite-backed Mark.local, fragment hashing, vector index
+and runtime retrieval, graph expansion, bus/registry/sandbox boundaries.
+"""
 from __future__ import annotations
 
 from pathlib import Path

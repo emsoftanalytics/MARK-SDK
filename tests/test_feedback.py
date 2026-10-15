@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
+"""Retrieval feedback: persistence and bounds, backend feedback reaching memory,
+and from_bound not rebinding.
+"""
 from __future__ import annotations
 
 import asyncio

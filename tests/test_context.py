@@ -1,3 +1,4 @@
+"""Context building from stored records: empty stores and character budgets."""
 from mark import Mark
 
 

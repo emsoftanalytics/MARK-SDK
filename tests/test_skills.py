@@ -1,3 +1,4 @@
+"""Skill registry: echo skill loading and the mark-memory skill read/write path."""
 from mark import Mark
 
 
