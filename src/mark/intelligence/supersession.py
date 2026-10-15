@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from functools import lru_cache
 
 from mark.intelligence.query_anchors import content_entities, query_anchors
 from mark.intelligence.query_understanding import (
@@ -112,16 +113,28 @@ class _Profile:
     __slots__ = ("fragment", "norm", "topic", "entities", "entity_stems", "update", "replaced")
 
     def __init__(self, fragment: MemoryFragment) -> None:
-        # State changes are short statements: only the head of a long memory
-        # (a document) is compared, which keeps this stage cheap.
-        text = fragment.content[:_PROFILE_CHARS]
         self.fragment = fragment
-        self.norm = _anchor_norm(text)
-        self.topic = _topic(text)
-        self.entities = set(content_entities(_ISO_STAMP_RE.sub(" ", text)))
-        self.entity_stems = {_stem(word) for entity in self.entities for word in entity.split()}
-        self.update = is_update_statement(text)
-        self.replaced = replaced_values(text) if self.update else []
+        (self.norm, self.topic, self.entities, self.entity_stems,
+         self.update, self.replaced) = _features(fragment.content[:_PROFILE_CHARS])
+
+
+@lru_cache(maxsize=4096)
+def _features(text: str) -> tuple:
+    """Text features of a memory head, cached: the same memories recur across questions.
+
+    State changes are short statements, so only the head of a long memory
+    (a document) is compared, which keeps this stage cheap.
+    """
+    entities = frozenset(content_entities(_ISO_STAMP_RE.sub(" ", text)))
+    update = is_update_statement(text)
+    return (
+        _anchor_norm(text),
+        frozenset(_topic(text)),
+        entities,
+        frozenset(_stem(word) for entity in entities for word in entity.split()),
+        update,
+        tuple(replaced_values(text)) if update else (),
+    )
 
 
 class _Query:

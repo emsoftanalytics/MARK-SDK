@@ -64,6 +64,24 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 _SMALL_NUMBERS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3}
 
+# Cheap pre-checks: a pattern only runs when the text has the words it needs
+# (most memories hold no date at all, and this runs on every candidate).
+_WORD_RE = re.compile(r"[a-z0-9]+")
+_NEED_WORDS = {
+    "month": frozenset(_MONTHS),
+    "weekday": frozenset(_WEEKDAYS),
+    "unit": frozenset({"day", "days", "week", "weeks", "month", "months", "quarter", "quarters", "year", "years"}),
+    "quarter": frozenset({"q1", "q2", "q3", "q4", "quarter"}),
+    "half": frozenset({"h1", "h2"}),
+    "word": frozenset({"today", "yesterday", "tomorrow", "tonight"}),
+}
+_NEEDS = {
+    "iso": ("digit",), "numeric": ("digit",), "day_month": ("digit", "month"), "month_day": ("digit", "month"),
+    "iso_month": ("digit",), "quarter": ("quarter",), "half": ("half",), "month_year": ("digit", "month"),
+    "month": ("month",), "year": ("digit",), "ago": ("unit",), "past": ("digit", "unit"),
+    "rel_unit": ("unit",), "rel_wd": ("weekday",), "on_wd": ("weekday",), "word": ("word",),
+}
+
 
 @dataclass(frozen=True)
 class DateSpan:
@@ -90,7 +108,12 @@ def find_dates(text: str, reference: date | datetime | None = None, *, day_first
     ref = as_date(reference)
     taken: list[tuple[int, int]] = []
     spans: list[DateSpan] = []
+    words = set(_WORD_RE.findall(text.lower()))
+    present = {need: not vocabulary.isdisjoint(words) for need, vocabulary in _NEED_WORDS.items()}
+    present["digit"] = any(ch.isdigit() for ch in text)
     for kind, pattern in _PATTERNS:
+        if not all(present[need] for need in _NEEDS[kind]):
+            continue
         for match in pattern.finditer(text):
             s, e = match.span()
             if any(s < te and ts < e for ts, te in taken):

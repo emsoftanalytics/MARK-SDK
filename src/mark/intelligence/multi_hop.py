@@ -13,7 +13,8 @@ memories that really contain it are placed right behind the memory that led
 to them (hops never outrank their source). A second hop repeats this from
 the first hop's memories. Bounded and cheap: at most ``_MAX_SOURCES``
 sources and ``_MAX_BRIDGES`` bridges per hop, one keyword lookup per bridge,
-no model calls, and nothing at all for questions without anchors.
+no model calls, and nothing at all for questions without anchors or whose
+best match already contains every word of the question.
 
 The same lookup finds *updates* of a top result that the question's words
 miss: "Which city do I live in?" matches "I live in Lisbon" but not "I
@@ -31,6 +32,7 @@ from mark.intelligence.query_anchors import (
     anchor_present,
     content_entities,
     gap_anchors,
+    query_anchors,
 )
 from mark.intelligence.query_understanding import _coverage, _relevance
 from mark.intelligence.supersession import is_update_statement, supersedes
@@ -38,7 +40,7 @@ from mark.types import MemoryFragment
 
 _MAX_SOURCES = 3
 _MAX_BRIDGES = 3
-_LOOKUP_DEPTH = 16
+_LOOKUP_DEPTH = 8
 _PER_BRIDGE = 2
 # Share of its source's evidence a hop inherits when competing for a top-k slot,
 # and the calibrated evidence below which a direct match counts as weak.
@@ -71,6 +73,9 @@ class _MultiHopMixin:
         """Place memories reached through bridge entities behind their sources."""
         anchors = gap_anchors(query)
         if hops <= 0 or not anchors or not fragments:
+            return fragments, scores, relevances
+        # One memory already contains every word of the question: nothing to bridge.
+        if _coverage(query_terms, fragments[0].content) >= 1.0:
             return fragments, scores, relevances
         query_norm = _anchor_norm(query)
         out: _Ranked = list(zip(fragments, scores, relevances))
@@ -130,7 +135,13 @@ class _MultiHopMixin:
         top_k: int,
         cache: dict,
     ) -> tuple[list[MemoryFragment], list[float], list[float]]:
-        """Insert newer updates of the top result that the query's words did not reach."""
+        """Insert newer updates of the top result that the query's words did not reach.
+
+        Only for questions without anchors: a question naming its subject
+        ("atlas-core") already retrieves that subject's updates by name.
+        """
+        if query_anchors(query):
+            return fragments, scores, relevances
         query_norm = _anchor_norm(query)
         out: _Ranked = list(zip(fragments, scores, relevances))
         for source, relevance in list(zip(fragments, relevances))[:1]:
