@@ -41,8 +41,22 @@ def test_facts_idempotent_and_corrections_retract(runtime) -> None:
     first = facts.set("vega-core", "region", "eu-west-1", valid_from="2026-03-01")
     again = facts.set("vega-core", "region", "eu-west-1", valid_from="2026-03-01")
     assert again.id == first.id
-    facts.set("vega-core", "region", "us-east-1", valid_from="2026-03-01")  # correction
+    facts.set("vega-core", "region", "us-east-1", valid_from="2026-03-01", correction=True)
     assert [f.value for f in facts.history("vega-core", "region")] == ["us-east-1"]
+
+
+def test_same_time_values_form_a_sequence(runtime) -> None:
+    """Two changes logged on one day keep both steps; the last one is current."""
+    facts = runtime.memory("f").facts
+    facts.set("umbra-gateway", "db", "MongoDB 7", valid_from="2026-03-01")
+    facts.set("umbra-gateway", "db", "CockroachDB 23", valid_from="2026-03-08")
+    facts.set("umbra-gateway", "db", "MongoDB 7", valid_from="2026-03-08")
+    again = facts.set("umbra-gateway", "db", "MongoDB 7", valid_from="2026-03-08")  # re-ingest: no-op
+
+    history = facts.history("umbra-gateway", "db")
+    assert [f.value for f in history] == ["MongoDB 7", "CockroachDB 23", "MongoDB 7"]
+    assert facts.get("umbra-gateway", "db").id == again.id
+    assert facts.as_of("umbra-gateway", "db", "2026-03-08T12:00:00").value == "MongoDB 7"
 
 
 def test_facts_collapse_repeated_values(runtime) -> None:

@@ -20,7 +20,9 @@ This project follows semantic versioning for public package releases.
 - Bi-temporal facts: `memory.facts.set/get/current/history/as_of` record values
   that change over time with validity intervals. Late-arriving updates are
   placed correctly in history, corrections are audited rather than deleted,
-  and fact values are encrypted at rest when encryption is enabled.
+  and fact values are encrypted at rest when encryption is enabled. Several
+  changes recorded for the same time are kept as a sequence; `correction=True`
+  replaces a wrong value instead.
 - Time-aware retrieval: queries about the current or original state of a
   subject return the newest or earliest matching record first, using
   `occurred_at` or a leading date stamp as the event time.
@@ -48,6 +50,7 @@ This project follows semantic versioning for public package releases.
 
 ### Fixed
 
+- Events with the same date were not ordered by when they happened.
 - Keyword search over large filtered scopes could miss in-scope matches.
 - Term matching treated unrelated identifiers with a shared prefix (for
   example `titan` and `titanium`) as the same word.

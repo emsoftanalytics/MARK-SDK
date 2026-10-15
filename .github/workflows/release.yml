@@ -39,7 +39,11 @@ jobs:
           pytest
           tests/test_langchain_middleware.py
           tests/test_langchain_middleware_async.py
+          tests/test_langchain_middleware_robustness.py
+          tests/test_langchain_middleware_bounds.py
+          tests/test_langchain_anticipation.py
           tests/test_agent_lifecycle.py
+          tests/test_adapter_lifecycle.py
           tests/test_adapters_mcp_tools.py
           tests/test_agent.py
           tests/test_examples.py
