@@ -86,7 +86,9 @@ This project follows semantic versioning for public package releases.
 - `RetrievalResult.facts` contains only the facts that answer the query (the
   attribute asked about, or all of them for an open question).
 - Briefings no longer report subjects that only the model mentioned as "Not
-  in memory"; such subjects appear once memory confirms them.
+  in memory"; such subjects appear once memory confirms them. Bare numbers
+  (ports, counts, years, dates) are never reported as unknown subjects or as
+  `missing_anchors`.
 - On POSIX, a new `.mark/` directory is created with mode `0700` and new
   database files with mode `0600`.
 - Store schema version 5 adds the fact-extraction job queue and extraction

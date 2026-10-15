@@ -38,6 +38,10 @@ _TEMPORAL_WORDS = {"now", "current", "currently", "latest", "recent", "today", "
 # v2.3.1), tokens with digits, and multi-word capitalised names.
 _COMPOUND_RE = re.compile(r"\b\w+(?:[-_.:/]\w+)+\b")
 _DIGIT_TOKEN_RE = re.compile(r"\b(?=\w*\d)\w{3,}\b")
+# Bare numbers, decimals, dates and times ("8080", "2025", "1.5", "2026-03-01",
+# "10:30") are values the query mentions, not subjects: a port or a year missing
+# from memory is not a gap. Dotted quads (IP addresses) have four groups and stay.
+_BARE_NUMBER_RE = re.compile(r"\d+(?:[.,:/-]\d+){0,2}")
 _NUMBER_WITH_UNIT_RE = re.compile(r"\d+(?:s|st|nd|rd|th|ms|us|ns|k|kb|mb|gb|tb|m|h|x|px|pc|pct|am|pm)", re.I)
 # Title-case words only ("Mei Lin", "Liam O'Connor"); ALL-CAPS log labels such
 # as "TICKET HAL" are not names.
@@ -80,18 +84,19 @@ def query_anchors(query: str) -> list[str]:
 
     Anchors are what the question is *about* (atlas-core, HAL-1234, Mei Lin).
     Three heuristics, in order: compound identifiers, tokens containing
-    digits (minus quantities like "10ms"), and runs of title-case words with
-    leading/trailing question words stripped ("Has Alice Smith" -> "alice
+    digits (minus quantities like "10ms" and bare numbers such as ports,
+    years and dates, which are values rather than subjects), and runs of
+    title-case words with leading/trailing question words stripped ("Has Alice Smith" -> "alice
     smith"). Possessives are dropped first so "Mei Lin's" matches "Mei Lin".
     """
     query = _POSSESSIVE_RE.sub("", query)
     anchors: list[str] = []
     for match in _COMPOUND_RE.findall(query):
-        if _is_identifier(match):
+        if _is_identifier(match) and not _BARE_NUMBER_RE.fullmatch(match):
             anchors.append(match)
     for match in _DIGIT_TOKEN_RE.findall(query):
-        if _NUMBER_WITH_UNIT_RE.fullmatch(match):
-            continue  # "502s", "10ms", "3rd", "5k" are quantities, not identifiers
+        if _NUMBER_WITH_UNIT_RE.fullmatch(match) or _BARE_NUMBER_RE.fullmatch(match):
+            continue  # "502s", "10ms", "3rd", "8080", "2025" are quantities, not identifiers
         if not any(match in compound for compound in anchors):
             anchors.append(match)
     for match in _NAME_RE.findall(query):
