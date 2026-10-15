@@ -37,10 +37,15 @@ from mark.store._sqlite.scope_ids import ScopeIds
 from mark.types import MemoryScope, MemoryTier
 
 WRITE_LOG_DDL = "CREATE TABLE IF NOT EXISTS write_log (version INTEGER PRIMARY KEY, ids TEXT)"
-# Above this many changed ids a rescan is cheaper than per-id lookups.
+# Above this many changed ids (summed over the versions to catch up on) a
+# rescan is cheaper than per-id lookups.
 MAX_DELTA_IDS = 5_000
-_LOG_KEEP = 4_096  # versions kept in write_log; older caches simply rescan
-_PRUNE_EVERY = 256
+# A single write logging more ids is logged as unknown: bulk imports would
+# otherwise make the log large (~40 bytes per id), and they are rare and
+# already cost far more than one rescan.
+MAX_LOGGED_IDS = 512
+_LOG_KEEP = 1_024  # versions kept in write_log (at most ~20 MB); older caches simply rescan
+_PRUNE_EVERY = 64
 
 # Seconds until a row expires; NULL when it never does (no TTL, unparsable date).
 _TTL_LEFT_SQL = (
@@ -77,7 +82,7 @@ class ScopeCacheMixin:
         if row is None:
             return
         version = int(row[0])
-        ids = None if notes is None or len(notes) > MAX_DELTA_IDS else json.dumps(list(dict.fromkeys(notes)))
+        ids = None if notes is None or len(notes) > MAX_LOGGED_IDS else json.dumps(list(dict.fromkeys(notes)))
         try:
             conn.execute("INSERT OR REPLACE INTO write_log (version, ids) VALUES (?, ?)", (version, ids))
             if version % _PRUNE_EVERY == 0:

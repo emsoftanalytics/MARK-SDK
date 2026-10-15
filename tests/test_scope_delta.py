@@ -104,9 +104,13 @@ def test_unknown_or_large_change_sets_rescan(tmp_path, monkeypatch) -> None:
     raw.commit()
     raw.close()
     assert store.retrievable_ids(AGENT) == {outside} and len(calls) == 2
-    monkeypatch.setattr(scope_delta, "MAX_DELTA_IDS", 3)
+    monkeypatch.setattr(scope_delta, "MAX_LOGGED_IDS", 3)  # one bulk write: logged as unknown
     many = store.store_many([_frag(f"bulk {i}") for i in range(5)])
     assert store.retrievable_ids(AGENT) == {outside, *many} and len(calls) == 3
+    monkeypatch.setattr(scope_delta, "MAX_DELTA_IDS", 3)  # small writes adding up
+    few = [store.store(_frag(f"single {i}")) for i in range(4)]
+    assert store.retrievable_ids(AGENT) == {outside, *many, *few} and len(calls) == 4
+    assert store._fetchone("SELECT ids FROM write_log ORDER BY version DESC LIMIT 1")[0] == f'["{few[-1]}"]'
     store.close()
 
 
