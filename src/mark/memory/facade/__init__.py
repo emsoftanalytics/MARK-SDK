@@ -9,6 +9,7 @@ Each module owns one responsibility of the per-agent memory facade:
 * ``write``       store / store_sync / store_many_sync (middleware-routed)
 * ``fact_extraction`` automatic fact extraction after writes
 * ``retrieve``    retrieve / retrieve_sync / retrieve_many_sync, escalation
+* ``retrieve_async`` retrieve_many (async batch retrieval)
 * ``timeline``    whole-history subject timelines (no top-k cap)
 * ``healing``     explicit gap healing through a web lookup skill
 * ``observing``   observe() and optional structured extraction into the graph
