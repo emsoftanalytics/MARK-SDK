@@ -50,6 +50,7 @@ from mark.store._sqlite.facts import FactMixin
 from mark.store._sqlite.fragment_reads import FragmentReadMixin
 from mark.store._sqlite.fragments import FragmentWriteMixin
 from mark.store._sqlite.graph import GraphMixin
+from mark.store._sqlite.lifecycle import LifecycleStoreMixin
 from mark.store._sqlite.mentions import MentionMixin
 from mark.store._sqlite.rows import RowDecodingMixin
 from mark.store._sqlite.schema import SchemaMixin
@@ -61,6 +62,7 @@ __all__ = ["ListenerCallback", "LocalMemoryStore"]
 
 
 class LocalMemoryStore(
+    LifecycleStoreMixin,
     FragmentWriteMixin,
     FragmentReadMixin,
     SearchMixin,

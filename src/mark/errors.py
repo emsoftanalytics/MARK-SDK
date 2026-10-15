@@ -73,3 +73,56 @@ class StoreVersionError(MarkError, RuntimeError):
             f"up to version {supported}; refusing to open it so it is not damaged. "
             "Upgrade mark-sdk (pip install -U mark-sdk) to use this store."
         )
+
+
+# ── API input and lookup errors (W6: API, lifecycle and CLI) ─────────────────
+# Each also subclasses the builtin callers historically caught (ValueError,
+# KeyError, RuntimeError), so existing ``except ValueError`` code keeps working.
+
+__all__ += [
+    "EmbedderUnavailableError",
+    "InvalidInputError",
+    "MemoryNotFoundError",
+    "UnknownBlockError",
+]
+
+
+class InvalidInputError(MarkError, ValueError):
+    """A value passed to a MARK API is invalid (wraps pydantic validation errors)."""
+
+    @classmethod
+    def from_validation(cls, exc: Exception, what: str = "memory") -> "InvalidInputError":
+        """Turn a pydantic ``ValidationError`` into a one-line, field-named MARK error."""
+        errors = getattr(exc, "errors", None)
+        parts: list[str] = []
+        if callable(errors):
+            for item in errors():
+                field = ".".join(str(loc) for loc in item.get("loc", ())) or what
+                parts.append(f"{field}: {item.get('msg', 'invalid value')}")
+        return cls(f"invalid {what}: " + ("; ".join(parts) or str(exc)))
+
+
+class UnknownBlockError(InvalidInputError):
+    """``blocks=[...]`` named a block that has never been created or written."""
+
+    def __init__(self, unknown: list[str], known: list[str]) -> None:
+        listed = ", ".join(sorted(known)) or "(none yet)"
+        super().__init__(
+            f"unknown block(s) {', '.join(repr(name) for name in unknown)}; known blocks: {listed}. "
+            "Create one with memory.block(name) or write to it first."
+        )
+
+
+class MemoryNotFoundError(MarkError, KeyError):
+    """No memory with the given id exists for this agent."""
+
+    def __init__(self, memory_id: str) -> None:
+        super().__init__(memory_id)
+        self.memory_id = memory_id
+
+    def __str__(self) -> str:
+        return f"no memory with id {self.memory_id!r}"
+
+
+class EmbedderUnavailableError(MarkError, RuntimeError):
+    """An embedding model could not be loaded or downloaded."""

@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2025 MARK Contributors
+"""Memory kinds and lifecycle tags shared by the Python API, CLI and MCP (``mark.kinds``).
+
+Standard library only, so the ``mark`` command line can validate ``--kind``
+without loading MARK.
+
+A *kind* says what a memory is for (``remember(text, kind="todo")``) and is
+stored as the tag ``kind:<kind>``, so every tag filter (recall, list, the
+pipeline's tag pre-filter) can scope by kind with no schema change.
+
+Lifecycle tags (set by ``supersede``/``update``/``resolve``):
+
+* ``mark:superseded`` — the memory is no longer current (replaced, edited or
+  resolved). Retrieval demotes it but keeps it findable for history questions.
+* ``mark:resolved``   — a TODO/bug that was closed; ``list(kind="todo",
+  open=True)`` leaves it out.
+"""
+from __future__ import annotations
+
+#: Every accepted memory kind, in documentation order.
+KINDS: tuple[str, ...] = ("decision", "todo", "bug", "fix", "preference", "snippet", "api", "note")
+
+KIND_TAG_PREFIX = "kind:"
+TAG_SUPERSEDED = "mark:superseded"
+TAG_RESOLVED = "mark:resolved"
+
+#: Defaults shared by every write API (simple blocks, MarkMemory, CLI, MCP).
+DEFAULT_IMPORTANCE = 0.5
+DEFAULT_CONFIDENCE = 1.0
+
+
+def normalize_kind(kind: str | None) -> str | None:
+    """Validate *kind* and return its canonical form (None stays None).
+
+    Plurals and case are forgiven (``"TODOs"`` -> ``"todo"``); anything else
+    raises :class:`mark.errors.InvalidInputError` listing the valid kinds.
+    """
+    if kind is None:
+        return None
+    text = str(kind).strip().lower()
+    if text in KINDS:
+        return text
+    if text.endswith("s") and text[:-1] in KINDS:
+        return text[:-1]
+    from mark.errors import InvalidInputError
+
+    raise InvalidInputError(f"unknown memory kind {kind!r}; expected one of: {', '.join(KINDS)}")
+
+
+def kind_tag(kind: str) -> str:
+    """The tag that stores *kind* (``"todo"`` -> ``"kind:todo"``)."""
+    return KIND_TAG_PREFIX + kind
+
+
+def kind_of(tags: list[str] | tuple[str, ...]) -> str | None:
+    """The kind recorded in *tags*, if any."""
+    for tag in tags:
+        if tag.startswith(KIND_TAG_PREFIX):
+            return tag[len(KIND_TAG_PREFIX):]
+    return None
+
+
+def is_open(tags: list[str] | tuple[str, ...]) -> bool:
+    """True when a memory is neither resolved nor superseded."""
+    return TAG_RESOLVED not in tags and TAG_SUPERSEDED not in tags
