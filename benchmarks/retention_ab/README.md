@@ -34,9 +34,11 @@ paragraph (see `prompts.md`).
 
 - **A — without MARK:** a `notes.md` file the agents read and edit with their
   file tools. Notes must be written by the agent (no shell copying of the log).
-- **B — with MARK:** a `mark` CLI over MARK v0.2.0a7 (`ingest`, `store`,
-  `recall`, `stats`). Agents may ingest raw log lines and store their own
-  notes. No files on disk.
+- **B — with MARK:** a `mark` command over MARK. Agents may ingest raw log
+  lines, store their own notes and, in run 2, record facts. No files on disk.
+  Run 1 used `markcli.py` (MARK v0.2.0a7: `ingest`, `store`, `recall`,
+  `stats`); run 2 used the SDK's own `mark` command (v0.2.0a8) with
+  `mark serve`.
 
 The asymmetry is deliberate and is the thing being measured: MARK's design is
 to observe everything cheaply and retrieve relevant evidence on demand, while
@@ -49,10 +51,11 @@ forward itself.
 | --- | --- |
 | `gen.py` | Deterministic generator (seed 20261015): writes `chunks/chunk_{1..5}.log`, `questions.json`, and private `answers.json` |
 | `gen_data.py`, `gen_questions.py` | Generator modules used by `gen.py`: static vocabulary, and question/answer construction |
-| `markcli.py` | The `mark` CLI used by arm B |
+| `markcli.py` | The minimal `mark` CLI used by arm B in run 1 (run 2 used the SDK's `mark` command) |
 | `grade.py` | Strict, LLM-free grader (exact value or alias; hedges listing competing values are wrong) |
 | `prompts.md` | Verbatim session prompt templates |
 | `results/` | Run 1: run log, both arms' final memory and answers, graded results, `RESULTS.md` |
+| `results/run2/` | Run 2 (large profile, arms A, B and C): run log, final memory, graded results, `RESULTS.md` |
 
 ## Profiles
 
@@ -74,11 +77,12 @@ mkdir -p run/armA run/armB
 printf '# Halcyon Labs operational notes (relay)\n' > run/armA/notes.md
 cat > run/armB/mark <<EOF
 #!/bin/sh
-MARK_DB="$PWD/run/armB/mark.db" exec python "$PWD/markcli.py" "\$@"   # python with mark-sdk[fast] installed
+MARK_DB="$PWD/run/armB/mark.db" exec mark "\$@"   # SDK command; run 1 used: python "$PWD/markcli.py"
 EOF
 chmod +x run/armB/mark
+run/armB/mark serve &          # optional: keeps the store warm between calls
 
-for k in 1 2 3 4 5; do
+for k in 1 2 3 4 5; do        # large profile: 1 .. 10
   cp chunks/chunk_$k.log run/armA/today.log
   cp chunks/chunk_$k.log run/armB/today.log
   # Launch one fresh agent per arm with the session-K prompt from prompts.md,
@@ -88,8 +92,14 @@ done
 
 cp questions.json run/armA/ && cp questions.json run/armB/
 # Launch the final-session prompt for each arm, then:
-python grade.py --key answers.json run/armA/answers.json run/armB/answers.json --out results/graded.json
+python grade.py --key answers.json run/armA/answers.json run/armB/answers.json --out run/graded.json
+kill %1                        # stop mark serve, if started
 ```
 
 Agents must not be able to read `gen*.py`, `answers.json` or `chunks/` during
-the run. Keep them outside the arm workspaces, as the original run did.
+the run. Keep them outside the arm workspaces, as the original runs did.
+
+For arm C, ingest every chunk into a third database with `mark ingest` and run
+only the final-session prompt. Session prompts for both runs are in
+`prompts.md`. The sessions need an agent runtime and a model; the generator
+and grader run offline.
