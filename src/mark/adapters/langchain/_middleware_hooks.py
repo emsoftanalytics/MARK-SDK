@@ -85,6 +85,7 @@ class _LifecycleHooksMixin:
             # run's _RunState so concurrent ainvoke() calls never share data.
             run_id = uuid.uuid4().hex
             run = self._run_by_id(run_id)
+            await self._archive_state(state)   # history="mark": store before retrieving
             human_query, _ = self._build_queries(state)
             if human_query:
                 run.prewarm = await self._spawn(run, self._recall(human_query, run, cache=True))
@@ -112,6 +113,7 @@ class _LifecycleHooksMixin:
         """
         try:
             run = self._run(state)
+            await self._archive_state(state)   # history="mark": store before retrieving
             human_query, ai_query = self._build_queries(state)
             if not human_query:
                 return {"mark_context": "", "mark_context_meta": {"chars": 0, "source": "none"}}
@@ -178,6 +180,8 @@ class _LifecycleHooksMixin:
                     thought_block = f"[MARK reasoning]\n{run.thoughts}\n[/MARK reasoning]"
                     combined = (combined + "\n\n---\n\n" + thought_block) if combined else thought_block
 
+            if self._budget is not None:   # one cap over briefing + memories + plan
+                combined = self._budgeted_context(run)
             run.last_injected_key = inject_key
             run.last_context = combined
             return {

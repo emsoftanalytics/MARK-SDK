@@ -70,12 +70,17 @@ class _AnticipationMixin:
 
     async def _anticipated_briefing(self, run: _RunState, state: Any) -> str:
         """Feed new messages and return the current briefing text ("" when none)."""
+        run.watch_items = ()
         watch = self._watch_for(run)
         if watch is None:
             return ""
         try:
             await run_off_loop(self._feed_watch, watch, run, state)
-            brief = await run_off_loop(watch.briefing, wait=_BRIEFING_WAIT_S)
+            # With a middleware budget the watch returns all candidate lines
+            # (brief.items); the final fit happens once, with retrieval included.
+            brief = await run_off_loop(watch.briefing, wait=_BRIEFING_WAIT_S,
+                                       budget_tokens=getattr(self, "_budget", None))
+            run.watch_items = brief.items
         except Exception as exc:  # anticipation is best-effort, never fatal
             self._record("anticipate_error", error=f"{type(exc).__name__}: {exc}")
             return ""
