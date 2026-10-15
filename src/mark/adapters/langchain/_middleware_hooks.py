@@ -15,6 +15,7 @@ import uuid
 from typing import Any
 
 from mark.adapters.backend import run_off_loop
+from mark.context.provenance import observe_options
 from mark.adapters.langchain._middleware_support import (
     _IN_SYNC_BRIDGE,
     _message_role,
@@ -174,7 +175,7 @@ class _LifecycleHooksMixin:
                             "observe",
                             f"MARK reasoning plan for query '{human_query[:100]}':\n"
                             f"{run.thoughts[:400]}",
-                            agent_id=self._agent_id,
+                            agent_id=self._agent_id, **observe_options("assistant"),
                         ))
                 if run.thoughts:
                     thought_block = f"[MARK reasoning]\n{run.thoughts}\n[/MARK reasoning]"
@@ -213,7 +214,9 @@ class _LifecycleHooksMixin:
                 content = self._message_text(msg).strip()
                 has_tool_calls = bool(getattr(msg, "tool_calls", None))
                 if content and len(content) > 100 and not has_tool_calls:
-                    self._queue_observation(self._run(state), f"Agent reasoning: {content[:600]}")
+                    # The model's own words: stored as low-trust assistant output.
+                    self._queue_observation(self._run(state), f"Agent reasoning: {content[:600]}",
+                                            **observe_options("assistant"))
                 break
 
     async def aafter_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
@@ -258,7 +261,8 @@ class _LifecycleHooksMixin:
                 for msg in reversed(_state_messages(state)):
                     if _message_role(msg) in ("ai", "assistant"):
                         content = self._message_text(msg)[:200]
-                        self._queue_observation(run, f"Agent completed task. Response: {content}")
+                        self._queue_observation(run, f"Agent completed task. Response: {content}",
+                                                **observe_options("assistant"))
                         await self._spawn(run, self._backend_call(
                             "feedback",
                             agent_id=self._agent_id,

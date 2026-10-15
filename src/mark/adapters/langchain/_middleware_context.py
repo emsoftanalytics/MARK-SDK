@@ -4,13 +4,25 @@
 the ContextWatch briefing, retrieved memories and an optional thinking-model
 plan — becomes one list of :class:`~mark.context.budget.BudgetItem` lines,
 fitted under ONE hard cap (``ContextBudget.fit``) and rendered, wrapper
-included, as the ``[MARK project memory]`` block. The packaged skill text
-(static instructions; ``include_skill=False`` removes it) is not counted.
+included, as the ``[MARK project memory]`` block. The packaged skill the
+middleware injects is charged to the same budget (``split_budget``): with
+``budget_tokens=300`` and a 170-token skill, memory gets 130 tokens, so the
+budget is the whole MARK footprint of the system prompt (usage test M7: a
+3 KB skill on top of a "300-token" budget). Small budgets therefore get the
+compact skill (see ``_skill_name``).
+
+Retrieved records are filtered like briefing notes: the model's own stored
+replies are kept apart under an "unverified" header (lowest priority), bare
+questions, small talk and a stored copy of the current message are dropped,
+and near-duplicates of briefing lines are shown once.
 
 **History replacement** (``history="mark"``). Before each model call the
 request's messages are cut to the last ``keep_last`` (see
 :func:`mark.context.history.split_history` for the tool-call and current-turn
-guarantees). Dropped messages are written to MARK first — in
+guarantees). Dropped messages are written to MARK first, with provenance
+(user statements ``source="user"``; assistant replies low-trust
+``source="assistant"`` + ``mark:assistant``, or not stored at all with
+``store_assistant=False``; tool results ``source="tool"``) — in
 ``before_agent``/``before_model`` so retrieval and the briefing can already
 see them, and again (if anything is missing) in ``wrap_model_call``. A
 message is only dropped once its write succeeded; if writing fails, the full
@@ -25,13 +37,16 @@ from typing import Any
 
 from mark.adapters.langchain._middleware_support import _RunState, _run_sync, _state_messages
 from mark.context.budget import BudgetItem, ContextBudget, as_budget, render_lines
-from mark.context.history import message_key, split_history, turn_text
-from mark.context.watch_render import render_briefing
+from mark.context.history import message_key, message_role, message_text, split_history, turn_text
+from mark.context.presets import split_budget
+from mark.context.provenance import is_assistant, observe_options
+from mark.context.watch_lines import Deduper, is_echo, small_talk, trusted, words
+from mark.context.watch_render import ASSISTANT_HEADER, render_briefing
 from mark.context.watch_support import _one_line
 
 RETRIEVED_HEADER = "Retrieved memory:"
 REASONING_HEADER = "[MARK reasoning]"
-_OUTSIDE_BRIEFING = (RETRIEVED_HEADER, REASONING_HEADER)
+_OUTSIDE_BRIEFING = (RETRIEVED_HEADER, REASONING_HEADER, ASSISTANT_HEADER)
 _MAX_ARCHIVED = 8192      # message keys remembered as stored (bounded LRU)
 _RECORD_CHARS = 400       # one retrieved record line in budget mode
 
@@ -56,19 +71,30 @@ class _ContextControlMixin:
     # ── budget ────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _retrieval_items(value: Any) -> list[BudgetItem]:
-        """Budget items for one retrieval result: current facts, then records."""
+    def _retrieval_items(value: Any, query: str = "") -> list[BudgetItem]:
+        """Budget items for one retrieval result: current facts, then trusted records.
+
+        Assistant output goes last under its "unverified" header; questions,
+        small talk and the stored current message (*query*) are dropped.
+        """
         items: list[BudgetItem] = []
         for fact in getattr(value, "facts", None) or []:
             if getattr(fact, "is_current", True):
                 text = fact.as_text() if hasattr(fact, "as_text") else str(fact)
                 items.append(BudgetItem("facts", f"- {_one_line(text, _RECORD_CHARS)}", RETRIEVED_HEADER))
+        query_words = words(query)
+        replies: list[BudgetItem] = []
         for fragment in getattr(value, "fragments", None) or []:
             content = str(getattr(fragment, "content", "") or "")
-            if content.strip():
-                items.append(BudgetItem("records", f"- {_one_line(content, _RECORD_CHARS)}",
-                                        RETRIEVED_HEADER, str(getattr(fragment, "id", "") or "") or None))
-        return items
+            if not content.strip() or is_echo(fragment, query_words) or small_talk(fragment):
+                continue
+            ref = str(getattr(fragment, "id", "") or "") or None
+            line = f"- {_one_line(content, _RECORD_CHARS)}"
+            if is_assistant(fragment):
+                replies.append(BudgetItem("assistant", line, ASSISTANT_HEADER, ref))
+            elif trusted(fragment):
+                items.append(BudgetItem("records", line, RETRIEVED_HEADER, ref))
+        return items + replies[:1]   # one unverified reply at most, lowest priority
 
     def _render_budgeted(self, items: Any) -> str:
         """Briefing lines inside ``<mark_briefing>``, retrieved memory and plan after it."""
@@ -80,9 +106,12 @@ class _ContextControlMixin:
         """This step's watch, retrieval and plan lines fitted under the one budget."""
         items = list(run.watch_items)
         seen = {(i.ref or i.text) for i in items}
+        dedupe = Deduper()
+        for item in items:
+            dedupe.fresh(item.text)
         for query in run.step_queries:
             for item in run.recall_items.get(query, ()):
-                if (item.ref or item.text) not in seen:
+                if (item.ref or item.text) not in seen and dedupe.fresh(item.text):
                     seen.add(item.ref or item.text)
                     items.append(item)
         if run.thoughts:
@@ -91,12 +120,20 @@ class _ContextControlMixin:
         def render(selected: Any) -> str:   # measured exactly as it will be injected
             return self._memory_block(self._render_budgeted(selected)) if selected else ""
 
-        fit = self._budget.fit(items, render)
+        fit = self._memory_budget().fit(items, render)
         run.last_usage = fit.usage
         self._record("budget", max_tokens=fit.usage.max_tokens, used_tokens=fit.usage.used_tokens,
                      included=fit.usage.included, dropped=fit.usage.dropped,
                      truncated=fit.usage.truncated)
         return self._render_budgeted(fit.items)
+
+    def _memory_budget(self) -> ContextBudget:
+        """The budget left for memory once the injected skill is charged to it."""
+        skill = self._skill_block() if getattr(self, "_include_skill", False) else ""
+        if not skill:
+            return self._budget
+        left = split_budget(self._budget.max_tokens, skill, self._budget.token_counter)
+        return ContextBudget(left, fill=self._budget.fill, token_counter=self._budget.token_counter)
 
     # ── history replacement ───────────────────────────────────────────────
 
@@ -112,9 +149,13 @@ class _ContextControlMixin:
         """Store every not-yet-stored message the window drops; return how many were written."""
         written = 0
         for message in self._unarchived(messages):
+            role = message_role(message)
             text = turn_text(message)
+            if role == "assistant" and not getattr(self, "_store_assistant", True):
+                text = ""             # opted out: dropped without being stored
             if text:
-                result = await self._backend_call("observe", text, agent_id=self._agent_id)
+                result = await self._backend_call("observe", text, agent_id=self._agent_id,
+                                                  **observe_options(role, message_text(message)))
                 if not result.ok:
                     continue          # stays unarchived: it will not be dropped
                 written += 1

@@ -180,6 +180,8 @@ class _RunState:
 
     recall_cache: OrderedDict[str, str] = field(default_factory=OrderedDict)
     pending_observations: list[str] = field(default_factory=list)
+    # observe() options (source, tags, importance) per queued observation text.
+    pending_options: dict[str, dict[str, Any]] = field(default_factory=dict)
     fragment_ids: OrderedDict[str, None] = field(default_factory=OrderedDict)
     last_injected_key: str = ""
     last_context: str = ""

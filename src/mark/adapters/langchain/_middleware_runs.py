@@ -190,11 +190,12 @@ class _RunsMixin:
     def _message_text(self, msg: Any) -> str:
         return content_text(_message_content(msg))
 
-    def _queue_observation(self, run: _RunState, content: str) -> None:
+    def _queue_observation(self, run: _RunState, content: str, **options: Any) -> None:
         """Queue *content* for run-end archival unless trivial or already seen.
 
         De-duplication is cross-run (bounded LRU of content hashes), so the
-        same tool output observed by many runs is archived once.
+        same tool output observed by many runs is archived once. *options*
+        (provenance: ``source``, ``tags``, ``importance``) go to ``observe``.
         """
         if not content:
             return
@@ -210,14 +211,17 @@ class _RunsMixin:
             while len(self._seen_observation_hashes) > _MAX_SEEN_OBSERVATIONS:
                 self._seen_observation_hashes.popitem(last=False)
         run.pending_observations.append(normalized[:1200])
+        if options:
+            run.pending_options[normalized[:1200]] = options
 
     async def _flush_observations_async(self, run: _RunState) -> int:
         """Write the run's queued observations; return how many succeeded."""
-        pending = run.pending_observations
-        run.pending_observations = []
+        pending, options = run.pending_observations, run.pending_options
+        run.pending_observations, run.pending_options = [], {}
         count = 0
         for content in pending:
-            result = await self._backend_call("observe", content, agent_id=self._agent_id)
+            result = await self._backend_call("observe", content, agent_id=self._agent_id,
+                                              **options.get(content, {}))
             if result.ok:
                 count += 1
         if count:
