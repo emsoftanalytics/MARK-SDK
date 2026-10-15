@@ -284,7 +284,7 @@ class LocalMemoryStore:
         tags: list[str] | None = None,
         block_id: str | None = None,
         block_ids: list[str] | None = None,
-        limit: int = 200,
+        limit: int | None = 200,
     ) -> list[MemoryFragment]:
         """Query fragments for agent_id with optional session, tag, tier, scope, and block filters.
 
@@ -336,8 +336,10 @@ class LocalMemoryStore:
             placeholders = ",".join("?" for _ in state_list)
             sql += f" AND state IN ({placeholders})"
             params.extend(state.value for state in state_list)
-        sql += " ORDER BY importance DESC, created_at DESC LIMIT ?"
-        params.append(limit)
+        sql += " ORDER BY importance DESC, created_at DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
         rows = self._conn().execute(sql, params).fetchall()
         return [self._row_to_fragment(dict(row)) for row in rows]
 

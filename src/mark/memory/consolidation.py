@@ -73,10 +73,19 @@ class ConsolidationManager:
         result    = ConsolidationResult()
         now       = datetime.now(timezone.utc)
 
-        fragments: List[MemoryFragment] = self._store.list_by_agent(self._agent_id)
+        from mark.memory.block_chain import sealed_membership
+
+        sealed = sealed_membership(self._store, self._agent_id)
+        fragments: List[MemoryFragment] = self._store.list_by_agent(self._agent_id, limit=None)
 
         for frag in fragments:
             if frag.tier != MemoryTier.WORKING and frag.ttl_seconds is None:
+                result.skipped += 1
+                continue
+            # Sealed members are immutable; quarantined/contradicted are evidence.
+            if sealed.protects_fragment(frag) or frag.state in (
+                MemoryState.QUARANTINED, MemoryState.CONTRADICTED,
+            ):
                 result.skipped += 1
                 continue
 

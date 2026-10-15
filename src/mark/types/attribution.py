@@ -7,7 +7,9 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import ClassVar, Dict, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+
+from mark.types._datetime import ensure_utc
 
 
 class SourceCredibility(str, Enum):
@@ -62,6 +64,12 @@ class SourceAttribution(BaseModel):
     credibility:  SourceCredibility       = SourceCredibility.UNKNOWN
     via:          str                     = "unknown"  # "web_search"|"document"|"tool"|"agent"
     licence_hint: Optional[str]           = None       # e.g. "CC-BY-SA", "fair use", "proprietary"
+
+    @field_validator("retrieved_at")
+    @classmethod
+    def _utc_retrieved_at(cls, v: datetime) -> datetime:
+        """Coerce naive datetimes to UTC."""
+        return ensure_utc(v)
 
     @property
     def trust_score(self) -> float:
