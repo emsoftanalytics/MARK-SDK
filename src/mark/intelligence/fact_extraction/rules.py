@@ -19,6 +19,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from mark.intelligence.fact_extraction.vocab import DEV_ATTRIBUTES
+
 #: Generic attribute nouns: recognised between a verb and "to", as the first
 #: word of a value ("port 4444") or the last ("the Platform team").
 ATTRIBUTE_WORDS: tuple[str, ...] = (
@@ -30,12 +32,17 @@ ATTRIBUTE_WORDS: tuple[str, ...] = (
     "stage", "phase", "priority", "severity", "name", "email", "phone", "channel", "budget",
     "price", "quota", "schedule", "deadline", "language", "framework", "runtime", "provider",
     "vendor", "license", "currency",
-)
+) + DEV_ATTRIBUTES
 
 #: Spelling variants folded onto one attribute key.
 ATTRIBUTE_SYNONYMS: dict[str, str] = {
     "db": "database", "data store": "datastore", "data center": "datacenter",
     "hostname": "host", "dept": "department",
+    # Personal details written several ways.
+    "phone number": "phone", "mobile": "phone", "mobile number": "phone", "email address": "email",
+    "date of birth": "birthday", "birthdate": "birthday", "dob": "birthday", "home address": "address",
+    "home town": "hometown", "time zone": "timezone", "mum": "mother", "mom": "mother", "dad": "father",
+    "allergies": "allergy", "configuration file": "config file", "entrypoint": "entry point",
 }
 
 # Longest first so "availability zone" wins over "zone".
@@ -51,7 +58,14 @@ VALUE = (
     r"(?P<value>[^;()]+?)"
     r"(?=\s*(?:[;()]|,(?:\s|$)|\.(?:\s|$)|$)"
     r"|\s+(?:and|but|because|after|before|since|on|at|as\s+of|effective|following|due\s+to|until"
-    r"|while|when|which|per|instead\s+of|from|for|with|via|so|then)\b)"
+    r"|while|when|which|instead\s+of|from|for|with|via|so|then)\b"
+    # "in" + a time ends a value ("relocated to Accra in June"); "in staging" does not.
+    r"|\s+in\s+(?:early\s+|late\s+|mid-?)?(?:\d{4}|jan(?:uary)?|feb(?:ruary)?|march|april|may|june|july"
+    r"|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|spring|summer|autumn|fall|winter"
+    r"|q[1-4])\b"
+    # "per" ends a value ("... per the runbook") except after an amount, where
+    # it is part of the unit: "$79 per month", "42 euros per square metre".
+    r"|(?<![\d%])(?<!euros)(?<!euro)(?<!dollars)(?<!pounds)(?<!EUR)(?<!USD)(?<!GBP)\s+per\b)"
 )
 ATTRIBUTE = rf"(?P<attribute>{_ATTR_ALT})"
 #: Optional auxiliaries before a past-tense verb ("was moved", "has been moved").

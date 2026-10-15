@@ -31,6 +31,7 @@ from mark.intelligence.fact_extraction.rules import (  # noqa: F401  (re-exporte
     _AUX,
     _DET,
 )
+from mark.intelligence.fact_extraction.packs_people import PEOPLE_PACKS
 
 _CHANGE_VERBS = (r"moved|changed|switched|migrated|transferred|relocated|reassigned|shifted|updated"
                  r"|upgraded|downgraded|renamed|bumped|rehomed|re-homed|repointed|re-pointed")
@@ -42,6 +43,9 @@ CHANGES = RulePack(
         rf"^{{S}}\s+{_AUX}(?P<verb>{_CHANGE_VERBS})"
         rf"(?:\s+(?:{_DET}\s+)?{{A}}|\s+{_DET}\s+(?P<attribute_free>(?!(?:from|to|into|onto)\b)[a-z][\w-]*))?"
         r"(?:\s+from\s+(?P<old>.+?))?\s+(?:to|into|onto)\s+{V}",
+        # Actor first: "We migrated tasky from MySQL to SQLite" (the products name the attribute).
+        rf"^(?:we|i|they|the\s+team|(?-i:[A-Z])[\w'-]*(?:\s+(?-i:[A-Z])[\w'-]*){{0,2}})\s+(?:have\s+|had\s+)?(?P<verb>{_CHANGE_VERBS})\s+(?:the\s+)?"
+        r"(?P<subject>[^\W_][\w.@/+-]*)\s+from\s+(?P<old>.+?)\s+(?:to|into|onto)\s+{V}",
     ),
     # No default for "moved": "the meeting moved to Thursday" is not a location.
     verb_attributes={"relocated": "location", "rehomed": "location",
@@ -116,7 +120,8 @@ LISTENING = RulePack(
     name="listening",
     # "X listens on (port) 8080": a bare number after listen/bind is a port.
     patterns=(rf"^{{S}}\s+{NOW}(?:listens|binds|is\s+(?:now\s+)?(?:listening|bound))\s+(?:on|to)\s+(?:port\s+)?"
-              r"(?P<value>\d{2,5})(?![\d.:])",),
+              r"(?P<value>\d{2,5})(?![\d.:])",
+              rf"^{{S}}\s+{NOW}(?:uses|is\s+using|exposes|serves\s+on)\s+(?:tcp\s+|udp\s+)?port\s+(?P<value>\d{{2,5}})(?![\d.:])",),
     attribute="port",
     confidence=0.8,
 )
@@ -185,14 +190,15 @@ REPORTING = RulePack(
 KEY_VALUE = RulePack(
     name="key_value",
     patterns=(
-        r"^{S}\s+{A}\s*(?::|=|->|is\s+now|is\s+set\s+to|is)\s*{V}",
+        r"^{S}\s+{A}\s*(?::|=|->|is\s+now|is\s+set\s+to|is\s+(?:capped|set|fixed|limited|pegged)\s+(?:at|to)|is)\s*{V}",
         r"^(?P<subject>[^\W_][\w-]*)\.(?P<attribute_free>[a-z][\w-]*)\s*=\s*{V}",
     ),
     confidence=0.7,
 )
 
 #: The built-in packs, in the order they are tried (earlier packs win a slot).
+#: People/thing packs (preferences, prices, ...) live in :mod:`.packs_people`.
 BUILTIN_PACKS: tuple[RulePack, ...] = (STATUS, OWNERSHIP, ASSIGNMENT, MEMBERSHIP, CHANGES,
                                        LISTENING, REGION, PLACEMENT, LOCATION,
-                                       DATASTORE, REPORTING, KEY_VALUE)
+                                       DATASTORE, REPORTING, *PEOPLE_PACKS, KEY_VALUE)
 PACKS_BY_NAME: dict[str, RulePack] = {pack.name: pack for pack in BUILTIN_PACKS}
