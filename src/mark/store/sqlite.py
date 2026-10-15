@@ -43,6 +43,7 @@ from mark.store._sqlite.codec import (  # noqa: F401 - re-exported for compatibi
 )
 from mark.store._sqlite.connection import ConnectionMixin
 from mark.store._sqlite.events import EventMixin
+from mark.store._sqlite.fact_jobs import FactJobMixin
 from mark.store._sqlite.facts import FactMixin
 from mark.store._sqlite.fragment_reads import FragmentReadMixin
 from mark.store._sqlite.fragments import FragmentWriteMixin
@@ -63,6 +64,7 @@ class LocalMemoryStore(
     BlockMixin,
     GraphMixin,
     FactMixin,
+    FactJobMixin,
     EventMixin,
     RowDecodingMixin,
     SchemaMixin,
