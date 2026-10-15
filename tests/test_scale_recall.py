@@ -42,12 +42,13 @@ def big_store(tmp_path, monkeypatch):
     store.close()
 
 
-def test_query_terms_drop_stopwords_but_keep_identifiers() -> None:
+def test_query_terms_put_stopwords_last_and_keep_identifiers() -> None:
     assert ascii_query_terms("Why was svc-0042 restarted after the outage?") == [
-        "svc", "0042", "restarted", "after", "outage",
+        "svc", "0042", "restarted", "after", "outage", "why", "was", "the",
     ]
-    assert ascii_query_terms("who is it") == ["who", "is", "it"]  # all stopwords: kept
-    assert ascii_query_terms("Where is the café?") == ["cafe"]  # folded for the porter table
+    assert ascii_query_terms("who is it") == ["who", "is", "it"]
+    assert len(ascii_query_terms(" ".join(f"w{i}" for i in range(30)) + " the")) == 16
+    assert ascii_query_terms("Where is the café?")[0] == "cafe"  # folded for the porter table
 
 
 def test_planned_search_finds_rare_terms_and_ranks_by_the_rest(big_store) -> None:

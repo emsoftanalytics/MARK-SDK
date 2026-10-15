@@ -102,13 +102,15 @@ def multilingual_phrase(text: str) -> str | None:
 
 
 def ascii_query_terms(text: str, limit: int = 16) -> list[str]:
-    """Distinct ASCII words of a query for the porter table, stopwords removed.
+    """Distinct ASCII words of a query for the porter table, content words first.
 
     Accented Latin words are folded ("café" -> "cafe") so they still match
     the porter table, which folds diacritics too; words that do not fold to
     ASCII are left to the multilingual table. Single characters are dropped
-    unless they are digits. When every word is a stopword the stopwords are
-    kept, so "who is it" still searches.
+    unless they are digits. Stopwords are kept but ordered last, so the cap
+    never drops a content word: on small indexes they still add their (small)
+    BM25 weight, as before, and on large ones the query planner turns them
+    into cheap ranking-only terms or drops them (see fts_query).
     """
     words: list[str] = []
     for word in _WORD.findall(text.lower()):
@@ -118,8 +120,8 @@ def ascii_query_terms(text: str, limit: int = 16) -> list[str]:
                 continue
         if len(word) >= 2 or word.isdigit():
             words.append(word)
-    content = [word for word in words if word not in _STOPWORDS] or words
-    return list(dict.fromkeys(content))[:limit]
+    ordered = [w for w in words if w not in _STOPWORDS] + [w for w in words if w in _STOPWORDS]
+    return list(dict.fromkeys(ordered))[:limit]
 
 
 def fts_quote(token: str) -> str:
