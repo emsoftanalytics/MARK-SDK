@@ -13,26 +13,25 @@ insertion order); scores agree to float32 precision.
 once the index holds ``AUTO_NUMPY_THRESHOLD`` vectors, if numpy is installed.
 Importing numpy costs 0.2–0.7 s, far more than scoring a few thousand vectors
 in Python, so short-lived processes with small stores never pay for it.
+
+The scoring backends live in ``vector_backends`` and the file format in
+``vector_storage``; this module owns the index itself (partitioning,
+locking, auto-promotion, persistence API) and re-exports the helpers.
 """
 from __future__ import annotations
 
-import heapq
 import json
-import math
-import operator
-import os
-import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 
-_FORMAT = "mark.vector-index"
-_FORMAT_VERSION = 2
-
-_sumprod = getattr(math, "sumprod", None)  # Python 3.12+
+# _dot and _sumprod are not used here; they stay importable from this module.
+from mark.index.vector_backends import _NumpyPartition, _PythonPartition, _dot, _normalize, _sumprod
+from mark.index.vector_storage import _FORMAT, _FORMAT_VERSION, _write_json_atomic
 
 #: Vector count at which ``backend="auto"`` switches to numpy (when installed).
+#: Read at call time from this module's globals, so it can be patched in tests.
 AUTO_NUMPY_THRESHOLD = 2048
 
 
@@ -49,134 +48,12 @@ class VectorSearchResult:
 
 
 def _load_numpy() -> Any | None:
+    """Import numpy on demand; None when it is not installed (or fails to import)."""
     try:
         import numpy  # type: ignore[import-not-found]
     except Exception:  # pragma: no cover - exercised when numpy is absent
         return None
     return numpy
-
-
-class _PythonPartition:
-    """Vectors for one agent, scored in pure Python."""
-
-    def __init__(self) -> None:
-        self.vectors: dict[str, list[float]] = {}
-
-    def add(self, fragment_id: str, vector: list[float]) -> None:
-        self.vectors[fragment_id] = vector
-
-    def remove(self, fragment_id: str) -> None:
-        self.vectors.pop(fragment_id, None)
-
-    def get(self, fragment_id: str) -> list[float] | None:
-        vector = self.vectors.get(fragment_id)
-        return None if vector is None else list(vector)
-
-    def snapshot(self) -> Any:
-        # Vectors are never mutated in place, so a shallow copy is consistent.
-        return list(self.vectors.items())
-
-    @staticmethod
-    def top(snapshot: Any, query: list[float], top_k: int, include_ids: set[str] | None) -> list[tuple[float, int, str]]:
-        scored = [
-            (_dot(query, vector), position, fragment_id)
-            for position, (fragment_id, vector) in enumerate(snapshot)
-            if include_ids is None or fragment_id in include_ids
-        ]
-        return heapq.nlargest(top_k, scored, key=lambda item: (item[0], -item[1]))
-
-    def __len__(self) -> int:
-        return len(self.vectors)
-
-
-class _NumpyPartition:
-    """Vectors for one agent, scored with a lazily (re)built float32 matrix."""
-
-    def __init__(self, np: Any, dim: int) -> None:
-        self._np = np
-        self._dim = dim
-        self.vectors: dict[str, Any] = {}
-        self._matrix: Any = None
-        self._ids: list[str] = []
-        self._pos: dict[str, int] = {}
-        self._size = 0
-        self._dirty = True
-
-    def add(self, fragment_id: str, vector: list[float]) -> None:
-        row = self._np.asarray(vector, dtype=self._np.float32)
-        replacing = fragment_id in self.vectors
-        self.vectors[fragment_id] = row
-        if replacing or self._dirty or self._matrix is None or self._size >= self._matrix.shape[0]:
-            self._dirty = True
-            return
-        # Append in place: rows below a snapshot's size are never touched, so
-        # concurrent searches on an older snapshot stay consistent.
-        self._matrix[self._size] = row
-        self._ids.append(fragment_id)
-        self._pos[fragment_id] = self._size
-        self._size += 1
-
-    def remove(self, fragment_id: str) -> None:
-        if self.vectors.pop(fragment_id, None) is not None:
-            self._dirty = True
-
-    def get(self, fragment_id: str) -> list[float] | None:
-        row = self.vectors.get(fragment_id)
-        return None if row is None else [float(value) for value in row.tolist()]
-
-    def _rebuild(self) -> None:
-        np = self._np
-        count = len(self.vectors)
-        capacity = max(16, int(count * 1.5))
-        matrix = np.zeros((capacity, self._dim), dtype=np.float32)
-        if count:
-            matrix[:count] = np.stack(list(self.vectors.values()))
-        # New objects: snapshots holding the old ones remain valid.
-        self._matrix = matrix
-        self._ids = list(self.vectors)
-        self._pos = {fragment_id: row for row, fragment_id in enumerate(self._ids)}
-        self._size = count
-        self._dirty = False
-
-    def snapshot(self) -> Any:
-        if self._dirty or self._matrix is None:
-            self._rebuild()
-        return (self._matrix, self._ids, self._pos, self._size)
-
-    def top(self, snapshot: Any, query: Any, top_k: int, include_ids: set[str] | None) -> list[tuple[float, int, str]]:
-        np = self._np
-        matrix, ids, pos, size = snapshot
-        if size == 0:
-            return []
-        if include_ids is None:
-            rows = None
-            scores = matrix[:size] @ query
-        else:
-            selected = [row for row in (pos.get(fid) for fid in include_ids) if row is not None and row < size]
-            if not selected:
-                return []
-            rows = np.fromiter(sorted(selected), dtype=np.int64, count=len(selected))
-            if len(selected) * 8 < size:
-                scores = matrix[rows] @ query  # small subset: copy only those rows
-            else:
-                scores = (matrix[:size] @ query)[rows]  # large subset: one matvec is cheaper
-        count = scores.shape[0]
-        if top_k < count:
-            # Keep every candidate tied with the k-th score so tie-breaking by
-            # insertion order matches the pure-Python backend exactly.
-            kth = np.partition(scores, count - top_k)[count - top_k]
-            candidates = np.nonzero(scores >= kth)[0]
-        else:
-            candidates = np.arange(count)
-        positions = candidates if rows is None else rows[candidates]
-        order = np.lexsort((positions, -scores[candidates]))[:top_k]
-        return [
-            (float(scores[candidates[i]]), int(positions[i]), ids[int(positions[i])])
-            for i in order
-        ]
-
-    def __len__(self) -> int:
-        return len(self.vectors)
 
 
 class VectorIndex:
@@ -240,6 +117,7 @@ class VectorIndex:
             partition.add(fragment_id, vector)
             self._owner[fragment_id] = agent_id
             self._content[fragment_id] = content
+            # Promotion is checked on the total vector count, across all agents.
             if self._auto and len(self._owner) >= AUTO_NUMPY_THRESHOLD:
                 self._promote_to_numpy()
 
@@ -351,21 +229,7 @@ class VectorIndex:
                 "content": dict(self._content),
                 "agents": dict(self._owner),
             }
-        target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=str(target.parent))
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(data, handle, sort_keys=True)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp_name, target)
-        except BaseException:
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
-            raise
+        _write_json_atomic(Path(path), data)
 
     @classmethod
     def load(cls, path: str | Path, *, backend: str = "auto") -> "VectorIndex":
@@ -396,7 +260,11 @@ class VectorIndex:
         return True
 
     def _promote_to_numpy(self) -> None:
-        """Switch every partition to the numpy backend (caller holds the lock)."""
+        """Switch every partition to the numpy backend (caller holds the lock).
+
+        Searches already running keep scoring their Python snapshots; since
+        both backends share the same ordering contract, results don't change.
+        """
         self._auto = False  # decide once, whether or not numpy is available
         np = _load_numpy()
         if np is None or self._dim is None:
@@ -422,17 +290,3 @@ class VectorIndex:
         partition.remove(fragment_id)
         if not len(partition):
             del self._partitions[owner]
-
-
-def _normalize(vector: Iterable[float]) -> list[float]:
-    values = [float(value) for value in vector]
-    norm = math.sqrt(_dot(values, values))
-    if norm == 0:
-        return values
-    return [value / norm for value in values]
-
-
-def _dot(left: Sequence[float], right: Sequence[float]) -> float:
-    if _sumprod is not None:
-        return float(_sumprod(left, right))
-    return float(sum(map(operator.mul, left, right)))

@@ -27,51 +27,38 @@ doesn't know instead of improvising.
     ...
     system_prompt += watch.briefing().text   # before every model call
     watch.observe(model_output, role="assistant")
+
+The background machinery lives in ``watch_prefetch`` and the data types and
+text helpers in ``watch_support``; both are re-exported here.
 """
 from __future__ import annotations
 
 import logging
-import re
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass, field
 from typing import Any
+
+from mark.context.watch_prefetch import _WatchPrefetchMixin
+# Some of these are not used here; they stay importable from this module.
+from mark.context.watch_support import (
+    _ROLES,
+    _TOKEN_RE,
+    Briefing,
+    _Anchor,
+    _anchor_norm,
+    _contains_anchor,
+    _label_for,
+    _mentions_value,
+    _one_line,
+    _timeline_key,
+    _wait,
+)
 
 logger = logging.getLogger("mark.context.watch")
 
-_ROLES = {"user", "assistant", "tool", "system"}
-_TOKEN_RE = re.compile(r"\w+")
 
-
-@dataclass
-class _Anchor:
-    key: str                    # normalised ("atlas core")
-    label: str                  # as first seen ("atlas-core")
-    first_turn: int
-    last_turn: int
-    last_seq: int = 0           # event sequence of the latest mention (recency order)
-    mentions: int = 1
-    known: bool | None = None   # None until a prefetch has answered
-    linked: bool = False        # anticipated via a link, not mentioned by anyone yet
-
-
-@dataclass(frozen=True)
-class Briefing:
-    """What the watch would put in front of the model right now."""
-    text: str
-    anchors: list[str] = field(default_factory=list)
-    corrections: list[str] = field(default_factory=list)
-    unknown: list[str] = field(default_factory=list)
-    memory_ids: list[str] = field(default_factory=list)
-    pending: int = 0            # prefetches still running (briefing may be incomplete)
-    latency_ms: float = 0.0
-
-    def __bool__(self) -> bool:
-        return bool(self.text)
-
-
-class ContextWatch:
+class ContextWatch(_WatchPrefetchMixin):
     """Follows an agent's stream and keeps anticipated context ready.
 
     memory          a ``MarkMemory`` (``runtime.memory(agent_id)``)
@@ -107,6 +94,7 @@ class ContextWatch:
         self._seq = 0
         self.follow_links = 3   # linked subjects prefetched per new anchor (0 disables)
         self._pending: set[Future] = set()
+        # One worker: prefetches run in order and never compete with each other.
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mark-watch") if background else None
         self._subjects_cache: tuple[float, set[str]] = (0.0, set())
 
@@ -140,6 +128,8 @@ class ContextWatch:
                     anchor.last_seq = self._seq
                     anchor.mentions += 1
             self._expire(turn)
+            # Only *new* anchors are prefetched; a user message also refreshes
+            # the results for the request as a whole.
             queries = [self._anchors[key].label for key in new]
             task = self._task if role == "user" else None
         if role == "assistant":
@@ -169,6 +159,8 @@ class ContextWatch:
         started = time.perf_counter()
         if wait > 0:
             self.flush(timeout=wait)
+        # Snapshot shared state under the lock, then render without holding it,
+        # so a running prefetch is never blocked by (or blocks) a briefing.
         with self._lock:
             # Mentioned subjects first (most recent first), anticipated links after.
             active = sorted(
@@ -276,165 +268,3 @@ class ContextWatch:
 
     def __exit__(self, *_: Any) -> None:
         self.close()
-
-    # ── internals ─────────────────────────────────────────────────────────────
-
-    def _extract_anchors(self, text: str) -> list[tuple[str, str]]:
-        from mark.intelligence.retrieval import _anchor_norm, _contains_anchor, query_anchors
-
-        found: dict[str, str] = {}
-        for key in query_anchors(text):
-            found.setdefault(key, _label_for(text, key))
-        # Known fact subjects are anchors even when written plainly ("pulse metrics").
-        normalised = _anchor_norm(text)
-        for subject in self._known_subjects():
-            if subject not in found and _contains_anchor(normalised, subject):
-                found[subject] = _label_for(text, subject)
-        return list(found.items())
-
-    def _known_subjects(self) -> set[str]:
-        stamp, subjects = self._subjects_cache
-        if time.monotonic() - stamp < 5.0:
-            return subjects
-        try:
-            subjects = set(self._memory.facts.subjects())
-        except Exception:  # stores without facts
-            subjects = set()
-        self._subjects_cache = (time.monotonic(), subjects)
-        return subjects
-
-    def _expire(self, turn: int) -> None:
-        for key in [k for k, a in self._anchors.items() if turn - a.last_turn > self.ttl_turns]:
-            self._anchors.pop(key, None)
-            self._results.pop(key, None)
-
-    def _schedule(self, queries: list[str], task: str | None) -> None:
-        if self._executor is None:
-            self._prefetch(queries, task)
-            return
-        future = self._executor.submit(self._prefetch, queries, task)
-        with self._lock:
-            self._pending.add(future)
-        future.add_done_callback(self._done)
-
-    def _done(self, future: Future) -> None:
-        with self._lock:
-            self._pending.discard(future)
-        error = future.exception()
-        if error is not None:
-            logger.warning("context watch prefetch failed: %s", error)
-
-    def _prefetch(self, queries: list[str], task: str | None) -> None:
-        batch = list(queries) + ([task] if task else [])
-        if not batch:
-            return
-        results = self._memory.retrieve_many_sync(batch)
-        from mark.intelligence.retrieval import _anchor_norm
-
-        links: list[str] = []
-        with self._lock:
-            for query, result in zip(queries, results):
-                key = _anchor_norm(query)
-                self._results[key] = result
-                anchor = self._anchors.get(key)
-                if anchor is not None:
-                    anchor.known = key not in result.missing_anchors
-                    if anchor.known and not anchor.linked and self.follow_links:
-                        links.extend(self._links_from(anchor, result))
-            if task:
-                self._task_results = {task: results[-1]}
-        if links:
-            self._prefetch(links, None)
-
-    def _links_from(self, anchor: _Anchor, result: Any) -> list[str]:
-        """Subjects named by the anchor's best records: likely next questions (caller holds lock)."""
-        from mark.intelligence.retrieval import _anchor_norm, _contains_anchor
-
-        labels: list[str] = []
-        for fragment in result.fragments[:3]:
-            if not _contains_anchor(_anchor_norm(fragment.content), anchor.key):
-                continue
-            for key, label in self._extract_anchors(fragment.content):
-                # Only multi-part identifiers (atlas-core, HAL-4433, Mei Lin) are
-                # worth anticipating; short codes and numbers (SEV1, 502) are not.
-                if " " not in key or not re.search(r"[a-z]", key) or key == anchor.key or key in self._anchors:
-                    continue
-                if len(labels) >= self.follow_links:
-                    break
-                self._anchors[key] = _Anchor(key, label, self._turn, self._turn,
-                                             last_seq=anchor.last_seq, linked=True)
-                labels.append(label)
-        return labels
-
-    def _check_claims(self, text: str, keys: list[str]) -> None:
-        """Flag values the agent states that memory knows were superseded."""
-        lowered = text.lower()
-        tokens = set(_TOKEN_RE.findall(lowered))
-        try:
-            facts_view = self._memory.facts
-        except Exception:
-            return
-        for key in keys:
-            try:
-                current = facts_view.current(key)
-            except Exception:
-                return
-            for fact in current:
-                if fact.value.lower() in lowered:
-                    self._corrections.pop(f"{key}|{fact.attribute}", None)
-                    continue
-                history = facts_view.history(fact.subject, fact.attribute)
-                stale = [old for old in history[:-1] if _mentions_value(old.value, lowered, tokens)]
-                if stale:
-                    self._corrections[f"{key}|{fact.attribute}"] = (
-                        f"{fact.subject} {fact.attribute} is {fact.value} now "
-                        f"(since {fact.valid_from.date().isoformat()}); "
-                        f"{stale[-1].value} is outdated."
-                    )
-
-
-def _anchor_norm(text: str) -> str:
-    from mark.intelligence.retrieval import _anchor_norm as norm
-
-    return norm(text)
-
-
-def _contains_anchor(content_norm: str, anchor: str) -> bool:
-    from mark.intelligence.retrieval import _contains_anchor as contains
-
-    return contains(content_norm, anchor)
-
-
-def _timeline_key(fragment: Any) -> tuple[int, str]:
-    from mark.intelligence.retrieval import declared_event_time
-
-    when = declared_event_time(fragment)
-    return (1, when.isoformat()) if when is not None else (0, "")
-
-
-def _mentions_value(value: str, lowered: str, tokens: set[str]) -> bool:
-    value = value.lower().strip()
-    if not value:
-        return False
-    if re.fullmatch(r"\w+", value):
-        return value in tokens
-    return value in lowered
-
-
-def _label_for(text: str, key: str) -> str:
-    """The anchor as written in the text (e.g. 'atlas-core'), falling back to the key."""
-    pattern = r"(?<!\w)" + r"[\W_]+".join(re.escape(part) for part in key.split()) + r"(?!\w)"
-    match = re.search(pattern, text, re.IGNORECASE)
-    return match.group(0) if match else key
-
-
-def _one_line(text: str, limit: int = 240) -> str:
-    text = " ".join(text.split())
-    return text if len(text) <= limit else text[: limit - 1] + "…"
-
-
-def _wait(future: Future, timeout: float | None) -> None:
-    try:
-        future.exception(timeout=timeout)
-    except Exception:
-        pass
