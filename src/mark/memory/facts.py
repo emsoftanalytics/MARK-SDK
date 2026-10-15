@@ -113,6 +113,12 @@ class FactsView:
             self._agent_id, subject, attribute, value=None if value is None else str(value),
         )
 
+    def delete(self, subject: str, attribute: str | None = None, *, value: Any = None) -> int:
+        """Hard-delete facts (nothing kept for audit, unlike retract); returns how many."""
+        return self._store.fact_delete(
+            self._agent_id, subject, attribute, value=None if value is None else str(value),
+        )
+
     def extract_pending(self, *, limit: int | None = None, wait: float | bool = True) -> int:
         """Finish this agent's background extraction jobs now; returns how many finished.
 
