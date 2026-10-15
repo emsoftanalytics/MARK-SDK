@@ -1,11 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
-"""SimpleMemory: the ergonomic block/write/retrieve surface for scripts.
+"""SimpleMemory: ``mark.memory``, the ergonomic surface for scripts and apps.
 
 Everything is stored under one reserved agent (``__mark__``) of the full
-MarkRuntime; blocks are tag scopes (see :mod:`mark.memory.simple_block`) and
-graph helpers are forwarded by :mod:`mark.memory.simple_graph`. ``SimpleBlock``
-and ``_fragment_to_record`` are re-exported here for backward compatibility.
+MarkRuntime. The canonical verbs (remember / recall / forget / list / get /
+update / supersede / resolve / facts / timeline / export ...) come from
+:mod:`mark.memory.simple_verbs` and match ``runtime.memory(id)`` exactly;
+blocks are tag scopes (see :mod:`mark.memory.simple_block`) and graph helpers
+are forwarded by :mod:`mark.memory.simple_graph`. ``retrieve`` (returning a
+:class:`ContextBundle`) is the historical read and keeps working.
+``SimpleBlock`` and ``_fragment_to_record`` are re-exported for compatibility.
 """
 from __future__ import annotations
 
@@ -17,6 +21,7 @@ from mark.memory.observe import ObserveResult
 from mark.memory.record import MemoryRecord, MemoryState  # noqa: F401  (MemoryState re-export)
 from mark.memory.simple_block import SimpleBlock, _fragment_to_record
 from mark.memory.simple_graph import SimpleGraphMixin
+from mark.memory.simple_verbs import SimpleVerbsMixin
 from mark.types import MemoryTier
 from mark.types.graph import EdgeRelation, NodeType  # noqa: F401  (re-export)
 
@@ -24,7 +29,7 @@ from mark.types.graph import EdgeRelation, NodeType  # noqa: F401  (re-export)
 _SIMPLE_AGENT = "__mark__"
 
 
-class SimpleMemory(SimpleGraphMixin):
+class SimpleMemory(SimpleVerbsMixin, SimpleGraphMixin):
     """
     Simple memory API — the surface exposed by Mark.local().
 
@@ -33,9 +38,9 @@ class SimpleMemory(SimpleGraphMixin):
     with their block label so block-scoped retrieval works correctly.
 
     Simple path:
+        mark.memory.remember("We use FastAPI.", kind="decision")
+        print(mark.memory.recall("Which framework?").as_context())
         mark.memory.block("project").write("FastAPI is used.", importance=0.9)
-        bundle = mark.memory.retrieve("Which framework?")
-        print(bundle.as_text())
 
     Advanced path (bypass SimpleMemory, use MarkRuntime directly):
         agent = mark.runtime.memory("coding-agent")
@@ -49,21 +54,28 @@ class SimpleMemory(SimpleGraphMixin):
         from mark.memory.mark_memory import MarkMemory
         self._runtime:     Any       = runtime
         self._mark_memory: MarkMemory = runtime.memory(_SIMPLE_AGENT)
+        # Block names created in this process (block()) or seen in the store;
+        # retrieve/recall(blocks=[...]) rejects names outside this set.
+        self._known_blocks: set[str] = set()
 
     # ── block API ─────────────────────────────────────────────────────────────
 
     def block(self, label: str, *, kind: str = "custom",
               description: str = "") -> SimpleBlock:
-        """Return (creating if needed) the named block."""
-        return SimpleBlock(label=label, mark_memory=self._mark_memory)
+        """Return (creating if needed) the named block.
+
+        ``kind`` labels the block (reported by ``to_dict()`` and stored as
+        ``metadata["block_kind"]`` on its writes); when it names a memory kind
+        (``"preference"``, ``"todo"``... see :data:`mark.kinds.KINDS`) every
+        write in the block is also stored with that kind.
+        """
+        self._known_blocks.add(label)
+        return SimpleBlock(label=label, mark_memory=self._mark_memory,
+                           kind=kind, description=description)
 
     def list_blocks(self) -> list[SimpleBlock]:
-        """Return unique blocks discovered from stored fragment tags."""
-        labels: set[str] = set()
-        for f in self._mark_memory.list():
-            for tag in f.tags:
-                if tag.startswith("block:"):
-                    labels.add(tag[6:])
+        """Return every block that holds at least one memory (no cap)."""
+        labels = {tag[6:] for tag in self._mark_memory._store.tag_values(_SIMPLE_AGENT, "block:")}
         return [SimpleBlock(label=lb, mark_memory=self._mark_memory)
                 for lb in sorted(labels)]
 
@@ -96,7 +108,13 @@ class SimpleMemory(SimpleGraphMixin):
         heal_gaps       — after session and agent misses, run explicit basic web lookup
         compress        — apply contextual compressor (requires compressor configured)
         expand          — apply query expansion for improved recall
+
+        Unknown block names raise :class:`mark.errors.UnknownBlockError`.
+        Prefer :meth:`recall` (same filters, returns a RetrievalResult).
         """
+        if blocks:
+            self._check_blocks(blocks)
+
         def _retrieve(tag_filter: list[str] | None) -> Any:
             return self._mark_memory.retrieve_sync(
                 query,
@@ -143,24 +161,26 @@ class SimpleMemory(SimpleGraphMixin):
         memories: list[MemoryRecord]     = []
         score_map: dict[str, float]      = {}
 
+        used = len(lines[0])
         for frag, score in zip(fragments, scores):
             # Determine the block label from tags so MemoryRecord.block_id is correct
             block_label = next(
                 (t[6:] for t in frag.tags if t.startswith("block:")), "default"
             )
             record = _fragment_to_record(frag, block_label)
-            line = (
-                f"- [{record.source}] {record.content} "
-                f"(importance={record.importance:.2f}, "
-                f"confidence={record.confidence:.2f}, score={score:.3f})"
-            )
+            # Content only: source/importance/confidence/score labels cost
+            # tokens and confused readers; scores stay in ``bundle.scores``.
+            line = f"- {record.content}"
+            if used + 1 + len(line) > max_chars:
+                if len(lines) == 1:  # never return an empty context for one long memory
+                    lines.append(line[: max(0, max_chars - used - 1)])
+                break
+            used += 1 + len(line)
             lines.append(line)
             memories.append(record)
             score_map[record.id] = score
 
         text = "\n".join(lines)
-        if len(text) > max_chars:
-            text = text[:max_chars]
 
         return ContextBundle(
             query          = query,

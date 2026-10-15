@@ -10,6 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from mark._cli.engine_ops import EngineOpsMixin, memory_json
+
 
 def protocol_fingerprint() -> str:
     """Identity of the command interface: package version + every command's parameters.
@@ -30,8 +32,13 @@ def protocol_fingerprint() -> str:
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
 
 
-class _Engine:
-    """Loads MARK lazily and executes commands against one database."""
+class _Engine(EngineOpsMixin):
+    """Loads MARK lazily and executes commands against one database.
+
+    Read/write basics live here; lifecycle and data-management commands
+    (forget, resolve, supersede, list, export, import, brief, agents) come
+    from :class:`mark._cli.engine_ops.EngineOpsMixin`.
+    """
 
     def __init__(self, db: Path) -> None:
         from mark._private_fs import ensure_private_dir
@@ -54,25 +61,52 @@ class _Engine:
         return self.runtime.memory(agent)
 
     def cmd_ingest(self, agent: str, lines: list[str], session: str | None = None,
-                   tags: list[str] | None = None, extract_facts: bool = False) -> dict[str, Any]:
+                   tags: list[str] | None = None, extract_facts: bool = False,
+                   kind: str | None = None) -> dict[str, Any]:
+        from mark.kinds import kind_tag, normalize_kind
+
         texts = [line.strip() for line in lines if line.strip()]
+        kind = normalize_kind(kind)
+        all_tags = [*(tags or []), *([kind_tag(kind)] if kind else [])]
         # extract_facts=True: built-in pattern packs, each line's "[YYYY-MM-DD]" stamp as valid_from.
-        ids = self._memory(agent).store_many_sync(texts, session_id=session, tags=tags or None,
+        ids = self._memory(agent).store_many_sync(texts, session_id=session, tags=all_tags or None,
                                                   extract_facts=True if extract_facts else None)
         if not extract_facts:
             return {"stored": len(ids)}
-        return {"stored": len(ids), "facts": len(self.runtime.store.fact_current(agent))}
+        # Facts this call extracted (not the store-wide total).
+        return {"stored": len(ids), "extracted": self.runtime.store.facts_from_fragments(agent, ids),
+                "facts": len(self.runtime.store.fact_current(agent))}
 
     def cmd_store(self, agent: str, text: str, session: str | None = None,
-                  occurred_at: str | None = None, importance: float = 0.8) -> dict[str, Any]:
-        fid = self._memory(agent).store_sync(
-            text, session_id=session, occurred_at=occurred_at, importance=importance,
-        )
-        return {"id": fid}
+                  occurred_at: str | None = None, importance: float | None = None,
+                  kind: str | None = None, tags: list[str] | None = None,
+                  extract_facts: bool = False) -> dict[str, Any]:
+        from mark.kinds import DEFAULT_IMPORTANCE
 
-    def cmd_recall(self, agent: str, query: str, k: int = 10,
-                   order: str = "relevance") -> dict[str, Any]:
-        return self.cmd_recall_many(agent, [query], k, order)["results"][0]
+        memory = self._memory(agent)
+        fid = memory.remember(
+            text, session_id=session, occurred_at=occurred_at, kind=kind, tags=tags,
+            importance=DEFAULT_IMPORTANCE if importance is None else importance,
+            extract_facts=True if extract_facts else None,
+        )
+        result: dict[str, Any] = {"id": fid}
+        if extract_facts:
+            result["extracted"] = self.runtime.store.facts_from_fragments(agent, [fid])
+        return result
+
+    cmd_remember = cmd_store
+
+    def cmd_recall(self, agent: str, query: str, k: int = 10, order: str = "relevance",
+                   session: str | None = None, since: str | None = None, until: str | None = None,
+                   tags: list[str] | None = None, kind: str | None = None) -> dict[str, Any]:
+        if not any((session, since, until, tags, kind)):
+            return self.cmd_recall_many(agent, [query], k, order)["results"][0]
+        # Filtered recall goes through MarkMemory.recall (tag/kind/session
+        # pre-filters, since/until on event time).
+        k = max(1, min(int(k), 15))
+        result = self._memory(agent).recall(query, k=k, session_id=session, since=since,
+                                            until=until, tags=tags, kind=kind)
+        return _result_json(result, k, order)
 
     def cmd_recall_many(self, agent: str, queries: list[str], k: int = 10,
                         order: str = "relevance") -> dict[str, Any]:
@@ -111,8 +145,11 @@ class _Engine:
         return {"facts": [_fact_json(f) for f in self._memory(agent).facts.history(subject, attribute)]}
 
     def cmd_stats(self, agent: str) -> dict[str, Any]:
+        from mark.embeddings.info import embedder_info
+
         return {"memories": len(self.runtime.store.retrievable_ids(agent)),
-                "facts": len(self.runtime.store.fact_current(agent))}
+                "facts": len(self.runtime.store.fact_current(agent)),
+                "embedder": embedder_info(self.runtime.embedder).to_dict()}
 
 
 def _fact_json(fact: Any) -> dict[str, Any]:
@@ -133,17 +170,35 @@ def _result_json(result: Any, k: int, order: str = "relevance") -> dict[str, Any
         shown = [shown[i] for i, _ in fragment_order([fragment for fragment, _ in shown])]
     elif order != "relevance":
         raise ValueError(f"order must be 'relevance' or 'chronological', got {order!r}")
-    same_day = same_day_order([fragment for fragment, _ in shown])
+    fragments = [fragment for fragment, _ in shown]
+    same_day = same_day_order(fragments)
+    rows = [memory_json(fragment) for fragment in fragments]
+    _mark_shared_dates(fragments, rows)
+    for row, (fragment, score) in zip(rows, shown):
+        row["score"] = round(score, 3)
+        # Kept for JSON consumers of 0.2.0a9; the text output uses "order".
+        row["same_day"] = "{}/{}".format(*same_day[fragment.id]) if fragment.id in same_day else None
     return {
         "query": result.query,
         "facts": [_fact_json(f) for f in result.facts],
-        "memories": [
-            {"score": round(score, 3), "content": fragment.content, "id": fragment.id,
-             "same_day": "{}/{}".format(*same_day[fragment.id]) if fragment.id in same_day else None}
-            for fragment, score in shown
-        ],
+        "memories": rows,
         "gap": result.gap_report.severity.value,
         "gap_reason": result.gap_report.reason,
         "missing": list(result.missing_anchors),
         "temporal_intent": result.temporal_intent,
     }
+
+
+def _mark_shared_dates(fragments: list[Any], rows: list[dict[str, Any]]) -> None:
+    """Set ``order`` = k (oldest first) on results that share a date with another result."""
+    from mark.memory.timeline_order import fragment_order
+
+    by_date: dict[str, list[int]] = {}
+    for index, row in enumerate(rows):
+        row["order"] = None
+        by_date.setdefault(row["date"], []).append(index)
+    for indices in by_date.values():
+        if len(indices) > 1:
+            ranked = fragment_order([fragments[i] for i in indices])
+            for position, (local, _basis) in enumerate(ranked, start=1):
+                rows[indices[local]]["order"] = position

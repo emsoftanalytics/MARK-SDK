@@ -2,12 +2,30 @@
 
     mark [--db PATH] [--agent ID] [--no-server] <command> ...
 
-    ingest FILE [--session S] [--tag T ...]      store each non-empty line as a memory
-           [--extract-facts]                     ... and extract facts from each line
-    store TEXT [--session S] [--occurred-at T]   store one memory
-    recall QUERY [-k N] [--chronological] [--json]
+Write and revise
+    remember TEXT [--kind K] [--tag T ...] [--importance X] [--extract-facts]
+                  [--session S] [--occurred-at T]
+                                                 store one memory (`store` is an alias)
+    ingest FILE [--session S] [--tag T ...] [--kind K] [--extract-facts]
+                                                 store each non-empty line as a memory
+    forget ID [--secure] | forget --match TEXT   forget memories and the facts taken from
+                                                 them (--secure erases the text from disk)
+    resolve ID [--note TEXT]                     mark a TODO/bug as done
+    supersede ID TEXT                            replace a memory, keeping its history
+Read
+    recall QUERY [-k N] [--chronological] [--json] [--session S] [--since T]
+                 [--until T] [--tag T ...] [--kind K]
                                                  hybrid recall (facts first, then memories)
-    recall-many [FILE|-] [-k N] [--json]         one query per line (or a JSON list)
+    recall-many [FILE|-] [-k N] [--chronological] [--json]
+                                                 one query per line (or a JSON list)
+    list [--kind K] [--tag T ...] [--open] [--limit N] [--offset N] [--json]
+                                                 memories, most important first (--open
+                                                 hides resolved and superseded ones)
+    brief [--budget N] [--json]                  session-start brief: facts, open TODOs,
+                                                 recent decisions and bugs
+    timeline SUBJECT [ATTRIBUTE] [--limit N] [--since T] [--until T] [--json]
+                                                 everything about SUBJECT, oldest first
+Facts
     fact set SUBJECT ATTRIBUTE VALUE [--valid-from T] [--correction]
                                                  record a value (--correction replaces
                                                  the value(s) recorded for that time)
@@ -15,26 +33,35 @@
     fact history SUBJECT ATTRIBUTE               every value over time
     fact retract SUBJECT [ATTRIBUTE] [--value V] withdraw facts recorded by mistake
                                                  (kept for audit)
-    timeline SUBJECT [ATTRIBUTE] [--limit N] [--since T] [--until T] [--json]
-                                                 everything about SUBJECT, oldest first
-    stats                                        number of memories and current facts
-    serve [--host H] [--port N]                  keep MARK warm (loopback only)
+Data and processes
+    export FILE [--decrypt]                      back up the store (every agent unless
+                                                 --agent is given) as JSON Lines
+    import FILE                                  restore a backup (safe to repeat)
+    agents                                       agent namespaces in the store
+    stats                                        number of memories and current facts,
+                                                 and which embedder is active
+    serve [start|stop] [--host H] [--port N]     keep MARK warm (loopback only)
+    mcp [--briefing]                             run the MCP server (stdio) on this store
+
+KINDS for --kind: decision, todo, bug, fix, preference, snippet, api, note.
+IDs: recall and list print 8-character short ids; any unambiguous prefix works.
 
 The database comes from ``--db`` or ``$MARK_DB`` (default ``./.mark/memory.db``),
 the agent namespace from ``--agent`` or ``$MARK_AGENT`` (default ``__mark__``).
+``Mark.local(path)`` accepts the same database file.
 
 When ``mark serve`` is running for the same database, every other command is
 sent to it over loopback HTTP instead of loading MARK in-process (``--no-server``
 forces in-process): a call then costs one small Python start-up plus
-milliseconds of search, instead of importing and opening MARK each time. The server binds to loopback only and
-requires a random token stored next to the database in a 0600 state file.
+milliseconds of search. The server binds to loopback only and requires a
+random token stored next to the database in a 0600 state file.
 
 This module imports only the standard library at start-up; MARK itself is
 loaded lazily, and never on the client path when a server answers.
 
-Layout: this module holds the console entry point (argument parsing and
-output); configuration, the command engine, the server and the client live
-in :mod:`mark._cli` and are re-exported here.
+Layout: this module holds the console entry point; the parser, output,
+configuration, command engine, server and client live in :mod:`mark._cli`
+and are re-exported here.
 """
 from __future__ import annotations
 
@@ -46,14 +73,14 @@ from pathlib import Path
 from typing import Any
 
 # Everything below is re-exported: ``mark.cli.<name>`` is the historical path.
-from mark._cli.client import (
+from mark._cli.client import (  # noqa: F401
     _base_url,
     _call_server,
     _ingest_in_chunks,
     _live_server,
     execute,
 )
-from mark._cli.config import (
+from mark._cli.config import (  # noqa: F401
     _LOOPBACK,
     DEFAULT_AGENT,
     INGEST_CHUNK_BYTES,
@@ -63,8 +90,11 @@ from mark._cli.config import (
     _proof,
     _state_path,
 )
-from mark._cli.engine import _Engine, _fact_json, _result_json
-from mark._cli.server import (
+from mark._cli.engine import _Engine, _fact_json, _result_json  # noqa: F401
+from mark._cli.output import print_recall as _print_recall  # noqa: F401
+from mark._cli.output import print_result as _print_result
+from mark._cli.parser import build_parser as _parser
+from mark._cli.server import (  # noqa: F401
     _acquire_lock,
     _pid_alive,
     _release_lock,
@@ -72,81 +102,102 @@ from mark._cli.server import (
     serve,
 )
 
-# ── output ────────────────────────────────────────────────────────────────────
-
-def _print_recall(result: dict[str, Any]) -> None:
-    for fact in result["facts"]:
-        print(f" F. {fact['text']}{'' if fact['current'] else '  [historical]'}")
-    if not result["memories"] and not result["facts"]:
-        print("(no memories found)")
-    for rank, memory in enumerate(result["memories"], 1):
-        order = f"  (same day {memory['same_day']})" if memory.get("same_day") else ""
-        print(f"{rank:2d}. [{memory['score']:.3f}] {memory['content']}{order}")
-    if result["gap"] not in {"none", "low"}:
-        reason = f": {result['gap_reason']}" if result["gap_reason"] else ""
-        print(f"-- memory gap: {result['gap']}{reason}")
+# Errors a command may raise that are the user's to fix: print, exit 1.
+_USER_ERRORS = (RuntimeError, ValueError, OSError, KeyError, TypeError)
 
 
-# ── entry point ───────────────────────────────────────────────────────────────
+def main(argv: list[str] | None = None) -> int:
+    """Console entry point (``mark``); returns the process exit code."""
+    args = _parser().parse_args(argv)
+    db = _db_path(args.db)
+    agent = args.agent or os.environ.get("MARK_AGENT") or DEFAULT_AGENT
+    try:
+        if args.cmd == "serve":
+            return _serve(args, db)
+        if args.cmd == "mcp":
+            from mark._cli.extras import run_mcp
 
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="mark", description="Local memory for agents and scripts.")
-    parser.add_argument("--db", help="SQLite store path (default: $MARK_DB or ./.mark/memory.db)")
-    parser.add_argument("--agent", default=os.environ.get("MARK_AGENT", DEFAULT_AGENT), help="agent namespace")
-    parser.add_argument("--no-server", action="store_true", help="always run in-process")
-    sub = parser.add_subparsers(dest="cmd", required=True)
+            run_mcp(db, agent, briefing=args.briefing)
+            return 0
+        cmd, payload = _request(args, agent)
+        result = execute(db, cmd, payload, use_server=not args.no_server)
+    except _USER_ERRORS as exc:  # MARK errors subclass these builtins too
+        print(f"mark: {_message(exc)}", file=sys.stderr)
+        return 1
+    _print_result(args, cmd, result)
+    return 0
 
-    p = sub.add_parser("ingest", help="store each non-empty line of FILE")
-    p.add_argument("file")
-    p.add_argument("--session")
-    p.add_argument("--tag", action="append", dest="tags")
-    p.add_argument("--extract-facts", action="store_true",
-                   help="record facts stated in the lines (built-in patterns; dated by '[YYYY-MM-DD]' stamps)")
-    p = sub.add_parser("store", help="store one memory")
-    p.add_argument("text")
-    p.add_argument("--session")
-    p.add_argument("--occurred-at")
-    for name, help_text in (("recall", "search memory"),
-                            ("recall-many", "search memory for many queries at once")):
-        p = sub.add_parser(name, help=help_text)
-        if name == "recall":
-            p.add_argument("query")
+
+def _message(exc: BaseException) -> str:
+    # KeyError's str() is the repr of its key; MARK errors define their own text.
+    return exc.args[0] if isinstance(exc, KeyError) and type(exc) is KeyError and exc.args else str(exc)
+
+
+def _serve(args: argparse.Namespace, db: Path) -> int:
+    if args.action == "stop":
+        from mark._cli.extras import stop_server
+
+        print(stop_server(db))
+        return 0
+    serve(db, args.host, args.port)  # RuntimeError (e.g. encrypted store) is reported by main
+    return 0
+
+
+def _request(args: argparse.Namespace, agent: str) -> tuple[str, dict[str, Any]]:
+    """Translate parsed arguments into an engine command and payload."""
+    cmd = args.cmd
+    if cmd == "ingest":
+        lines = Path(args.file).read_text(encoding="utf-8").splitlines()
+        return cmd, {"agent": agent, "lines": lines, "session": args.session, "tags": args.tags,
+                     "extract_facts": args.extract_facts, "kind": args.kind}
+    if cmd in {"remember", "store"}:
+        return "store", {"agent": agent, "text": args.text, "session": args.session,
+                         "occurred_at": args.occurred_at, "kind": args.kind, "tags": args.tags,
+                         "importance": args.importance, "extract_facts": args.extract_facts}
+    if cmd in {"recall", "recall-many"}:
+        order = "chronological" if args.chronological else "relevance"
+        payload: dict[str, Any] = {"agent": agent, "k": args.k, "order": order}
+        if cmd == "recall-many":
+            return cmd, {**payload, "queries": _read_queries(args.file)}
+        payload["query"] = args.query
+        filters = {"session": args.session, "since": args.since, "until": args.until,
+                   "tags": args.tags, "kind": args.kind}
+        return cmd, {**payload, **{k: v for k, v in filters.items() if v}}
+    if cmd == "forget":
+        if (args.id is None) == (args.match is None):
+            raise ValueError("forget needs a memory ID or --match TEXT (not both)")
+        return cmd, {"agent": agent, "id": args.id, "match": args.match, "secure": args.secure}
+    if cmd == "resolve":
+        return cmd, {"agent": agent, "id": args.id, "note": args.note}
+    if cmd == "supersede":
+        return cmd, {"agent": agent, "id": args.id, "text": args.text}
+    if cmd == "list":
+        return cmd, {"agent": agent, "kind": args.kind, "open": args.open, "limit": args.limit,
+                     "offset": args.offset, "tags": args.tags}
+    if cmd == "brief":
+        return cmd, {"agent": agent, "budget": args.budget}
+    if cmd in {"export", "import"}:
+        # Absolute path: a running server resolves relative paths from its own cwd.
+        payload = {"path": str(Path(args.file).expanduser().resolve()), "agent": args.agent}
+        if cmd == "export":
+            payload["decrypt"] = args.decrypt
+        return cmd, payload
+    if cmd == "agents":
+        return cmd, {}
+    if cmd == "timeline":
+        return cmd, {"agent": agent, "subject": args.subject, "attribute": args.attribute,
+                     "limit": args.limit, "since": args.since, "until": args.until}
+    if cmd == "fact":
+        payload = {"agent": agent, "subject": args.subject}
+        if args.fact_cmd == "set":
+            payload.update(attribute=args.attribute, value=args.value, valid_from=args.valid_from,
+                           correction=args.correction)
         else:
-            p.add_argument("file", nargs="?", default="-")
-        p.add_argument("-k", type=int, default=10)
-        p.add_argument("--chronological", action="store_true",
-                       help="list the results oldest first instead of by relevance")
-        p.add_argument("--json", action="store_true")
-    p = sub.add_parser("timeline", help="every fact and memory about a subject, oldest first")
-    p.add_argument("subject")
-    p.add_argument("attribute", nargs="?")
-    p.add_argument("--limit", type=int, help="keep only the newest N events")
-    p.add_argument("--since", help="earliest event time (ISO date)")
-    p.add_argument("--until", help="latest event time (ISO date)")
-    p.add_argument("--json", action="store_true")
-    fact = sub.add_parser("fact", help="bi-temporal facts").add_subparsers(dest="fact_cmd", required=True)
-    p = fact.add_parser("set")
-    p.add_argument("subject")
-    p.add_argument("attribute")
-    p.add_argument("value")
-    p.add_argument("--valid-from")
-    p.add_argument("--correction", action="store_true",
-                   help="replace the value(s) recorded for this time instead of adding a step")
-    p = fact.add_parser("get")
-    p.add_argument("subject")
-    p.add_argument("attribute", nargs="?")
-    p = fact.add_parser("history")
-    p.add_argument("subject")
-    p.add_argument("attribute")
-    p = fact.add_parser("retract", help="retract facts recorded by mistake (kept for audit)")
-    p.add_argument("subject")
-    p.add_argument("attribute", nargs="?")
-    p.add_argument("--value", help="only retract this value")
-    sub.add_parser("stats", help="count memories and facts")
-    p = sub.add_parser("serve", help="keep MARK warm for fast calls")
-    p.add_argument("--host", default="127.0.0.1")
-    p.add_argument("--port", type=int, default=0)
-    return parser
+            payload["attribute"] = args.attribute
+            if args.fact_cmd == "retract":
+                payload["value"] = args.value
+        return f"fact-{args.fact_cmd}", payload
+    return "stats", {"agent": agent}
 
 
 def _read_queries(source: str) -> list[str]:
@@ -162,96 +213,6 @@ def _read_queries(source: str) -> list[str]:
             queries.append(str(item))
         return queries
     return [line.strip() for line in text.splitlines() if line.strip()]
-
-
-def main(argv: list[str] | None = None) -> int:
-    """Console entry point (``mark``); returns the process exit code."""
-    args = _parser().parse_args(argv)
-    db = _db_path(args.db)
-    if args.cmd == "serve":
-        try:
-            serve(db, args.host, args.port)
-        except RuntimeError as exc:  # e.g. an encrypted store (StoreEncryptionError)
-            print(f"mark: {exc}", file=sys.stderr)
-            return 1
-        return 0
-
-    agent = args.agent
-    try:
-        cmd, payload = _request(args, agent)
-    except (OSError, ValueError) as exc:
-        print(f"mark: {exc}", file=sys.stderr)
-        return 1
-    try:
-        result = execute(db, cmd, payload, use_server=not args.no_server)
-    except (RuntimeError, ValueError, OSError, KeyError, TypeError) as exc:
-        print(f"mark: {exc}", file=sys.stderr)
-        return 1
-    _print_result(args, cmd, result)
-    return 0
-
-
-def _request(args: argparse.Namespace, agent: str) -> tuple[str, dict[str, Any]]:
-    """Translate parsed arguments into an engine command and payload."""
-    if args.cmd == "ingest":
-        lines = Path(args.file).read_text(encoding="utf-8").splitlines()
-        cmd, payload = "ingest", {"agent": agent, "lines": lines, "session": args.session, "tags": args.tags,
-                                  "extract_facts": args.extract_facts}
-    elif args.cmd == "store":
-        cmd, payload = "store", {"agent": agent, "text": args.text, "session": args.session,
-                                 "occurred_at": args.occurred_at}
-    elif args.cmd in {"recall", "recall-many"}:
-        order = "chronological" if args.chronological else "relevance"
-        payload = {"agent": agent, "k": args.k, "order": order}
-        if args.cmd == "recall":
-            payload["query"] = args.query
-        else:
-            payload["queries"] = _read_queries(args.file)
-        cmd = args.cmd
-    elif args.cmd == "timeline":
-        cmd, payload = "timeline", {"agent": agent, "subject": args.subject, "attribute": args.attribute,
-                                    "limit": args.limit, "since": args.since, "until": args.until}
-    elif args.cmd == "fact":
-        cmd = f"fact-{args.fact_cmd}"
-        payload = {"agent": agent, "subject": args.subject}
-        if args.fact_cmd == "set":
-            payload.update(attribute=args.attribute, value=args.value, valid_from=args.valid_from,
-                           correction=args.correction)
-        else:
-            payload["attribute"] = args.attribute
-            if args.fact_cmd == "retract":
-                payload["value"] = args.value
-    else:
-        cmd, payload = "stats", {"agent": agent}
-    return cmd, payload
-
-
-def _print_result(args: argparse.Namespace, cmd: str, result: dict[str, Any]) -> None:
-    if getattr(args, "json", False):
-        print(json.dumps(result, indent=2))
-    elif cmd == "recall":
-        _print_recall(result)
-    elif cmd == "recall-many":
-        for result_item in result["results"]:
-            print(f"### {result_item['query']}")
-            _print_recall(result_item)
-    elif cmd == "timeline":
-        print(result["text"])
-    elif cmd == "fact-retract":
-        print(f"retracted {result['retracted']} fact(s)")
-    elif cmd.startswith("fact-"):
-        facts = [result["fact"]] if "fact" in result else result["facts"]
-        for fact in facts:
-            print(fact["text"])
-        if not facts:
-            print("(no facts)")
-    elif cmd == "ingest":
-        facts = f", {result['facts']} current facts" if "facts" in result else ""
-        print(f"stored {result['stored']} memories{facts}")
-    elif cmd == "store":
-        print(f"stored {result['id']}")
-    else:
-        print(f"{result['memories']} memories, {result['facts']} current facts")
 
 
 if __name__ == "__main__":  # pragma: no cover
