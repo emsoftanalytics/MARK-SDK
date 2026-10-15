@@ -66,9 +66,11 @@ def runs_in_background(extractor: object) -> bool:
 
 # ── candidate hygiene shared by the pattern and LLM extractors ───────────────
 
-#: Words that are never a useful subject on their own (they refer elsewhere).
+#: Words that are never a useful subject on their own (they refer elsewhere, or
+#: are a bare article left when "The office is ..." splits as subject + noun).
 _PRONOUNS = frozenset(
-    "it its he she they them we i you this that these those which who there here someone everyone".split()
+    "it its he she they them we i you this that these those which who there here someone everyone"
+    " the a an".split()
 )
 _MAX_SUBJECT_CHARS = 80
 _MAX_VALUE_CHARS = 120

@@ -5,7 +5,9 @@ Pipeline for one text:
   2. drop sentences that are questions or conditionals ("did X move to Y?",
      "if X moves to Y ...", "X could move to Y");
   3. strip a leading date stamp and upper-case log label ("[2026-03-30]
-     CHANGE: ..."), then split into clauses (``;`` and ", ");
+     CHANGE: ..."), then split into clauses (``;``, ", " and "and" before a
+     verb); a clause that starts with a verb borrows the previous clause's
+     subject ("X is owned by A, listens on port P" -> two facts about X);
   4. drop clauses with a negation or a future/intent marker ("did not move",
      "will not be owned by", "plans to move");
   5. match every pack pattern at the clause start; normalise subject,
@@ -21,6 +23,7 @@ from datetime import datetime, timezone
 from typing import Iterable
 
 from mark.intelligence.fact_extraction.base import FactCandidate, clean_text, is_redacted, valid_candidate
+from mark.intelligence.fact_extraction.clauses import carried_subject, is_continuation, split_clauses
 from mark.intelligence.fact_extraction.packs import (
     ATTRIBUTE_SYNONYMS,
     ATTRIBUTE_WORDS,
@@ -30,7 +33,6 @@ from mark.intelligence.fact_extraction.packs import (
 )
 
 _SENTENCE_SPLIT = re.compile(r"\n+|(?<=[.!?])\s+")
-_CLAUSE_SPLIT = re.compile(r";\s*|,\s+")
 _STAMP = re.compile(r"^\s*\[?(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?)Z?)?\]?\s*[:\-–—]?\s*")
 # Upper-case log labels: "CHANGE:", "HR:", "DECISION ADR-7:" (all-caps tokens only).
 _LABEL = re.compile(r"^[A-Z][A-Z0-9_/&-]*(?:\s+[A-Z][A-Z0-9_/&-]*){0,2}\s*:\s+")
@@ -58,7 +60,13 @@ _KIND_PREFIX = re.compile(
     r"^(?:the\s+)?(?:service|server|ticket|issue|bug|project|user|employee|customer|host|app|application"
     r"|system|repo|repository|job|task|incident|cluster|node|account|component|module)\s+(?=\S*[\d_.A-Z-])",
     re.IGNORECASE)
-_ARTICLE = re.compile(r"^(?:the|a|an)\s+", re.IGNORECASE)
+# Trailing kind nouns after an identifier ("the docs-site service" -> "docs-site").
+_KIND_SUFFIX = re.compile(
+    r"^(\S*[\d_.-]\S*)\s+(?:service|server|repo|repository|api|app|cluster|project|job|component|module)$",
+    re.IGNORECASE)
+# One identifier-like token with letters and digits ("OPS-17", "web2").
+_ID_TOKEN = re.compile(r"^(?=\S*\d)(?=\S*[^\W\d_])\S+$")
+_ARTICLE = re.compile(r"^(?:the|a|an|our|my|your|their)\s+", re.IGNORECASE)
 _TRAILING_FILLER = re.compile(
     r"\s+(?:now|today|yesterday|tonight|instead|permanently|temporarily|again|as\s+well|too"
     r"|immediately|effective\s+immediately|in\s+production|last\s+(?:night|week)|this\s+(?:morning|week))$",
@@ -75,7 +83,9 @@ class PatternFactExtractor:
 
     ``packs`` accepts :class:`RulePack` objects and/or built-in pack names
     (``"changes"``, ``"ownership"``, ``"status"``, ``"membership"``,
-    ``"assignment"``, ``"key_value"``). Default: every built-in pack.
+    ``"assignment"``, ``"listening"``, ``"region"``, ``"placement"``,
+    ``"location"``, ``"datastore"``, ``"reporting"``, ``"key_value"``).
+    Default: every built-in pack.
     """
 
     name = "patterns"
@@ -110,8 +120,16 @@ class PatternFactExtractor:
                 sentence = sentence[label.end():]
             if not sentence or _is_question(sentence) or _CONDITIONAL.search(sentence):
                 continue
-            for clause in _CLAUSE_SPLIT.split(sentence):
-                for candidate in self._clause_candidates(clause, when):
+            carried: str | None = None
+            for clause in split_clauses(sentence):
+                clause = _LEADING_FILLER.sub("", clause.strip())
+                continuation = is_continuation(clause)
+                if continuation and carried:
+                    clause = f"{carried} {clause}"
+                candidates = self._clause_candidates(clause, when)
+                if not continuation:
+                    carried = carried_subject(clause, candidates)
+                for candidate in candidates:
                     key = (candidate.subject.lower(), candidate.attribute.lower(),
                            candidate.value.lower(), candidate.valid_from)
                     if key not in seen:
@@ -153,11 +171,15 @@ def _candidate(pack: RulePack, groups: dict[str, str | None], valid_from: dateti
     # Attribute nouns written next to the value ("port 4444", "the Data team").
     value, value_attr = _peel_value(value) if pack.attribute_from_value else (value, "")
     old_attr = _peel_value(clean_text(groups.get("old") or ""))[1]
-    subject_match = _SUBJECT_SUFFIX.match(subject) if len(subject.split()) > 1 else None
+    # "svc-a port changed ..." names the attribute after the subject; packs whose
+    # verb fixes the attribute keep the subject whole ("Ana leads the Mobile squad").
+    peel_subject = pack.attribute_from_value and len(subject.split()) > 1
+    subject_match = _SUBJECT_SUFFIX.match(subject) if peel_subject else None
     subject_attr = ""
     if subject_match:
         subject, subject_attr = subject_match.group(1), subject_match.group(2).lower()
     subject = re.sub(r"['’]s$", "", _KIND_PREFIX.sub("", subject).strip())
+    subject = _KIND_SUFFIX.sub(r"\1", subject)
     verb = re.sub(r"\s+", " ", (groups.get("verb") or "").lower())
     attribute = (pack.attribute or attribute or value_attr or old_attr or subject_attr
                  or pack.verb_attributes.get(verb) or pack.verb_attributes.get("", ""))
@@ -166,6 +188,11 @@ def _candidate(pack: RulePack, groups: dict[str, str | None], valid_from: dateti
     if pack.value_case == "lower":
         value = value.lower()
     value = pack.value_map.get(value.lower(), value)
+    if pack.swap_when_value_is_id:
+        # "Bo Kim is assigned to OPS-17": the identifier is the thing assigned.
+        bare_value = _KIND_PREFIX.sub("", value).strip()
+        if _ID_TOKEN.match(bare_value) and not _ID_TOKEN.match(subject):
+            subject, value = bare_value, subject
     candidate = FactCandidate(subject=subject, attribute=attribute, value=value,
                               valid_from=valid_from, confidence=pack.confidence, rule=pack.name)
     return candidate if valid_candidate(candidate) else None

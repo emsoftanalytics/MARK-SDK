@@ -125,3 +125,12 @@ def test_subjects_only_the_model_named_stay_quiet_until_confirmed(memory) -> Non
         # Once the user names an unknown subject it is reported as usual.
         watch.observe("What is nectar-rich?", role="user")
         assert watch.briefing().unknown == ["nectar-rich"]
+
+
+def test_bare_numbers_are_never_unknown_subjects(memory) -> None:
+    # Ports, counts and years are values, not subjects: only ids are reported.
+    with ContextWatch(memory, background=False) as watch:
+        watch.observe("restart checkout-api on 8080; zephyr-9 too. 3 pods, since 2025", role="user")
+        brief = watch.briefing()
+    assert brief.unknown == ["checkout-api", "zephyr-9"]
+    assert "8080" not in brief.text and "2025" not in brief.text

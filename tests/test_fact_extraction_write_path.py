@@ -101,7 +101,7 @@ def test_reingesting_the_same_log_is_idempotent() -> None:
     assert [(f.subject, f.attribute, f.value, f.valid_from) for f in memory.facts.current()] == first
     assert _history(memory, "atlas-core", "port") == [("4444", "2026-03-10"), ("5100", "2026-03-10")]
     rows = runtime.store._fetchall("SELECT COUNT(*) FROM facts WHERE retracted_at IS NULL")
-    assert rows[0][0] == 4  # owner x2, port x2 — no duplicates recorded
+    assert rows[0][0] == 5  # owner x2, port x2, region x1 — no duplicates recorded
     runtime.shutdown()
 
 

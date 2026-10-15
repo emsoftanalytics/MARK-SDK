@@ -13,14 +13,20 @@ This project follows semantic versioning for public package releases.
   extract_facts=True)`, stated changes in stored text ("moved from port A to
   port B", "is owned by", "status: resolved") are recorded as bi-temporal
   facts, dated by the memory's event time and linked to their source memory.
+  Present-tense descriptions are recognised too ("runs on port 6430", "runs
+  in eu-west-1", "dana owns X", "is based in Berlin", "reports to Y", "uses
+  PostgreSQL 15", "is assigned to Y"), including lines that list several
+  facts about one subject in comma- or "and"-separated clauses.
   Built-in rule packs (`PatternFactExtractor`, `RulePack`, `BUILTIN_PACKS`)
   run inline and accept custom packs; `LLMFactExtractor` uses a local
   OpenAI-compatible model from a durable background queue, and
-  `memory.facts.extract_pending()` drains that queue on demand. Any object
+  `memory.facts.extract_pending(wait=True)` drains that queue on demand and
+  waits for jobs the worker is still running, so their facts are readable
+  when it returns (`wait=False` or a timeout in seconds). Any object
   implementing the `FactExtractor` protocol can be used. On the retention
   benchmark's large profile, the generic packs reached precision 1.0 on every
-  target attribute, with recall from 0.86 to 1.0 for owner, port, region,
-  database, team, city, and status, and 0.63 for ticket assignee.
+  target attribute, with recall 1.0 for owner, port, region, database, team,
+  city, and ticket assignee, and 0.96 for ticket status.
 - `mark ingest --extract-facts` records the facts that ingested lines state.
 - Subject timelines: `memory.timeline(subject, attribute=None, limit=,
   since=, until=)` returns every fact and memory about a subject, oldest
@@ -80,9 +86,14 @@ This project follows semantic versioning for public package releases.
 - The default embedder is still the deterministic hash embedder; semantic
   models are opt-in.
 - `RetrievalResult.facts` contains only the facts that answer the query (the
-  attribute asked about, or all of them for an open question).
+  attribute asked about, the role a who-question names, such as `owner` for
+  "Who owns X?" or `assignee` for "Who is assigned to X?", or all of them for
+  an open question). A who-question about a subject without that fact
+  returns no facts rather than unrelated ones.
 - Briefings no longer report subjects that only the model mentioned as "Not
-  in memory"; such subjects appear once memory confirms them.
+  in memory"; such subjects appear once memory confirms them. Bare numbers
+  (ports, counts, years, dates) are never reported as unknown subjects or as
+  `missing_anchors`.
 - On POSIX, a new `.mark/` directory is created with mode `0700` and new
   database files with mode `0600`.
 - Store schema version 5 adds the fact-extraction job queue and extraction

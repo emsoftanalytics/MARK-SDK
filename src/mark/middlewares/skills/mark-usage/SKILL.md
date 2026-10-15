@@ -89,8 +89,9 @@ withdraw one recorded by mistake.
 ### Facts from text, and timelines
 
 With `extract_facts=True` on a write (or `Mark.local(".", fact_extractor="patterns")`
-for every write), stated changes such as "moved from port 8080 to port 9090",
-"is owned by", or "status: resolved" become facts automatically. For "how did
+for every write), stated values such as "moved from port 8080 to port 9090",
+"runs on port 6430", "dana owns X", "is based in Berlin", "reports to Y", or
+"status: resolved" become facts automatically. For "how did
 X change" or "what happened to X" questions, read the subject's timeline: it
 lists every fact and memory about the subject, oldest first, with no top-k cap.
 

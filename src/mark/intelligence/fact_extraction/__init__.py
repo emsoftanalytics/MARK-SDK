@@ -6,7 +6,9 @@
 
 Modules:
   - ``base``      FactCandidate, the FactExtractor protocol, candidate hygiene
-  - ``packs``     RulePack and the built-in generic packs (pure data)
+  - ``rules``     RulePack and the shared regex building blocks
+  - ``packs``     the built-in generic packs (pure data)
+  - ``clauses``   clause splitting with subject carry-over
   - ``patterns``  PatternFactExtractor (regex packs; fast, runs inline)
   - ``llm``       LLMFactExtractor (OpenAI-compatible server; runs in background)
   - ``service``   FactExtractionService: inline/queued extraction into the store

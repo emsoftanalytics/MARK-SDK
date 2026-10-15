@@ -165,3 +165,9 @@ def test_briefing_does_not_block_the_event_loop(mark) -> None:
         return ticks
 
     assert asyncio.run(drive()) > 5                      # the loop kept ticking during the calls
+
+
+def test_bare_numbers_are_not_reported_as_unknown(mark) -> None:
+    text = _call(_server(mark), {"text": "restart checkout-api on 8080; zephyr-9 too", "session_id": "n"})
+    unknown = next(line for line in text.splitlines() if line.startswith("Not in memory"))
+    assert "zephyr-9" in unknown and "8080" not in unknown

@@ -8,7 +8,8 @@ that are not retrievable (quarantined, contradicted, raw).
 Two modes, chosen by the extractor's ``background`` flag:
   - inline (pattern extractors): facts are written during the store call;
   - background (LLM extractors): the store call only enqueues a durable job
-    per fragment; a worker thread (or :meth:`run_pending`) drains the queue.
+    per fragment; a worker thread (or :meth:`run_pending`) drains the queue,
+    and :meth:`drain` also waits for jobs the worker is running.
 
 Invariants:
   - ``valid_from`` is the candidate's own date, else the memory's event time
@@ -159,6 +160,42 @@ class FactExtractionService:
                 self._run_job(job)
                 processed += 1
         return processed
+
+    def drain(self, *, agent_id: str | None = None, limit: int | None = None,
+              wait: float | bool = True) -> int:
+        """Process queued jobs here, then wait for jobs another thread is running.
+
+        A background worker claims jobs in batches, so a synchronous caller
+        can find the queue empty while the facts are not written yet. With
+        ``wait`` (True = up to ``lease_seconds``, a float = that many seconds,
+        False/0 = do not wait) this also blocks until no job for *agent_id* is
+        running. Returns the jobs processed here plus the jobs other threads
+        finished meanwhile; on timeout, those still running are not counted.
+        """
+        timeout = float(self.lease_seconds if wait is True else (wait or 0.0))
+        before = self._finished(agent_id)
+        own_runs, own_finished = self._run_and_count(agent_id, limit)
+        deadline = time.monotonic() + timeout
+        while timeout > 0 and self.store.fact_job_counts(agent_id, self.name)["running"]:
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.02)
+            if limit is None or own_runs < limit:
+                # Jobs enqueued meanwhile, or released by an expired lease.
+                runs, finished = self._run_and_count(agent_id, None if limit is None else limit - own_runs)
+                own_runs, own_finished = own_runs + runs, own_finished + finished
+        by_others = max(0, self._finished(agent_id) - before - own_finished)
+        return own_runs + by_others
+
+    def _run_and_count(self, agent_id: str | None, limit: int | None) -> tuple[int, int]:
+        """run_pending, also returning how many of those jobs reached done/failed."""
+        before = self._finished(agent_id)
+        runs = self.run_pending(agent_id=agent_id, limit=limit)
+        return runs, self._finished(agent_id) - before
+
+    def _finished(self, agent_id: str | None) -> int:
+        counts = self.store.fact_job_counts(agent_id, self.name)
+        return counts["done"] + counts["failed"]
 
     def pending(self, agent_id: str | None = None) -> int:
         """Jobs not yet finished (pending or running) for this extractor."""

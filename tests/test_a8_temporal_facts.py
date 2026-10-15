@@ -163,3 +163,14 @@ def test_titan_never_matches_titanium(runtime) -> None:
     result = mem.retrieve_sync("Which port does titan-core listen on?")
 
     assert result.missing_anchors == ["titan core"]
+
+
+@pytest.mark.parametrize(("query", "anchors"), [
+    ("restart checkout-api on 8080; zephyr-9 too", ["checkout api", "zephyr 9"]),
+    ("What changed in 2025 for HAL-4433?", ["hal 4433"]),
+    ("Scale to 12 replicas by 2026-03-01 at 10:30", []),
+    ("Pin web2 to 1.5 cores", ["web2"]),
+    ("Is 10.0.0.12 still the gateway?", ["10 0 0 12"]),  # IP addresses stay
+])
+def test_bare_numbers_are_not_anchors(query: str, anchors: list[str]) -> None:
+    assert query_anchors(query) == anchors

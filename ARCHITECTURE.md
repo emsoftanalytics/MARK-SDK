@@ -172,7 +172,7 @@ and do not change which fragments are retrievable.
 | Expansion and rerank | `graph_expansion.py`, `reranker.py` | Pull in graph neighbours with damped scores, penalise contradicted fragments, apply bounded priors (importance, confidence). |
 | Temporal order | `temporal_order.py`, `query_understanding.py` | For "now" or "original" questions, reorder records about the asked subject by event time. Same-day events keep their order. |
 | Feedback | `retrieval_feedback.py` | Record access. Reinforce importance only for results with real query evidence (`ReinforceMode`). |
-| Reporting | `retrieval_reporting.py`, `fact_relevance.py` | Attach the facts for the subjects in the query that answer it (the attribute asked about, or all for an open question), list `missing_anchors`, and build the gap report. |
+| Reporting | `retrieval_reporting.py`, `fact_relevance.py` | Attach the facts for the subjects in the query that answer it (the attribute asked about, the role a who-question names, or all for an open question), list `missing_anchors`, and build the gap report. |
 | Compression | `retrieval_pipeline.py` | Optional, when a compressor is configured and requested. |
 
 The result is a `RetrievalResult` (`intelligence/retrieval_result.py`) with
@@ -250,14 +250,21 @@ FactExtractionService.submit
 
 - **Pattern packs.** A `RulePack` is data: regular expressions with
   `{S}`/`{V}`/`{A}` placeholders, plus attribute mappings. The built-in
-  packs cover generic English for status, ownership, assignment, membership,
-  changes ("moved from A to B"), and key-value lines. Text is split into
-  clauses. Questions, conditionals, negations, and intentions are skipped,
+  packs cover generic English for status, ownership ("owned by", "owns"),
+  assignment, membership, changes ("moved from A to B"), present-tense
+  descriptions (port, cloud region, placement, location, reporting line,
+  datastore), and key-value lines. Vague verbs fire only when the value says
+  what it is: "uses" needs a known database product, "runs in" a cloud-region
+  id or an attribute noun ("runs in production" yields nothing). Text is split
+  into clauses (`;`, `, `, and "and" before a verb); a clause that starts with
+  a verb borrows the previous clause's subject within the same sentence.
+  Questions, conditionals, negations, and intentions are skipped,
   and a leading `[YYYY-MM-DD]` stamp or `occurred_at` dates the fact.
 - **Queue.** `fact_jobs` has one row per (fragment, extractor). Failed jobs are
   retried up to `max_attempts`. A job whose lease expired (the process died)
   is claimed again, and jobs left at shutdown run on the next start.
-  `memory.facts.extract_pending()` drains the queue in the calling thread.
+  `memory.facts.extract_pending()` drains the queue in the calling thread and,
+  by default, waits (up to the lease) for jobs the worker already claimed.
 - **Idempotence.** `fact_extractions` records a hash of (text, occurrence,
   subject, attribute, value, valid_from), so re-ingesting a log never
   appends duplicate values. Extracted facts carry `source_fragment_id` and
