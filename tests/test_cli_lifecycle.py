@@ -91,11 +91,19 @@ def test_lifecycle_commands_by_short_id(tmp_path: Path, capsys) -> None:
 
 def test_secure_forget_erases_text_from_disk(tmp_path: Path, capsys) -> None:
     db = tmp_path / "s.db"
-    _run(capsys, str(db), "remember", "The vault passphrase is qzx-hidden-77.")
+    # Not a credential (credentials are redacted before they reach disk; see below).
+    _run(capsys, str(db), "remember", "The launch codename is qzx-hidden-77.")
     _run(capsys, str(db), "remember", "Something to keep.")
     assert "erased from disk" in _run(capsys, str(db), "forget", "--match", "qzx-hidden-77", "--secure")
     data = b"".join(p.read_bytes() for p in tmp_path.glob("s.db*") if p.is_file())
     assert b"qzx-hidden-77" not in data and b"Something to keep" in data
+
+
+def test_credentials_never_reach_disk(tmp_path: Path, capsys) -> None:
+    db = tmp_path / "c.db"
+    _run(capsys, str(db), "remember", "The vault passphrase is qzx-hidden-88.")
+    data = b"".join(p.read_bytes() for p in tmp_path.glob("c.db*") if p.is_file())
+    assert b"qzx-hidden-88" not in data and b"[SECRET:" in data
 
 
 def test_list_paginates_with_a_footer(tmp_path: Path, capsys) -> None:
