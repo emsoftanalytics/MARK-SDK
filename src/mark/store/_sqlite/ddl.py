@@ -121,12 +121,11 @@ class SchemaDDL:
             )
             """,
         ],
-        # 6: a covering index answers the retrievable-id query without reading
-        #    rows (each holds a ~1 KB embedding); a partial index finds the next
-        #    TTL expiry. The multilingual FTS table is set up by _init_fts.
+        # 6: a partial index finds the next TTL expiry without a scan (only TTL
+        #    rows pay for it). A covering index for the retrievable-id query was
+        #    measured: 3x faster query, but ~25% slower writes, so it is not used.
+        #    The multilingual FTS table is set up by _init_fts.
         6: [
-            "CREATE INDEX IF NOT EXISTS idx_frag_retrievable"
-            " ON fragments(agent_id, state, id, block_id, ttl_seconds, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_frag_ttl ON fragments(agent_id, created_at, ttl_seconds)"
             " WHERE ttl_seconds IS NOT NULL",
         ],
