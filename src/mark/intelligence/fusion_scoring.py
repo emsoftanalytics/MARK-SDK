@@ -36,7 +36,7 @@ def uses_score_fusion(config: FusionConfig, embedder: object) -> bool:
     return bool(getattr(embedder, "semantic", True))
 
 
-def normalised_cosines(hits: list[VectorSearchResult]) -> dict[str, float]:
+def normalised_cosines(hits: list[VectorSearchResult], also: Iterable[str] = ()) -> dict[str, float]:
     """Each cosine as a fraction of the query's best cosine (best hit = 1).
 
     Absolute cosine scales differ a lot between models (bge-small gold
@@ -45,13 +45,23 @@ def normalised_cosines(hits: list[VectorSearchResult]) -> dict[str, float]:
     not min-max: in a large store the depth-th neighbour is nearly as close
     as the first, and min-max would blow tiny cosine gaps up to the full
     [0, 1] range (measured: worse ranks on the retention A/B log).
+
+    Ids in ``also`` (lexical hits) that fell outside the vector top-depth
+    get the weakest hit's value: they are at most that similar, and a 0
+    would bury an exact lexical match among many near-identical records
+    (a ticket's "closed" line behind fifty "in progress" lines).
     """
     if not hits:
         return {}
     best = max(hit.score for hit in hits)
     if best <= 0:
-        return {hit.fragment_id: 0.0 for hit in hits}
-    return {hit.fragment_id: max(0.0, hit.score / best) for hit in hits}
+        scores = {hit.fragment_id: 0.0 for hit in hits}
+    else:
+        scores = {hit.fragment_id: max(0.0, hit.score / best) for hit in hits}
+    floor = min(scores.values())
+    for fragment_id in also:
+        scores.setdefault(fragment_id, floor)
+    return scores
 
 
 def rrf_seed_score(fused: float, max_fused: float, relevance: float) -> float:

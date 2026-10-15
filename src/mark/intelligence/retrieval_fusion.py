@@ -74,7 +74,7 @@ class _FusionMixin:
                 fused[hit.fragment_id] = fused.get(hit.fragment_id, 0.0) + 1.0 / (RRF_K + rank)
                 if hit.score > cosine.get(hit.fragment_id, -1.0):
                     cosine[hit.fragment_id] = hit.score
-            merge_max(vector_norm, normalised_cosines(vector_hits))
+            merge_max(vector_norm, normalised_cosines(vector_hits, also=(fid for fid, _ in lexical_hits)))
             for rank, (fragment_id, _bm25) in enumerate(lexical_hits, 1):
                 fused[fragment_id] = fused.get(fragment_id, 0.0) + 1.0 / (RRF_K + rank)
         return fused, cosine, channels, vector_norm

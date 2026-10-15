@@ -155,3 +155,5 @@ def test_normalised_cosines_are_relative_to_best_hit() -> None:
     assert normalised_cosines(hits) == {"a": 1.0, "b": 0.5, "c": 0.0}
     assert normalised_cosines([VectorSearchResult("a", -0.2, "")]) == {"a": 0.0}
     assert normalised_cosines([]) == {}
+    # Lexical-only hits are imputed the weakest vector value, not zero.
+    assert normalised_cosines(hits[:2], also=["a", "z"]) == {"a": 1.0, "b": 0.5, "z": 0.5}
