@@ -28,7 +28,7 @@ def test_in_process_round_trip(tmp_path: Path, capsys) -> None:
     log = tmp_path / "log.txt"
     log.write_text("[2026-03-01] atlas-core listens on port 6430.\n\n[2026-03-30] atlas-core moved to port 4444.\n")
 
-    assert "stored 2 memories" in _run(capsys, "--db", db, "--no-server", "ingest", str(log))
+    assert "stored 2 new memories" in _run(capsys, "--db", db, "--no-server", "ingest", str(log))
     _run(capsys, "--db", db, "--no-server", "fact", "set", "atlas-core", "port", "4444", "--valid-from", "2026-03-30")
     out = _run(capsys, "--db", db, "--no-server", "recall", "Which port does atlas-core listen on now?", "-k", "2")
     assert out.splitlines()[0].startswith(" F. atlas-core port = 4444")
@@ -144,12 +144,13 @@ def test_ingest_extract_facts_in_process_and_served(tmp_path: Path, capsys, monk
                    "[2026-03-30] CHANGE: atlas-core moved from port 9239 to port 4444.\n"
                    "Did atlas-core move to port 1?\n")
     out = _run(capsys, "--db", db, "--no-server", "ingest", str(log), "--extract-facts")
-    assert "stored 3 memories, 2 facts extracted" in out  # this call's facts, not the store total
+    assert "stored 3 new memories (2 facts extracted)" in out  # this call's facts, not the store total
     assert _run(capsys, "--db", db, "--no-server", "fact", "get", "atlas-core", "port").startswith(
         "atlas-core port = 4444 (since 2026-03-30)")
     _run(capsys, "--db", db, "--no-server", "ingest", str(log), "--extract-facts")  # idempotent
     assert len(_run(capsys, "--db", db, "--no-server", "fact", "history", "atlas-core", "port").splitlines()) == 1
-    assert "stored 3 memories\n" == _run(capsys, "--db", db, "--no-server", "ingest", str(log))
+    assert "stored 0 new memories (3 already present)\n" == _run(capsys, "--db", db, "--no-server",
+                                                                    "ingest", str(log))
 
     served = (tmp_path / "served.db").resolve()
     stop = threading.Event()
@@ -164,6 +165,8 @@ def test_ingest_extract_facts_in_process_and_served(tmp_path: Path, capsys, monk
         monkeypatch.setattr(client, "INGEST_CHUNK_BYTES", 80)  # force several requests
         lines = log.read_text().splitlines()
         result = cli.execute(served, "ingest", {"agent": "x", "lines": lines, "extract_facts": True})
-        assert result == {"stored": 3, "facts": 2, "extracted": 2}
+        assert result == {"stored": 3, "existing": 0, "facts": 2, "extracted": 2}
+        again = cli.execute(served, "ingest", {"agent": "x", "lines": lines})
+        assert (again["stored"], again["existing"]) == (0, 3)  # summed over every chunk
     finally:
         stop.set()

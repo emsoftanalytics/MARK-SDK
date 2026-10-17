@@ -110,6 +110,9 @@ from mark._cli.server import (  # noqa: F401
 
 # Errors a command may raise that are the user's to fix: print, exit 1.
 _USER_ERRORS = (RuntimeError, ValueError, OSError, KeyError, TypeError)
+# Commands that only read: on a missing store they say so instead of creating it.
+_READ_ONLY = {"recall", "recall-many", "list", "brief", "stats", "timeline", "agents", "export",
+              "config-show", "fact-get", "fact-history", "fact-list"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -126,6 +129,9 @@ def main(argv: list[str] | None = None) -> int:
             run_mcp(_db_path(args.mcp_db) if args.mcp_db else db, args.mcp_agent or agent, args)
             return 0
         cmd, payload = _request(args, agent)
+        if cmd in _READ_ONLY and not db.exists():
+            raise FileNotFoundError(f"no store at {db} (`mark remember TEXT` creates one; "
+                                    "--db or $MARK_DB picks another)")
         result = execute(db, cmd, payload, use_server=not args.no_server)
     except _USER_ERRORS as exc:  # MARK errors subclass these builtins too
         print(f"mark: {_message(exc)}", file=sys.stderr)
@@ -135,15 +141,22 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _message(exc: BaseException) -> str:
-    # KeyError's str() is the repr of its key; MARK errors define their own text.
-    return exc.args[0] if isinstance(exc, KeyError) and type(exc) is KeyError and exc.args else str(exc)
+    # KeyError's str() is the repr of its key, FileNotFoundError's carries an
+    # errno prefix; MARK errors define their own text.
+    if type(exc) in (KeyError, FileNotFoundError) and len(exc.args) == 1:
+        return str(exc.args[0])
+    return str(exc)
 
 
 def _serve(args: argparse.Namespace, db: Path) -> int:
     if args.action == "stop":
         from mark._cli.extras import stop_server
 
-        print(stop_server(db))
+        message = stop_server(db)
+        if message.startswith("no mark serve running"):
+            print(f"mark: {message}", file=sys.stderr)  # nothing was stopped: exit 1
+            return 1
+        print(message)
         return 0
     serve(db, args.host, args.port)  # RuntimeError (e.g. encrypted store) is reported by main
     return 0
@@ -166,8 +179,10 @@ def _request(args: argparse.Namespace, agent: str) -> tuple[str, dict[str, Any]]
         if cmd == "recall-many":
             return cmd, {**payload, "queries": _read_queries(args.file)}
         payload["query"] = args.query
+        # A kind filter means "open ones" (a resolved TODO is not a TODO) unless --all.
+        open_only = args.open or (bool(args.kind) and not args.all)
         filters = {"session": args.session, "since": args.since, "until": args.until,
-                   "tags": args.tags, "kind": args.kind}
+                   "tags": args.tags, "kind": args.kind, "open": open_only}
         return cmd, {**payload, **{k: v for k, v in filters.items() if v}}
     if cmd == "forget":
         if (args.id is None) == (args.match is None):
@@ -202,7 +217,7 @@ def _request(args: argparse.Namespace, agent: str) -> tuple[str, dict[str, Any]]
         if args.fact_cmd == "set":
             payload.update(attribute=args.attribute, value=args.value, valid_from=args.valid_from,
                            correction=args.correction)
-        else:
+        elif args.fact_cmd != "list":
             payload["attribute"] = args.attribute
             if args.fact_cmd == "retract":
                 payload["value"] = args.value

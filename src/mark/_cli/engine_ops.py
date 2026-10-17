@@ -121,7 +121,10 @@ class EngineOpsMixin:
         except ImportError:
             return {"text": fallback_brief(memory, int(budget)), "source": "fallback"}
         result = brief(memory, budget_tokens=int(budget))
-        return {**result.to_dict(), "source": "brief"}
+        payload = {**result.to_dict(), "source": "brief"}
+        if not str(payload.get("text") or "").strip():
+            payload["text"] = "(memory is empty)"  # say so rather than print nothing
+        return payload
 
 
 def fallback_brief(memory: Any, budget_tokens: int) -> str:

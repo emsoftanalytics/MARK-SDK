@@ -67,7 +67,7 @@ class VerbsMixin(MemoryCore):
         without it a leading label sets it ("TODO: ..." -> ``"todo"``, see
         :func:`mark.kinds.kind_from_text`).
         ``occurred_at`` dates the event (shown in recall, used for "latest"
-        questions); ``extract_facts=True`` records facts stated in the text.
+        questions; ISO text or words such as "yesterday"); ``extract_facts=True`` records facts stated in the text.
         Remaining keywords (``scope``, ``state``, ``ttl_seconds``) are passed
         to :meth:`store_sync`. Invalid input raises
         :class:`mark.errors.InvalidInputError`.
@@ -76,6 +76,10 @@ class VerbsMixin(MemoryCore):
 
         if not isinstance(text, str) or not text.strip():
             raise InvalidInputError("memory text must be a non-empty string")
+        if isinstance(occurred_at, str):
+            from mark.memory.facts import parse_time
+
+            occurred_at = parse_time(occurred_at, "occurred_at date")  # natural words too
         all_tags = list(dict.fromkeys(tags or []))
         kind = normalize_kind(kind)
         if kind is None and not any(t.startswith("kind:") for t in all_tags if isinstance(t, str)):
