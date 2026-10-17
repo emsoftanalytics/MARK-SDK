@@ -22,6 +22,22 @@ Adapter tests need their extras:
 uv run --extra dev --extra adapters pytest tests/test_langchain_middleware.py tests/test_adapters_mcp_tools.py
 ```
 
+When several pytest sessions share a machine (parallel branches, worktrees,
+or agents), give each its own temporary directory so they never clean up each
+other's files:
+
+```bash
+uv run --extra dev pytest -p no:cacheprovider --basetemp="$(mktemp -d)/pytest"
+```
+
+The scale benchmark checks speed and recall quality against the budgets in
+`benchmarks/scale/thresholds.json`; run it before and after any change to the
+store, the index, or the retrieval pipeline (CI runs the same check):
+
+```bash
+uv run --extra fast python benchmarks/scale/bench.py --n 20000 --check
+```
+
 [ARCHITECTURE.md](ARCHITECTURE.md) has a module map and the write, recall, and
 briefing data flows. Read it before changing the store or the retrieval
 pipeline.
@@ -50,7 +66,17 @@ are good places to start.
   optional extra.
 - **Small files.** Every Python file is at most 300 lines. Split large modules
   by responsibility (see the mixins in `mark/store/_sqlite/` and
-  `mark/memory/facade/`).
+  `mark/memory/facade/`), and keep existing import paths working when you
+  split one. New store methods go in a new mixin module registered in
+  `store/sqlite.py`.
+- **API naming.** Public verbs are plain and synchronous (`remember`,
+  `recall`, `forget`); the async twin has the same name with an `a` prefix
+  (`arecall`) and the same arguments. A verb that exists on `mark.memory`
+  exists on `runtime.memory(agent_id)` with the same defaults, and results a
+  model may read offer `as_context()`, `as_text()` and `to_dict()`. Renamed
+  public names keep working as aliases (with a `DeprecationWarning` once
+  callers have had a release to migrate). New top-level names in `mark` are
+  rare; most belong in a submodule.
 - **Module docstrings.** Every module starts with a docstring that says what it
   owns and, where useful, how it fits with its neighbours. Public functions and
   classes have docstrings. Comment the reason for non-obvious code.

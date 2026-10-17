@@ -8,7 +8,7 @@
 - Version: `src/mark/_version.py` (`__version__`). `pyproject.toml` reads it
   through Hatch (`dynamic = ["version"]`), so there is one place to change.
 - Runtime: `mark.__version__`.
-- Git tags: `vX.Y.Z` or `vX.Y.ZaN` for pre-releases, for example `v0.2.0a8`.
+- Git tags: `vX.Y.Z` or `vX.Y.ZaN` for pre-releases, for example `v0.2.0a10`.
   The release workflow fails if the tag does not match `__version__`.
 - Release notes: `CHANGELOG.md`.
 
@@ -27,12 +27,11 @@ Every breaking change is listed under "Breaking changes" in the changelog.
 
 - `0.1.x`: local memory, context, policies, skills, agent wrapper, examples.
 - `0.2.0aN`: alpha checkpoints for the local runtime: hybrid retrieval, facts,
-  briefings, the CLI. The current release is `0.2.0a9`; `0.2.0a10` is in
-  development.
-- `0.2.x`: stable release line for SQLite memory, hybrid retrieval, facts,
-  and the plugin boundary.
-- `0.3.x`: stable middleware interfaces and framework adapters.
-- `1.0.0`: stable local SDK API with documented compatibility.
+  briefings, the CLI, MCP and LangChain integrations. The current release is
+  `0.2.0a10`, the last alpha.
+- `1.0.0` (next): the stable local SDK API with documented compatibility.
+  The memory verbs, result rendering, CLI commands and MCP tool names are
+  frozen, and deprecated aliases get a published removal schedule.
 
 ## Release checklist
 
@@ -47,7 +46,7 @@ Every breaking change is listed under "Breaking changes" in the changelog.
 4. Commit, then tag the release with the same version:
 
    ```bash
-   git tag v0.2.0a8
+   git tag v0.2.0a10
    ```
 
 5. Build and inspect the artifacts:
