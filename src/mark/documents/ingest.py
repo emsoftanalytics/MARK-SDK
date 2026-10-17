@@ -11,6 +11,13 @@ Each chunk carries ``metadata = {"source": "document", "document_id",
 "document_title"}`` and the tag ``mark:document``; the parent record keeps
 the chunk ids in document order, the full text (encrypted like memories)
 and a SHA-256 of the text, which makes storing the same text twice a no-op.
+
+The parent record is a second copy of the text, so the memory's write
+policy runs on it *before* anything is stored: secrets in the text, title,
+source and caller metadata are redacted exactly as in the chunks, and
+instruction-like text is flagged under ``metadata["mark_security"]``.
+Without this the raw secret would survive in ``documents.content`` (and in
+the SQLite files) even though every chunk was redacted.
 """
 from __future__ import annotations
 
@@ -25,9 +32,11 @@ from typing import Any
 from mark.documents.chunking import chunk_text
 from mark.documents.loaders import LoadedFile, load_file
 from mark.documents.records import DocumentRecord
+from mark.errors import InvalidMemoryError
 from mark.media.errors import TranscriberRequiredError, UnsupportedFileError
 from mark.media.files import reject_binary, sha256_file, sniff
 from mark.media.transcribers import run_transcriber
+from mark.security.write_policy import DEFAULT_WRITE_POLICY, WritePolicy
 
 DOCUMENT_TAG = "mark:document"
 _RESERVED = ("source", "document_id", "document_title")
@@ -63,13 +72,24 @@ def store_document(
     loaded: LoadedFile | None = load_file(text_or_path) if looks_like_path(text_or_path) else None
     text = loaded.text if loaded else str(text_or_path)
     if not text.strip():
-        raise ValueError("document text is empty")
+        raise InvalidMemoryError("document text is empty", reason="empty")
     extra = dict(metadata or {})
     reject_binary(extra)
     clash = sorted(set(extra) & set(_RESERVED))
     if clash:
         raise ValueError(f"metadata keys reserved for documents: {clash}")
-    title = (title or (loaded.title if loaded else _default_title(text))).strip()
+    policy = _write_policy(memory)
+    # Redact before hashing: the digest is stored too, and the same secret-free
+    # text must map to the same record whether or not it was redacted.
+    decision = policy.apply(text, metadata=extra or None)
+    text, extra = decision.content, dict(decision.metadata or {})
+    security = extra.pop("mark_security", None)
+    title, title_kinds = policy.redact_text(
+        (title or (loaded.title if loaded else _default_title(text))).strip())
+    source, source_kinds = policy.redact_text(source or (loaded.source if loaded else None) or "")
+    if title_kinds or source_kinds:
+        security = dict(security or {})
+        security["redacted"] = sorted({*security.get("redacted", ()), *title_kinds, *source_kinds})
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     existing = memory._store.document_find(memory.agent_id, digest)
     if existing is not None:
@@ -84,12 +104,14 @@ def store_document(
         extract_facts=extract_facts,
     )
     facts = int(getattr(memory, "last_extracted", 0) or 0)
+    row_meta = {**extra, "sha256": digest, "word_count": len(text.split()), "chunk_tokens": chunk_tokens,
+                "overlap": overlap, "media_type": loaded.media_type if loaded else "text/plain"}
+    if security:
+        row_meta["mark_security"] = security
     row = {
         "id": document_id, "agent_id": memory.agent_id, "title": title, "content": text,
-        "source": source or (loaded.source if loaded else None), "fragment_ids": ids, "tags": list(tags),
-        "created_at": datetime.now(timezone.utc),
-        "metadata": {**extra, "sha256": digest, "word_count": len(text.split()), "chunk_tokens": chunk_tokens,
-                     "overlap": overlap, "media_type": loaded.media_type if loaded else "text/plain"},
+        "source": source or None, "fragment_ids": ids, "tags": list(tags),
+        "created_at": datetime.now(timezone.utc), "metadata": row_meta,
     }
     memory._store.document_put(row)
     return _record(row, facts_extracted=facts)
@@ -124,6 +146,13 @@ def remember_file(memory: Any, path: str | Path, *, caption: str | None = None, 
     raise UnsupportedFileError(
         f"{file.name} looks like {media_type}; MARK remembers text, Markdown, code, HTML, PDF, images, and "
         "audio/video with a transcriber")
+
+
+def _write_policy(memory: Any) -> WritePolicy:
+    """The memory's write policy (redaction + injection screening), else the default one."""
+    resolve = getattr(memory, "_write_policy_in_effect", None)
+    policy = resolve() if callable(resolve) else None
+    return policy if isinstance(policy, WritePolicy) else DEFAULT_WRITE_POLICY
 
 
 def _default_title(text: str) -> str:
