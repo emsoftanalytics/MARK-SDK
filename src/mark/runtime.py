@@ -111,8 +111,12 @@ class Mark(MarkDataMixin, MarkConfigureMixin):
         Create a local Mark instance backed by SQLite.
 
         Args:
-            project_path: Root directory of your project (default: cwd), or a
-                          database file (``"notes.db"``), as for ``mark --db``.
+            project_path: Where the store is, by the rule ``mark --db`` and
+                          ``mark mcp --db`` use too: a project folder (default:
+                          cwd) keeps it in ``<folder>/.mark/memory.db``; a
+                          ``.mark`` folder is the store folder itself
+                          (``Mark.local("./.mark")`` opens ``./.mark/memory.db``);
+                          a ``.db`` file is the database.
             store_path:   Override the .mark/ directory location (or a .db file).
             embedder:     EmbeddingProvider, or a spec string: "auto" (best local
                           model, else hash), "hash", "ollama:<model>", ...
@@ -141,9 +145,8 @@ class Mark(MarkDataMixin, MarkConfigureMixin):
             injection:       Prompt-injection screening: "tag" (default),
                              "quarantine" or "off".
 
-        The .mark/ directory is created under project_path if it does not
-        exist (mode 0700 on POSIX). SQLite database is at .mark/memory.db
-        (created 0600).
+        The store folder is created if it does not exist (mode 0700 on
+        POSIX); the SQLite database in it is created 0600.
         """
         from mark._private_fs import ensure_private_dir
         from mark.memory.runtime import MarkRuntime

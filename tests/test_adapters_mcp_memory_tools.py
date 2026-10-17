@@ -126,8 +126,9 @@ def test_tool_descriptions_are_neutral_and_parameters_documented(mark) -> None:
 
 def test_launcher_accepts_db_files_and_directories(tmp_path: Path, monkeypatch) -> None:
     assert resolve_db(tmp_path / "x.db") == (tmp_path / "x.db").resolve()
-    (tmp_path / "store").mkdir()
-    assert resolve_db(tmp_path / "store") == (tmp_path / "store" / "memory.db").resolve()
+    (tmp_path / "store").mkdir()            # a project folder: its store is <dir>/.mark/memory.db
+    assert resolve_db(tmp_path / "store") == (tmp_path / "store" / ".mark" / "memory.db").resolve()
+    assert resolve_db(tmp_path / ".mark") == (tmp_path / ".mark" / "memory.db").resolve()
     monkeypatch.setenv("MARK_DB", str(tmp_path / "env.db"))
     assert resolve_db(None) == (tmp_path / "env.db").resolve()
     server, runtime = build_server(tmp_path / "cli.db", agent_id="a", briefing=True, preset="tiny")

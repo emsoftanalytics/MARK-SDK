@@ -2,11 +2,12 @@
 
     python -m mark.adapters.mcp --db .mark/memory.db --briefing --preset small
 
-Path handling matches the ``mark`` CLI (agent report #15: ``Mark.local``
-wanted a directory where the CLI's ``--db`` takes a file): ``--db`` is the
-SQLite file, else ``$MARK_DB``, else ``./.mark/memory.db``. A directory is
-accepted too and means ``<dir>/memory.db`` (a ``.mark`` folder). The CLI's
-``mark mcp`` verb is a thin wrapper over :func:`main` / :func:`run_mcp`.
+Path handling is the one rule of :func:`mark.runtime_data.store_db_file`,
+shared with ``Mark.local`` and ``mark --db``: a ``.db`` file is the file, a
+``.mark`` folder (or a folder already holding ``memory.db``) is the store
+folder, and any other folder is a project whose store is
+``<dir>/.mark/memory.db``; default ``$MARK_DB``, else ``./.mark/memory.db``.
+The CLI's ``mark mcp`` verb is a thin wrapper over :func:`main` / :func:`run_mcp`.
 
 Nothing is printed on stdout: stdio MCP uses it for the protocol.
 """
@@ -19,12 +20,10 @@ from typing import Any, Sequence
 
 
 def resolve_db(path: str | Path | None) -> Path:
-    """The SQLite file for *path* (file, directory or None), as the CLI resolves it."""
-    raw = str(path) if path else os.environ.get("MARK_DB") or str(Path(".mark") / "memory.db")
-    db = Path(raw).expanduser().resolve()
-    if db.is_dir():
-        return db / "memory.db"
-    return db
+    """The SQLite file for *path* (file, folder or None), exactly as the CLI resolves it."""
+    from mark.runtime_data import store_db_file
+
+    return store_db_file(str(path) if path else os.environ.get("MARK_DB") or str(Path(".mark") / "memory.db"))
 
 
 def build_server(db: str | Path | None = None, *, agent_id: str = "__mark__", briefing: bool = False,
@@ -35,8 +34,10 @@ def build_server(db: str | Path | None = None, *, agent_id: str = "__mark__", br
     from mark.adapters.mcp import create_mark_mcp_server
     from mark.memory.runtime import MarkRuntime
 
+    from mark._private_fs import ensure_private_dir
+
     file = resolve_db(db)
-    file.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(file.parent)  # 0700 when created here, as Mark.local and the CLI do
     runtime = MarkRuntime.local(store_path=file)
     server = create_mark_mcp_server(
         LocalMarkBackend(runtime, default_agent_id=agent_id), name=name, default_agent_id=agent_id,
