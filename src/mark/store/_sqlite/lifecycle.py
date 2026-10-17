@@ -38,6 +38,7 @@ class LifecycleStoreMixin:
 
         now = datetime.now(timezone.utc).isoformat()
         with self._writing() as conn:
+            self._note_changed((fragment_id,))
             row = conn.execute(
                 "SELECT rowid, agent_id FROM fragments WHERE id = ?", (fragment_id,)
             ).fetchone()

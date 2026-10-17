@@ -110,8 +110,8 @@ class LocalMemoryStore(
         self._generation = 0  # bumped by close() to invalidate thread-local handles
         self._conns: list[sqlite3.Connection] = []
         self._listeners: list[ListenerCallback] = []
-        # retrievable_ids() cache: filter key -> (ids, write_version, deadline).
-        self._ids_cache: dict[tuple, tuple[frozenset[str], int, float]] = {}
+        # retrievable_ids() cache: filter key -> scope_delta._Entry (ids, version, expiry, refresh).
+        self._ids_cache: dict = {}
         self._fts_supported = False
         self._fts_enabled = False
         self._shared_conn: sqlite3.Connection | None = None

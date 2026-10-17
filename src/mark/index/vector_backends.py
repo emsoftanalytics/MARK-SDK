@@ -39,7 +39,9 @@ class _PythonPartition:
         return list(self.vectors)
 
     def keys(self) -> Any:
-        return self.vectors.keys()
+        # The dict itself, not a keys view: set.difference(dict) probes the
+        # dict per element of the (often tiny) set; with a view it walks every key.
+        return self.vectors
 
     def snapshot(self) -> Any:
         # Vectors are never mutated in place, so a shallow copy is consistent.
@@ -90,7 +92,7 @@ class _NumpyPartition:
         return list(self._pos)
 
     def keys(self) -> Any:
-        return self._pos.keys()
+        return self._pos  # a dict: see _PythonPartition.keys
 
     def add(self, fragment_id: str, vector: Any) -> None:
         row = self._pos.get(fragment_id)

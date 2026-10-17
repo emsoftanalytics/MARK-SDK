@@ -18,6 +18,7 @@ class GraphMixin:
     def store_document(self, doc: MemoryDocument) -> str:
         """Persist a document."""
         with self._writing() as conn:
+            self._note_changed(())  # graph rows never change which fragments are retrievable
             conn.execute(
                 "INSERT OR REPLACE INTO documents VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
@@ -43,6 +44,7 @@ class GraphMixin:
     def store_node(self, node: MemoryNode) -> str:
         """Persist a graph node."""
         with self._writing() as conn:
+            self._note_changed(())  # graph rows never change which fragments are retrievable
             conn.execute(
                 "INSERT OR REPLACE INTO nodes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
@@ -85,6 +87,7 @@ class GraphMixin:
             sql += " AND relation = ?"
             params.append(relation.value)
         with self._writing() as conn:
+            self._note_changed(())  # graph rows never change which fragments are retrievable
             cursor = conn.execute(sql, params)
         return cursor.rowcount
 
@@ -101,6 +104,7 @@ class GraphMixin:
     def store_edge(self, edge: MemoryEdge) -> str:
         """Insert or replace an edge row; block_id scopes the edge to a block."""
         with self._writing() as conn:
+            self._note_changed(())  # graph rows never change which fragments are retrievable
             conn.execute(
                 """
                 INSERT OR REPLACE INTO edges
@@ -158,6 +162,7 @@ class GraphMixin:
     def delete_edge(self, edge_id: str) -> bool:
         """Delete an edge by id. Returns True if a row was deleted."""
         with self._writing() as conn:
+            self._note_changed(())  # graph rows never change which fragments are retrievable
             cursor = conn.execute("DELETE FROM edges WHERE id = ?", (edge_id,))
         return cursor.rowcount > 0
 

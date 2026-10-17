@@ -112,6 +112,7 @@ class FragmentWriteMixin:
                 "refusing to overwrite it."
             )
         cursor = conn.execute(_UPSERT_FRAGMENT_SQL, params)
+        self._note_changed((fragment.id,))  # lets id caches apply a delta (scope_delta)
         # ON CONFLICT DO UPDATE keeps the rowid; lastrowid is only set on insert.
         rowid = int(existing["rowid"]) if existing is not None else int(cursor.lastrowid or 0)
         became_unretrievable = (
@@ -126,6 +127,7 @@ class FragmentWriteMixin:
     def update_state(self, fragment_id: str, new_state: MemoryState) -> None:
         """Update a fragment's lifecycle state."""
         with self._writing() as conn:
+            self._note_changed((fragment_id,))
             cursor = conn.execute(
                 "UPDATE fragments SET state = ?, updated_at = ? WHERE id = ?",
                 (new_state.value, datetime.now(timezone.utc).isoformat(), fragment_id),
@@ -135,16 +137,21 @@ class FragmentWriteMixin:
             self._emit("unretrievable", [fragment_id])
 
     def update_embedding(self, fragment_id: str, embedding: list[float]) -> None:
-        """Persist a fragment's embedding (float32 blob)."""
+        """Persist a fragment's embedding (float32 blob); a vector snapshot stops serving the old one."""
         with self._writing(structural=False) as conn:
+            # No RETURNING: it needs SQLite 3.35, older than some supported Pythons ship.
+            row = conn.execute("SELECT agent_id FROM fragments WHERE id = ?", (fragment_id,)).fetchone()
             conn.execute(
                 "UPDATE fragments SET embedding_blob = ?, embedding = NULL WHERE id = ?",
                 (_pack_embedding(embedding), fragment_id),
             )
+            if row is not None:
+                self._mark_vector_dirty(conn, str(row[0]), fragment_id)
 
     def delete(self, fragment_id: str) -> bool:
         """Delete by id; returns True when a row was removed."""
         with self._writing() as conn:
+            self._note_changed((fragment_id,))
             row = conn.execute("SELECT rowid FROM fragments WHERE id = ?", (fragment_id,)).fetchone()
             if row is None:
                 return False
@@ -176,6 +183,7 @@ class FragmentWriteMixin:
         now = datetime.now(timezone.utc).isoformat()
         changed: list[str] = []
         with self._writing() as conn:
+            self._note_changed(fragment_ids)
             for fragment_id in fragment_ids:
                 cursor = conn.execute(
                     "UPDATE fragments SET state = ?, updated_at = ? WHERE id = ? AND state != ?",

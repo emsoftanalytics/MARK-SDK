@@ -7,9 +7,7 @@ Two interchangeable scoring backends:
 - ``python``: dependency-free scoring with ``heapq.nlargest``.
 
 Both backends return the same hits in the same order (ties are broken by
-insertion order); scores agree to float32 precision.
-
-``backend="auto"`` (the default) starts in pure Python and switches to numpy
+insertion order); scores agree to float32 precision. ``backend="auto"`` (the default) starts in pure Python and switches to numpy
 once the index holds ``AUTO_NUMPY_THRESHOLD`` vectors, if numpy is installed.
 Importing numpy costs 0.2–0.7 s, far more than scoring a few thousand vectors
 in Python, so short-lived processes with small stores never pay for it.
@@ -165,10 +163,11 @@ class VectorIndex:
             return 0 if partition is None else len(partition)
 
     def missing(self, fragment_ids: Iterable[str], agent_id: str | None = None) -> set[str]:
-        """The given ids that are not indexed under *agent_id* (one C-level set difference)."""
+        """The given ids not indexed under *agent_id*: one C-level pass over the given ids."""
         with self._lock:
             partition = self._partitions.get(agent_id)
-            return set(fragment_ids).difference(partition.keys() if partition is not None else ())
+            wanted = fragment_ids if isinstance(fragment_ids, (set, frozenset)) else set(fragment_ids)  # no copy
+            return wanted.difference(partition.keys() if partition is not None else ())
 
     def clear(self, agent_id: str | None = None) -> None:
         """Remove every vector, or only one agent's when agent_id is given."""

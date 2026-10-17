@@ -182,9 +182,10 @@ def test_unchanged_scope_skips_index_sync(tmp_path) -> None:
         pipeline._load_missing = lambda *a: calls.append(a) or original(*a)  # type: ignore[method-assign]
         memory.retrieve_sync("svc-002 patched")
         assert calls == []  # nothing changed: no O(store) work
-        memory.store_sync("svc-003 was audited")
-        memory.retrieve_sync("svc-003 audited")
-        assert len(calls) == 1
+        new = memory.store_sync("svc-003 was audited")
+        # A write since: the index follows the scope's delta, still no O(store) work.
+        assert memory.retrieve_sync("svc-003 audited").fragments[0].id == new
+        assert calls == []
 
 
 # ── vector snapshots ──────────────────────────────────────────────────────────
@@ -235,3 +236,22 @@ def test_snapshots_need_the_fts_write_hook(tmp_path) -> None:
     assert store.save_vector_snapshot(AGENT, "fp", ["a"], [b"\0" * 4], 1, store._write_version()) is False
     assert store.load_vector_snapshot(AGENT, "fp") is None
     store.close()
+
+
+def test_update_embedding_invalidates_the_snapshot_entry(tmp_path, monkeypatch) -> None:
+    pytest.importorskip("numpy")
+    from mark.store._sqlite import vector_snapshot
+
+    monkeypatch.setattr(vector_module, "AUTO_NUMPY_THRESHOLD", 100)
+    monkeypatch.setattr(vector_snapshot, "MIN_ROWS", 200)
+    with Mark.local(tmp_path) as mark:
+        ids = mark.runtime.memory(AGENT).store_many_sync(_corpus(300))
+    with Mark.local(tmp_path) as mark:  # cold start saves a snapshot
+        mark.runtime.memory(AGENT).retrieve_sync("svc-001 restarted")
+        store = mark.runtime.store
+        assert store._fetchall("SELECT count FROM vector_snapshot_meta")[0][0] == len(ids)
+        store.update_embedding(ids[5], [0.0, 1.0] + [0.0] * 254)  # direct call, no pipeline
+        assert store._fetchall("SELECT id FROM vector_dirty")[0][0] == ids[5]
+    with Mark.local(tmp_path) as mark:  # the snapshot must not serve the old vector
+        mark.runtime.memory(AGENT).retrieve_sync("svc-001 restarted")
+        assert mark.runtime.index.get(ids[5])[1] == pytest.approx(1.0)
