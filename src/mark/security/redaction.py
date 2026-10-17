@@ -21,7 +21,8 @@ from typing import Any
 
 from mark.security.pii_rules import EMAIL_PATTERN, EMAIL_RULE, OTHER_PII_RULES, PHONE_RULES
 from mark.security.rules import Rule
-from mark.security.secret_rules import SECRET_ASSIGNMENT, SECRET_RULES
+from mark.security.secret_rules import SECRET_ASSIGNMENT
+from mark.security.secret_rules_prose import ALL_SECRET_RULES
 
 REDACTED = "[REDACTED]"
 
@@ -53,7 +54,7 @@ class RedactionPolicy:
         """Return the ordered rules this policy applies."""
         out: list[Rule] = []
         if self.secrets:
-            out.extend(SECRET_RULES)
+            out.extend(ALL_SECRET_RULES)
         out.extend(Rule(kind, pattern) for kind, pattern in self.extra_patterns)
         if self.emails if self.emails is not None else self.pii:
             out.append(EMAIL_RULE)
@@ -190,7 +191,7 @@ def _redact_whole(value: Any) -> Any:
 
 
 # Deprecated aliases kept for 0.2.0a9 imports.
-SECRET_PATTERNS = [(rule.kind, rule.pattern) for rule in SECRET_RULES]
+SECRET_PATTERNS = [(rule.kind, rule.pattern) for rule in ALL_SECRET_RULES]
 PII_PATTERNS = [(rule.kind, rule.pattern) for rule in [*OTHER_PII_RULES, *PHONE_RULES]]
 ASSIGNMENT_PATTERN = SECRET_ASSIGNMENT
 
