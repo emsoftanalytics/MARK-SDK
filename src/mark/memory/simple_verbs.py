@@ -67,6 +67,15 @@ class SimpleVerbsMixin:
     export_jsonl = _forward("export_jsonl")
     import_jsonl = _forward("import_jsonl")
     embedder_info = _forward("embedder_info")
+    # Documents, files and batches: the same verbs as runtime.memory(id).
+    store_document = _forward("store_document")
+    remember_file = _forward("remember_file")
+    store_many_sync = _forward("store_many_sync")
+
+    @property
+    def images(self) -> Any:
+        """Image memories (path + hash, captions, continuity checks) of the simple agent."""
+        return self._mark_memory.images
 
     @property
     def facts(self) -> Any:
@@ -111,6 +120,18 @@ class SimpleVerbsMixin:
     async def aremember(self, text: str, **kwargs: Any) -> str:
         """Async :meth:`remember` (same arguments)."""
         return await self._mark_memory._in_executor(self.remember, text, **kwargs)
+
+    def remember_many(self, texts: Any, *, block: str | None = None, tags: list[str] | None = None,
+                      **options: Any) -> Any:
+        """Store many memories; returns a ``StoreReport``. ``block`` files them all in a block.
+
+        Same arguments as :meth:`mark.memory.mark_memory.MarkMemory.remember_many`.
+        """
+        all_tags = list(tags or [])
+        if block:
+            self._known_blocks.add(block)
+            all_tags.append(_BLOCK_TAG + block)
+        return self._mark_memory.remember_many(texts, tags=all_tags or None, **options)
 
     def recall(self, query: str, *, blocks: list[str] | None = None, k: int | None = None, **options: Any) -> Any:
         """Search memory; returns a :class:`~mark.intelligence.retrieval.RetrievalResult`.

@@ -18,7 +18,15 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
-from mark.kinds import DEFAULT_CONFIDENCE, DEFAULT_IMPORTANCE, kind_tag, normalize_kind
+from mark.kinds import (
+    DEFAULT_CONFIDENCE,
+    DEFAULT_IMPORTANCE,
+    TAG_RESOLVED,
+    TAG_SUPERSEDED,
+    kind_from_text,
+    kind_tag,
+    normalize_kind,
+)
 from mark.memory.facade.core import MemoryCore
 
 
@@ -55,7 +63,9 @@ class VerbsMixin(MemoryCore):
         """Store one memory and return its id.
 
         ``kind`` is one of :data:`mark.kinds.KINDS` (``"decision"``,
-        ``"todo"``, ``"bug"``, ...) and is stored as the tag ``kind:<kind>``.
+        ``"todo"``, ``"bug"``, ...) and is stored as the tag ``kind:<kind>``;
+        without it a leading label sets it ("TODO: ..." -> ``"todo"``, see
+        :func:`mark.kinds.kind_from_text`).
         ``occurred_at`` dates the event (shown in recall, used for "latest"
         questions); ``extract_facts=True`` records facts stated in the text.
         Remaining keywords (``scope``, ``state``, ``ttl_seconds``) are passed
@@ -68,6 +78,8 @@ class VerbsMixin(MemoryCore):
             raise InvalidInputError("memory text must be a non-empty string")
         all_tags = list(dict.fromkeys(tags or []))
         kind = normalize_kind(kind)
+        if kind is None and not any(t.startswith("kind:") for t in all_tags if isinstance(t, str)):
+            kind = kind_from_text(text)
         if kind and kind_tag(kind) not in all_tags:
             all_tags.append(kind_tag(kind))
         try:
@@ -92,6 +104,7 @@ class VerbsMixin(MemoryCore):
         until: datetime | str | None = None,
         policy: Any = None,
         order: str = "relevance",
+        open: bool | None = None,  # noqa: A002 - mirrors list(open=...) and `recall --open`
         **options: Any,
     ) -> Any:
         """Search memory; returns a :class:`~mark.intelligence.retrieval.RetrievalResult`.
@@ -102,7 +115,8 @@ class VerbsMixin(MemoryCore):
         ``since``/``until`` keep memories whose event time (``occurred_at``,
         a leading ``[YYYY-MM-DD]`` stamp, else the stored time) falls inside
         the bounds. ``order="chronological"`` lists the kept results oldest
-        first. Other keywords go to :meth:`retrieve_sync`.
+        first. ``open=True`` leaves out resolved and superseded memories
+        (``open=False`` keeps only those). Other keywords go to :meth:`retrieve_sync`.
         """
         from mark.intelligence.retrieval import RetrievalPolicy
         from mark.memory.timeline_order import ORDERS, apply_order
@@ -120,7 +134,9 @@ class VerbsMixin(MemoryCore):
         if kind:
             wanted.append(kind_tag(kind))
         if policy is None:
-            policy = RetrievalPolicy.DEEP if k is not None and k > 10 else RetrievalPolicy.BALANCED
+            # open= filters after ranking, so it starts from the deeper candidate list.
+            deep = (k is not None and k > 10) or open is not None
+            policy = RetrievalPolicy.DEEP if deep else RetrievalPolicy.BALANCED
         if since is not None or until is not None:
             # The pipeline filters candidates by event time before top-k is
             # taken; it accepts datetimes, ISO text and natural text ("last week").
@@ -137,11 +153,28 @@ class VerbsMixin(MemoryCore):
                 raise
             raise InvalidInputError(str(exc)) from exc
         keep = list(range(len(result.fragments)))
+        if open is not None:
+            retired = (TAG_RESOLVED, TAG_SUPERSEDED)
+            keep = [i for i in keep
+                    if any(t in result.fragments[i].tags for t in retired) is (open is False)]
         if k is not None:
             keep = keep[: int(k)]
         if len(keep) != len(result.fragments):
             result = _select(result, keep)
         return apply_order(result, order)
+
+    def remember_many(self, texts: Any, *, kind: str | None = None, tags: list[str] | None = None,
+                      idempotency_key: str | None = None, **options: Any) -> Any:
+        """Store many memories in one batch; returns a :class:`StoreReport` (ids in input order).
+
+        Like :meth:`remember` for each text (a leading "TODO:"/"BUG:"... label
+        sets the kind when ``kind`` is not given) with the batch semantics of
+        :meth:`store_many_sync`: invalid items are skipped and reported, and
+        ``idempotency_key`` makes a retried call store nothing twice.
+        """
+        from mark.memory.facade.verbs_batch import remember_many
+
+        return remember_many(self, texts, kind=kind, tags=tags, idempotency_key=idempotency_key, **options)
 
     def brief(self, *, budget_tokens: int = 400, focus: str | None = None, **options: Any) -> Any:
         """One-call session brief: current facts, open TODOs, decisions, bugs/fixes, changes.
