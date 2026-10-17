@@ -28,6 +28,7 @@ from mark._cli.config import (
     _state_path,
 )
 from mark._cli.engine import _Engine, protocol_fingerprint
+from mark._private_fs import ensure_private_dir
 
 
 def serve(db: Path, host: str = "127.0.0.1", port: int = 0, *, stop_event: Any = None) -> None:
@@ -128,7 +129,7 @@ def serve(db: Path, host: str = "127.0.0.1", port: int = 0, *, stop_event: Any =
 def _acquire_lock(db: Path) -> Path:
     """Create the per-database server lock, clearing it if its owner is gone."""
     lock = _lock_path(db)
-    lock.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(lock.parent)
     for _ in range(2):
         try:
             fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -173,7 +174,7 @@ def _pid_alive(pid: int) -> bool:
 
 def _write_state(path: Path, data: dict[str, Any]) -> None:
     """Atomically write the 0600 state file (created private, then renamed in)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(path.parent)
     tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as handle:

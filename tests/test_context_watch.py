@@ -110,3 +110,27 @@ def test_prefetch_failures_never_reach_the_agent(memory, monkeypatch, caplog) ->
 def test_invalid_role_rejected(memory) -> None:
     with ContextWatch(memory) as watch, pytest.raises(ValueError):
         watch.observe("hi", role="robot")
+
+
+def test_subjects_only_the_model_named_stay_quiet_until_confirmed(memory) -> None:
+    with ContextWatch(memory, background=False) as watch:
+        watch.observe("Any update on the outage?", role="user")
+        # The model's own wording must not become "Not in memory" noise...
+        watch.observe("Olá Mei! The nectar-rich fix for HAL-4433 is underway.", role="assistant")
+        brief = watch.briefing()
+        assert brief.unknown == []
+        assert "nectar-rich" not in brief.text and "Olá Mei" not in brief.anchors
+        # ...but a subject the model names that memory knows is still served.
+        assert "HAL-4433" in brief.anchors and "TICKET HAL-4433 opened" in brief.text
+        # Once the user names an unknown subject it is reported as usual.
+        watch.observe("What is nectar-rich?", role="user")
+        assert watch.briefing().unknown == ["nectar-rich"]
+
+
+def test_bare_numbers_are_never_unknown_subjects(memory) -> None:
+    # Ports, counts and years are values, not subjects: only ids are reported.
+    with ContextWatch(memory, background=False) as watch:
+        watch.observe("restart checkout-api on 8080; zephyr-9 too. 3 pods, since 2025", role="user")
+        brief = watch.briefing()
+    assert brief.unknown == ["checkout-api", "zephyr-9"]
+    assert "8080" not in brief.text and "2025" not in brief.text

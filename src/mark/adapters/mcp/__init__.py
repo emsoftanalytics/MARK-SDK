@@ -72,6 +72,9 @@ def create_mark_mcp_server(
     default_blocks: list[str] | None = None,
     compress: bool = False,
     allowed_agent_ids: Iterable[str] | None = None,
+    briefing: bool = False,
+    briefing_sessions: int = 64,
+    briefing_preset: str = "default",
 ) -> Any:
     """
     Create a FastMCP server that exposes MARK memory as MCP tools.
@@ -94,6 +97,12 @@ def create_mark_mcp_server(
                           store. Pass a set of ids to restrict clients; calls
                           naming any other namespace are rejected.
                           ``default_agent_id`` is always allowed.
+        briefing:         Opt in to the ``mark_briefing`` tool (and the
+                          ``mark://briefing/{session_id}`` resource): push
+                          context from a per-session ContextWatch. Needs a
+                          backend with ``memory_for`` (``LocalMarkBackend``).
+        briefing_sessions: Sessions kept (LRU; evicted watches are closed).
+        briefing_preset:  ``"default"`` or ``"small"`` (small-model preset).
 
     Namespaces:
         The ``agent_id`` tool parameter lets MCP clients choose the memory
@@ -233,6 +242,13 @@ def create_mark_mcp_server(
         label = "canonical memory" if canonical else "memory"
         return f"MARK {label} written{f' as {fragment_id}' if fragment_id else ''}."
 
+    if briefing:
+        from mark.adapters.mcp._briefing import register_briefing
+
+        server.mark_briefing_sessions = register_briefing(
+            server, backend, _resolve_agent, default_agent_id=default_agent_id,
+            max_sessions=briefing_sessions, preset=briefing_preset,
+        )
     return server
 
 
@@ -244,6 +260,7 @@ def create_mark_mcp_server_from_local(
     default_blocks: list[str] | None = None,
     compress: bool = False,
     allowed_agent_ids: Iterable[str] | None = None,
+    **briefing_options: Any,
 ) -> Any:
     """
     Convenience wrapper: create a MARK MCP server directly from a
@@ -253,6 +270,8 @@ def create_mark_mcp_server_from_local(
         mark:     A ``Mark.local(...)`` instance.
         name:     Human-readable name for the MCP server.
         agent_id: Agent namespace for all memory operations.
+        briefing_options: ``briefing``, ``briefing_sessions`` and
+                  ``briefing_preset`` as for :func:`create_mark_mcp_server`.
 
     Example::
 
@@ -270,6 +289,7 @@ def create_mark_mcp_server_from_local(
         default_blocks=default_blocks,
         compress=compress,
         allowed_agent_ids=allowed_agent_ids,
+        **briefing_options,
     )
 
 

@@ -10,11 +10,11 @@ Expects the host class to provide ``_store``.
 from __future__ import annotations
 
 from mark.intelligence.classifier import QueryAnalysis
+from mark.intelligence.fact_relevance import select_facts
 from mark.intelligence.query_understanding import (
     TemporalIntent,
     _anchor_norm,
     _contains_anchor,
-    _content_terms,
     detect_temporal_intent,
     query_anchors,
 )
@@ -58,8 +58,10 @@ class _ReportingMixin:
     def _matching_facts(self, query: str, agent_id: str, intent: TemporalIntent) -> list:
         """Facts about the query's anchors: current values, or first values for ORIGINAL queries.
 
-        When the query names attributes that facts exist for ("port"), only
-        those are returned; otherwise every attribute of the subject is.
+        Per subject, :func:`~mark.intelligence.fact_relevance.select_facts`
+        keeps only the attributes the query asks about ("port"), none when
+        it asks for something no fact covers ("Which region ..."), and every
+        attribute for open questions ("Tell me about atlas-core").
         """
         current = getattr(self._store, "fact_current", None)
         if current is None:
@@ -75,12 +77,9 @@ class _ReportingMixin:
             for subject in subjects_of(agent_id):
                 if subject not in subjects and _contains_anchor(normalised, _anchor_norm(subject)):
                     subjects.append(subject)
-        terms = set(_content_terms(query))
         found = []
         for subject in subjects:
-            rows = current(agent_id, subject)
-            named = [r for r in rows if set(_content_terms(r["attribute"])) & terms]
-            for row in named or rows:
+            for row in select_facts(query, subject, current(agent_id, subject)):
                 if intent == TemporalIntent.ORIGINAL:
                     # Show where it started and where it is now.
                     history = self._store.fact_history(agent_id, row["subject"], row["attribute"])

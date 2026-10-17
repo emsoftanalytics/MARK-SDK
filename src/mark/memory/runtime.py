@@ -5,10 +5,11 @@ from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from mark.embeddings import EmbeddingProvider, HashEmbeddingProvider
+from mark.embeddings import EmbeddingProvider, resolve_embedder
 from mark.index import VectorIndex
 from mark.intelligence.retrieval import GraphExpander, RetrievalPipeline
 from mark.intelligence.compressor import ContextualCompressor
+from mark.intelligence.fact_extraction import FactExtractionService, resolve_extractor
 from mark.intelligence.query_expander import QueryExpander
 from mark.middlewares.base import MarkMiddleware, MiddlewareStack
 from mark.plugins import MarkCorePlugin, PluginRegistry
@@ -18,9 +19,10 @@ from mark.types.llm import LLMProvider
 
 from mark.memory.global_bus import GlobalMemoryBus
 from mark.memory.mark_memory import MarkMemory
+from mark.memory.runtime_maintenance import MaintenanceMixin
 
 
-class MarkRuntime:
+class MarkRuntime(MaintenanceMixin):
     """Stronger local hippocampus/cortex runtime for agent applications."""
 
     def __init__(
@@ -38,6 +40,7 @@ class MarkRuntime:
         tracer: object | None = None,
         retrieval_top_k: int = 20,
         middleware: Iterable[MarkMiddleware] | None = None,
+        fact_extractor: object = None,
     ) -> None:
         self.store = store
         self.embedder = embedder
@@ -68,6 +71,9 @@ class MarkRuntime:
         )
         self.middleware = MiddlewareStack(middleware)
         self.middleware.bind(self)
+        # Default fact extractor for writes (None = off; background ones get a durable queue).
+        extractor = resolve_extractor(fact_extractor)
+        self.fact_extraction = FactExtractionService(store, extractor) if extractor is not None else None
 
     def _on_store_event(self, event: str, fragment_id: str) -> None:
         """Store listener: drop deleted/unretrievable fragments from the index."""
@@ -79,7 +85,7 @@ class MarkRuntime:
         cls,
         *,
         store_path: str | Path = ":memory:",
-        embedder: EmbeddingProvider | None = None,
+        embedder: EmbeddingProvider | str | None = None,
         encryption: EncryptionProvider | None = None,
         plugins: Iterable[MarkCorePlugin] | None = None,
         workers: int = 4,
@@ -90,12 +96,18 @@ class MarkRuntime:
         tracer: object | None = None,
         retrieval_top_k: int = 20,
         middleware: Iterable[MarkMiddleware] | None = None,
+        fact_extractor: object = None,
     ) -> "MarkRuntime":
-        """Construct a local instance with default wiring."""
+        """Construct a local instance.
+
+        ``embedder``: a provider, a spec such as ``"auto"`` (see ``mark.embeddings.auto``)
+        or None (hash, or ``MARK_EMBEDDER``). ``fact_extractor``: None (off),
+        ``"patterns"`` or a FactExtractor.
+        """
         registry = PluginRegistry()
         runtime = cls(
             store=LocalMemoryStore(store_path, encryption=encryption or NoOpEncryptionProvider()),
-            embedder=embedder or HashEmbeddingProvider(),
+            embedder=resolve_embedder(embedder),
             plugins=registry,
             workers=workers,
             llm=llm,
@@ -105,6 +117,7 @@ class MarkRuntime:
             tracer=tracer,
             retrieval_top_k=retrieval_top_k,
             middleware=middleware,
+            fact_extractor=fact_extractor,
         )
         for plugin in plugins or []:
             registry.register(plugin, runtime=runtime)
@@ -144,7 +157,6 @@ class MarkRuntime:
         """Return the local runtime tracer."""
         if self._tracer is None:
             from mark.middlewares.observability import LocalTracer
-
             self._tracer = LocalTracer()
         return self._tracer
 
@@ -173,6 +185,7 @@ class MarkRuntime:
             llm=self._llm,
             middleware_stack=self.middleware,
             runtime=self,
+            fact_extraction=self.fact_extraction,
         )
 
     def global_bus(self) -> GlobalMemoryBus:
@@ -204,86 +217,6 @@ class MarkRuntime:
         from mark.memory.working import WorkingMemoryManager
         return WorkingMemoryManager(self.store, agent_id=agent_id)
 
-    def consolidate(self, agent_id: str, *, promote_threshold: float = 0.7) -> "ConsolidationResult":
-        """Promote high-importance working memory to LTM; delete expired fragments."""
-        from mark.memory.consolidation import ConsolidationManager
-        tracer = self.tracer()
-        tracer.emit("memory.consolidate.start", agent_id=agent_id)
-        result = ConsolidationManager(
-            self.store,
-            agent_id=agent_id,
-            audit_log=self.governance_audit_log(),
-        ).run(
-            promote_threshold=promote_threshold
-        )
-        tracer.emit(
-            "memory.consolidate.finish",
-            agent_id=agent_id,
-            promoted=result.promoted,
-            expired=result.expired,
-            skipped=result.skipped,
-            blocked=result.blocked,
-            sanitized=result.sanitized,
-        )
-        return result
-
-    def deduplicate(
-        self,
-        agent_id: str,
-        *,
-        similarity_threshold: float = 0.95,
-    ) -> "DeduplicationResult":
-        """Remove near-duplicate fragments, keeping the highest-importance copy."""
-        from mark.memory.deduplication import DeduplicationConsolidator, DeduplicationResult
-        result = DeduplicationConsolidator(
-            self.store, agent_id, similarity_threshold=similarity_threshold
-        ).run()
-        self.tracer().emit(
-            "memory.deduplicate",
-            agent_id=agent_id,
-            merged=result.merged,
-            kept=result.kept,
-            skipped=result.skipped,
-        )
-        return result
-
-    def prune(self, agent_id: str) -> "PrunerStats":
-        """Apply decay, cull forgotten fragments, and dissolve weak edges."""
-        from mark.plasticity.pruner import MemoryPruner
-        stats = MemoryPruner(self.store).run(agent_id)
-        self.tracer().emit(
-            "memory.prune",
-            agent_id=agent_id,
-            fragments_pruned=stats.fragments_pruned,
-            edges_dissolved=stats.edges_dissolved,
-            importance_updated=stats.importance_updated,
-        )
-        return stats
-
-    def run_cycle(self, agent_id: str, *, promote_threshold: float = 0.7) -> dict:
-        """
-        Full hippocampus maintenance cycle for agent_id.
-
-        Runs consolidation (working→LTM promotion + expiry) then pruning
-        (decay + edge dissolution). Returns a summary dict.
-        """
-        consolidation = self.consolidate(agent_id, promote_threshold=promote_threshold)
-        deduplication = self.deduplicate(agent_id)
-        pruning       = self.prune(agent_id)
-        return {
-            "agent_id":          agent_id,
-            "promoted":          consolidation.promoted,
-            "expired":           consolidation.expired,
-            "dedup_merged":      deduplication.merged,
-            "dedup_kept":        deduplication.kept,
-            "dedup_skipped":     deduplication.skipped,
-            "fragments_pruned":  pruning.fragments_pruned,
-            "edges_dissolved":   pruning.edges_dissolved,
-            "importance_updated": pruning.importance_updated,
-            "blocked":           consolidation.blocked,
-            "sanitized":         consolidation.sanitized,
-        }
-
     def integrity_check(self) -> list[str]:
         """Run store integrity check. Returns [] on a healthy store."""
         if hasattr(self.store, "integrity_check"):
@@ -292,5 +225,7 @@ class MarkRuntime:
 
     def shutdown(self) -> None:
         """Release resources held by the runtime."""
+        if self.fact_extraction is not None:
+            self.fact_extraction.close()  # queued jobs stay in the store
         self.executor.shutdown(wait=True)
         self.store.close()

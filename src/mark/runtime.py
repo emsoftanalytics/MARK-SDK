@@ -108,6 +108,7 @@ class Mark(MarkConfigureMixin):
         enable_activity_log: bool = False,
         retrieval_top_k: int = 20,
         middleware:      list["MarkMiddleware"] | None = None,
+        fact_extractor:  object | None = None,
     ) -> "Mark":
         """
         Create a local Mark instance backed by SQLite.
@@ -115,7 +116,9 @@ class Mark(MarkConfigureMixin):
         Args:
             project_path: Root directory of your project (default: cwd).
             store_path:   Override the .mark/ directory location.
-            embedder:     EmbeddingProvider (default: HashEmbeddingProvider).
+            embedder:     EmbeddingProvider, or a spec string: "auto" (best local
+                          model, else hash), "hash", "ollama:<model>", ...
+                          Default: HashEmbeddingProvider, or MARK_EMBEDDER if set.
             encryption:   EncryptionProvider (default: no encryption).
             workers:      Thread-pool size for async retrieval (default: 4).
             llm:          LLMProvider for local entity extraction in observe().
@@ -128,16 +131,21 @@ class Mark(MarkConfigureMixin):
                              compressor is configured (default 20).  Without a
                              compressor the built-in policy's top_k is used
                              (fast=5, balanced=10, deep=15).
+            fact_extractor:  Extract facts from every write: None (off, default),
+                             "patterns" (built-in rule packs, inline) or any
+                             FactExtractor (e.g. LLMFactExtractor, queued).
 
         The .mark/ directory is created under project_path if it does not
-        exist. SQLite database is at .mark/memory.db.
+        exist (mode 0700 on POSIX). SQLite database is at .mark/memory.db
+        (created 0600).
         """
+        from mark._private_fs import ensure_private_dir
         from mark.memory.runtime import MarkRuntime
 
         project  = Path(project_path).expanduser().resolve()
         mark_dir = (Path(store_path).expanduser().resolve()
                     if store_path else project / ".mark")
-        mark_dir.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(mark_dir)  # 0700 when MARK creates it; existing dirs untouched
         db_path = mark_dir / "memory.db"
 
         runtime = MarkRuntime.local(
@@ -151,6 +159,7 @@ class Mark(MarkConfigureMixin):
             enable_activity_log  = enable_activity_log,
             retrieval_top_k      = retrieval_top_k,
             middleware           = middleware,
+            fact_extractor       = fact_extractor,
         )
 
         # One-time migration: if a legacy memory.json exists, import it into SQLite
@@ -241,7 +250,14 @@ class Mark(MarkConfigureMixin):
         agent_id: str = "mark-agent",
         max_context_chars: int = 6000,
     ) -> MarkAgent:
-        """Wrap an LLM callable with MARK memory, policies, and skills."""
+        """Wrap an LLM callable with MARK memory, policies, and skills.
+
+        Note: ``agent_id`` defaults to ``"mark-agent"``, unlike the
+        ``"__mark__"`` default used elsewhere (``observe``, the CLI). It
+        labels the agent in middleware and skill contexts and in the
+        ``agent:<id>`` tag on stored outputs; memory is still read from and
+        written to ``self.memory``. Pass ``agent_id="__mark__"`` to match.
+        """
         skill_prompt = ""
         runtime_skill_prompt = getattr(self.runtime, "skill_prompt", None)
         if callable(runtime_skill_prompt):

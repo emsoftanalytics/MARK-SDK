@@ -1,397 +1,450 @@
 # MARK (Memory-Augmented Agent Recall Kit) Python SDK
 
-`mark-sdk` is an agent memory runtime. It installs as `mark-sdk` from PyPI and
-imports as `mark` in Python.
+MARK is local-first memory for AI agents. It installs as `mark-sdk` from PyPI
+and imports as `mark`.
 
-MARK helps agents remember what they create, decide, observe, and learn across
-long-running workflows. It is built for more than chat history: stories,
-characters, images, videos, software projects, plans, design decisions, tool
-results, and multi-agent workflow state all need continuity.
-
-The SDK combines memory storage, retrieval, context injection, observability,
-graph-scoped memory blocks, and tamper-evident provenance into a small
-developer API. Everything runs locally by default: no account, network, or API
-key is required.
+An agent stores what it learns, decides, and produces. MARK recalls the
+relevant parts later, tracks values that change over time, and can prepare a
+briefing before the agent asks. Everything runs locally in a SQLite file: no
+account, network, or API key is required.
 
 ```python
 from mark import Mark
 
-with Mark.local(project_path=".") as mark:
-    mark.memory.block("project").write(
-        "The API framework is FastAPI.",
-        importance=0.9,
-    )
+with Mark.local(".") as mark:
+    mark.memory.block("project").write("The API framework is FastAPI.", importance=0.9)
 
     context = mark.memory.retrieve("Which API framework does this project use?")
     print(context.as_text())
 ```
 
-## Why MARK
+## What MARK provides
 
-Most memory integrations start and end with `store()` and `retrieve()`. MARK is
-designed as an agent memory runtime: it participates in the agent loop, injects
-useful context before work, observes outcomes after work, and keeps memory
-inspectable as connected evidence rather than flat chunks.
-
-Use MARK when an agent needs to:
-
-- remember creative continuity: characters, objects, shots, styles, plot
-  points, and generated artifacts;
-- remember project decisions: architecture, conventions, constraints,
-  implementation plans, and test results;
-- coordinate across agents: one agent plans, another implements, another tests,
-  while all share durable local context;
-- preserve trust and provenance: group related memory into blocks, seal them,
-  verify them later, and quarantine bad memory without breaking the rest of the
-  agent;
-- adopt memory incrementally: add middleware or tools to an existing agent
-  rather than rebuilding the application around a database.
-
-MARK is not a managed memory database. The open SDK is the Apache-2.0-licensed
-runtime and integration layer.
+| Capability | What it does |
+| --- | --- |
+| Memory and recall | Hybrid keyword (BM25) and vector search with rank fusion. No LLM calls on store or recall. |
+| Sessions and blocks | Partition memory by session, group it into blocks, seal blocks into a tamper-evident chain. |
+| Facts | Values that change over time, with full history, corrections, and point-in-time lookups. |
+| Fact extraction | Facts recorded automatically from stored text, by built-in rule packs or a local LLM. |
+| Timelines | Everything memory knows about a subject, oldest first, with no top-k cap. |
+| Time-aware recall | Questions about the current or original state return the newest or earliest record first. |
+| Gap reports | Recall reports names and identifiers that are not in memory, so an agent can say it does not know. |
+| Briefings | `ContextWatch` prepares relevant memory before each model call, in any loop, within a token budget. |
+| Context replacement | MARK holds the conversation; the model sees the last few messages plus a briefing. |
+| Image memory | Images remembered by path and hash, found by caption, and checked against facts. |
+| Integrations | LangChain middleware and tools, an MCP server, and the `mark` command line. |
+| Local embeddings | `"auto"` or a spec string: Model2Vec, FastEmbed, Ollama, OpenAI-compatible, or the zero-dependency default. |
 
 ## Install
 
-MARK supports Python 3.10 and newer.
+MARK supports Python 3.10 and newer. The core package depends only on
+`pydantic`.
 
 ```bash
 pip install mark-sdk
 ```
 
-Optional framework adapters are bundled under `mark.adapters` and installed
-through extras:
+| Extra | Adds |
+| --- | --- |
+| `mark-sdk[fast]` | numpy-vectorised vector search (recommended) |
+| `mark-sdk[langchain]` | LangChain tools and agent middleware |
+| `mark-sdk[mcp]` | MCP server over MARK memory |
+| `mark-sdk[adapters]` | both LangChain and MCP |
+| `mark-sdk[crypto]` | encryption at rest (`FernetEncryptionProvider`) |
+| `mark-sdk[ollama]`, `[fastembed]`, `[model2vec]`, `[sentence-transformers]` | local embedding providers |
+| `mark-sdk[vision]` | CLIP image embeddings for image memory |
+| `mark-sdk[middleware]` | all local middleware batteries |
+
+Check the installation:
 
 ```bash
-pip install "mark-sdk[langchain]"   # LangChain tools + agent middleware
-pip install "mark-sdk[mcp]"        # MCP server over MARK memory
-pip install "mark-sdk[adapters]"   # both of the above
-pip install "mark-sdk[middleware]" # all local middleware batteries
-pip install "mark-sdk[fast]"       # numpy-vectorised search (recommended)
-```
-
-The core package depends only on `pydantic`. Without numpy, vector search runs
-in pure Python; with `mark-sdk[fast]` it uses one vectorised scan (about 1 ms at
-10k memories, 7 ms at 100k).
-
-Specific middleware install targets are also available, for example
-`mark-sdk[middleware-governance]`, `mark-sdk[middleware-trust-bus]`,
-`mark-sdk[middleware-sandbox]`, and `mark-sdk[middleware-media-continuity]`.
-Most middleware batteries are pure Python today, so the extras mainly provide a
-stable install contract as dependency-bearing middleware grows.
-
-Verify the installed package:
-
-```bash
-python -c "from mark import Mark; print(Mark.local('.').memory.list_blocks())"
+python -c "import mark; print(mark.__version__)"
 ```
 
 ## Quickstart
 
-### 1. Store and recall project memory
+The snippets below run offline, except sections 7, 8, and 11, which need a
+local model server. Each opens a store under the current directory
+(`./.mark/memory.db`).
+
+### 1. Memory blocks and recall
+
+`mark.memory` is the simple API. Blocks are named groups of related memory.
 
 ```python
 from mark import Mark
 
 with Mark.local(".") as mark:
-    mark.memory.block("architecture").write(
-        "Authentication uses FastAPI dependencies and JWT.",
-        importance=0.8,
-    )
+    decisions = mark.memory.block("decisions", kind="procedures")
+    decisions.write("Authentication uses FastAPI dependencies and JWT.", importance=0.8)
 
-    result = mark.memory.retrieve("How is authentication implemented?")
+    result = mark.memory.retrieve("How is authentication implemented?", blocks=["decisions"])
     print(result.as_text())
 ```
 
-### 2. Run the same agent with memory
+`mark.memory` writes to the default agent namespace, `"__mark__"`. For a
+separate namespace with the full API, use `mark.runtime.memory("<agent id>")`.
+The LangChain, MCP, and CLI integrations all default to `"__mark__"`.
+`mark.wrap_agent(fn, blocks=[...])` wraps a plain agent function so each call
+recalls memory first.
 
-```python
-import asyncio
-
-from mark import Mark
-
-def coding_agent(prompt: str) -> str:
-    if "FastAPI" in prompt:
-        return "Use FastAPI dependency injection for this endpoint."
-    return "I need more project context."
-
-with Mark.local(".") as mark:
-    mark.memory.block("project").write("This backend uses FastAPI.")
-    agent = mark.wrap_agent(coding_agent, blocks=["project"])
-
-    result = asyncio.run(agent.run("Add a health-check endpoint."))
-    print(result.output)
-```
-
-### 3. Track continuity across creative sessions
+### 2. Agent namespaces and sessions
 
 ```python
 from mark import Mark
 
 with Mark.local(".") as mark:
     memory = mark.runtime.memory("video-agent")
-
-    memory.observe(
+    memory.store_sync(
         "Elena enters the North Warehouse wearing the red scarf.",
-        session_id="season-01/episode-01/scene-04",
-        memory_type="scene",
+        session_id="season-01/episode-01",
     )
 
-    scene_context = memory.retrieve_sync(
-        "What must stay consistent for Elena?",
-        session_prefix="season-01/",
-    )
-    print(scene_context.as_context())
+    result = memory.retrieve_sync("What does Elena wear?", session_prefix="season-01/")
+    print(result.as_context())
 ```
 
-### 4. Group creations and decisions into provenance blocks
+`session_id` matches one session; `session_prefix` matches a group of them.
 
-Memory blocks bundle related fragments, nodes, and edges into one unit per
-topic, session, or world-bible scope. Blocks link to each other forward and
-backward, can be sealed into a tamper-evident hash chain, and can be
-quarantined — isolating bad memory without affecting the rest of the agent.
+### 3. Facts that change over time
+
+A fact is the value of an attribute of a subject, such as a service's port.
+Later values supersede earlier ones by when they became true (`valid_from`),
+not by when they were recorded, and nothing is deleted.
 
 ```python
 from mark import Mark
 
 with Mark.local(".") as mark:
-    memory = mark.runtime.memory("video-agent")
-    graph  = memory.blocks()
-    chain  = memory.chain()
+    facts = mark.runtime.memory("ops").facts
+    facts.set("atlas-core", "port", "6430", valid_from="2026-03-01")
+    facts.set("atlas-core", "port", "4444", valid_from="2026-03-30")
+    facts.set("atlas-core", "port", "5000", valid_from="2026-03-15")  # arrives late
 
-    shot = graph.create_block("ep01-scene04", session_id="season-01/episode-01")
-    graph.add_fragment(shot.id, memory.store_sync("Elena hides the key in the rafters."))
+    print(facts.get("atlas-core", "port").value)                    # 4444
+    print([f.value for f in facts.history("atlas-core", "port")])   # ['6430', '5000', '4444']
+    print(facts.as_of("atlas-core", "port", "2026-03-20").value)    # 5000
 
-    # Retrieval scoped to one block
-    result = memory.retrieve_sync("Where is the key?", block_id=shot.id)
-
-    # Seal the block into the agent's provenance chain
-    sealed = chain.seal(shot.id)
-    print(sealed.content_hash)
-
-    # Verify integrity later — pinpoints any corrupted member
-    print(chain.verify(shot.id).valid)
-    print(chain.verify_chain().valid)
-
-    # Isolate a bad block without touching anything else
-    chain.quarantine(shot.id)
+    # Fix a wrong value instead of adding a new one:
+    facts.set("atlas-core", "port", "4445", valid_from="2026-03-30", correction=True)
+    # Withdraw a fact recorded by mistake (kept for audit):
+    facts.retract("atlas-core", "port", value="5000")
 ```
 
-### 5. Add memory to a LangChain agent as middleware
+Several values recorded for the same time are kept as a sequence, and the last
+one is current. Subjects and attributes match regardless of case and
+punctuation (`Atlas-Core` is `atlas core`).
 
-`MarkAgentMiddleware` turns MARK into a transparent context-window manager for
-any LangChain v1 agent: it watches the LangChain message history, retrieves
-only relevant memory before each model call, injects a compact memory block,
-and archives useful AI/tool evidence in the background. The LLM remains the
-reasoning machine; MARK supplies durable working memory.
+### 4. Automatic facts and timelines
+
+With `fact_extractor="patterns"`, every write is scanned for stated changes
+and descriptions ("moved from port A to port B", "X is owned by Y", "X runs
+on port P", "X runs in eu-west-1", "Y owns X", "A is based in Berlin", "A
+reports to B", "status: resolved") and matching facts are recorded, dated by
+the event time. A line listing several facts about one subject ("X is owned
+by Y, listens on port P and uses PostgreSQL 15") yields one fact per clause. A timeline lists every
+fact and memory about a subject, oldest first.
+
+```python
+from mark import Mark
+
+with Mark.local(".", fact_extractor="patterns") as mark:
+    ops = mark.runtime.memory("ops")
+    ops.store_many_sync([
+        "[2026-03-01] atlas-core port is 6430.",
+        "[2026-03-30] CHANGE: atlas-core moved from port 6430 to port 4444.",
+        "[2026-04-02] Ownership of atlas-core was transferred to dana.",
+    ])
+    print(ops.facts.get("atlas-core", "port").value)    # 4444
+    print(ops.facts.get("atlas-core", "owner").value)   # dana
+    print(ops.timeline("atlas-core", "port").as_text())  # both port events, oldest first
+```
+
+Without a configured extractor, pass `extract_facts=True` to one write. For
+phrasing the rule packs miss, `LLMFactExtractor(model=..., base_url=...)` asks
+a local OpenAI-compatible model; its jobs run on a background worker from a
+durable queue, so writes never wait for the model. `retrieve_sync(...,
+order="chronological")` returns ordinary recall results oldest first.
+
+### 5. Time-aware recall and gap reports
+
+Free-text memories can carry an event time with `occurred_at=` or a leading
+`[YYYY-MM-DD]` stamp. Questions about the current or original state use it.
+
+```python
+from mark import Mark
+
+with Mark.local(".") as mark:
+    memory = mark.runtime.memory("ops")
+    memory.store_sync("atlas-core moved to region eu-west.", occurred_at="2026-03-01")
+    memory.store_sync("atlas-core moved to region us-east.", occurred_at="2026-04-02")
+
+    now = memory.retrieve_sync("Which region does atlas-core use now?")
+    print(now.temporal_intent, now.top().content)        # current ... us-east.
+
+    first = memory.retrieve_sync("Which region did atlas-core use originally?")
+    print(first.temporal_intent, first.top().content)    # original ... eu-west.
+
+    unknown = memory.retrieve_sync("Who owns zephyr-9?")
+    print(unknown.missing_anchors, unknown.gap_detected)  # ['zephyr 9'] True
+```
+
+`RetrievalResult.facts` holds the facts about the subjects in the query that
+match the attribute asked for ("Which port ...") or all of them for an open
+question ("Tell me about atlas-core"), and `missing_anchors` lists names and
+identifiers that occur nowhere in memory.
+
+`store_many_sync` embeds items in batches and writes each batch in one
+transaction (when middleware is registered, each item takes the full
+middleware path instead). `retrieve_many_sync` and the async `retrieve_many`
+answer several queries with shared filtering.
+
+### 6. Briefings before each model call
+
+`ContextWatch` follows the conversation and keeps relevant memory ready
+without the agent issuing a search. A briefing lists current facts and
+memories for the subjects in play, corrects values the agent states that
+memory knows are outdated, and names subjects that are not in memory.
+
+```python
+from mark import ContextWatch, Mark
+
+with Mark.local(".") as mark:
+    ops = mark.runtime.memory("ops")
+    ops.facts.set("checkout-api", "port", "8080", valid_from="2026-03-01")
+    ops.facts.set("checkout-api", "port", "9090", valid_from="2026-03-20")
+
+    with ContextWatch(ops, budget_tokens=300) as watch:    # hard cap on the briefing
+        watch.observe("Is checkout-api healthy? Also check zephyr-9.", role="user")
+        briefing = watch.briefing(wait=1.0)
+        system_prompt = "You are an on-call engineer.\n" + briefing.text
+        print(briefing.text)        # facts for checkout-api; zephyr-9 not in memory
+
+        watch.observe("I'll restart checkout-api on port 8080.", role="assistant")
+        print(watch.briefing(wait=1.0).corrections)   # 9090 is current; 8080 is outdated
+```
+
+Call `watch.observe(...)` for user messages, model replies (`role="assistant"`),
+and tool results (`role="tool"`), and add `watch.briefing().text` to the
+system prompt before each model call. In any loop that keeps an OpenAI-style
+message list, `watch.observe_messages(messages)` feeds only the messages it
+has not seen, and `inject(messages, briefing)` (from `mark.context.watch`)
+returns a new list with the briefing in the system message.
+
+`budget_tokens` caps the briefing. When lines must go, corrections are kept
+first, then "Not in memory" notices, facts, records, and linked subjects;
+`briefing.usage` reports what was used. Tokens are estimated as characters / 4
+unless you pass `token_counter=` (any `str -> int` tokenizer).
+`ContextWatch.for_small_models(memory)` is a tighter preset (175 tokens).
+
+### 7. MARK as the context window
+
+Instead of resending the whole conversation, let MARK hold it. `MarkChat`
+talks to any OpenAI-compatible endpoint with the standard library only. Each
+call sends the system prompt with a budgeted briefing and the last `keep_last`
+messages; every exchange is stored before it leaves the window.
+
+```python
+from mark import Mark, MarkChat
+
+with Mark.local(".") as mark:
+    with MarkChat(mark.runtime.memory("chat"), model="llama3.2:3b",
+                  base_url="http://localhost:11434/v1",   # any OpenAI-compatible server
+                  keep_last=2, budget_tokens=200) as chat:
+        chat.send("My hive is called Colmeia Azul.")
+        chat.send("Name one spring flower bees like. One word.")
+        chat.send("And one summer flower? One word.")
+        print(chat.send("What is my hive called?"))   # recalled from MARK, not the window
+```
+
+`chat.prepare(text)` and `chat.commit(text, reply)` split `send` for loops
+that call the model themselves. With LangChain, pass `history="mark"` and
+`keep_last=` to `MarkAgentMiddleware` (section 8) for the same behaviour.
+
+### 8. LangChain agents
+
+`MarkAgentMiddleware` adds memory to any LangChain v1 agent. Before each model
+call it injects relevant memory and, with `anticipate=True` (the default), the
+`ContextWatch` briefing. After the call it records useful model and tool
+output. The example below needs a chat model; it uses a local Ollama model.
 
 ```python
 from langchain.agents import create_agent
+from langchain.chat_models import init_chat_model
 
 from mark import Mark
 from mark.adapters.backend import LocalMarkBackend
 from mark.adapters.langchain.middleware import MarkAgentMiddleware
 
+model = init_chat_model("ollama:llama3.2:3b")   # any LangChain chat model
+
 with Mark.local(".") as mark:
+    mark.memory.block("project").write("Builds run with `uv run --extra dev pytest`.")
     middleware = MarkAgentMiddleware(
         backend=LocalMarkBackend(mark),
-        max_context_chars=1400,     # context budget injected per model call
-        write_outcomes=True,        # archive AI reasoning steps
-        observe_tool_results=True,  # archive tool outputs as they happen
+        max_context_chars=1400,     # memory budget per model call
     )
-
-    agent = create_agent(model, tools, middleware=[middleware])
-    result = agent.invoke({"messages": [("user", "Fix the failing build.")]})
-    # or: await agent.ainvoke(...) / agent.astream(...)
+    agent = create_agent(model, tools=[], middleware=[middleware])
+    result = agent.invoke({"messages": [("user", "How do I run the tests?")]})
+    print(result["messages"][-1].content)
 ```
 
-The middleware is safe to share across concurrent runs: per-run memory state is
-isolated, every model call in a run receives memory, and memory failures are
-logged and degrade gracefully instead of breaking the agent. Gap healing
-(`auto_heal=True`) is opt-in because it can reach the network.
+The middleware supports `invoke`, `ainvoke`, and `astream`, isolates state
+between concurrent runs, and degrades gracefully if memory fails. Gap healing
+(`auto_heal=True`) is off by default because it can reach the network.
 
-MARK adapters default to the `__mark__` namespace used by `mark.memory`, so
-memory written with `mark.memory.block(...).write(...)` is recalled
-automatically. Pass `agent_id=` / `default_agent_id=` only for a separate
-namespace, and write into it with `mark.runtime.memory("<id>")`.
+`budget_tokens=` puts one token cap over everything the middleware injects.
+`history="mark", keep_last=6` sends the model only the system message, the
+last six messages, and MARK's context: dropped turns are stored first, a tool
+call is never separated from its result, and if storing fails the full
+history is sent. The graph state keeps the full transcript.
 
-Prefer explicit control? `create_mark_tools` exposes memory as ordinary
-LangChain tools the model calls itself. The tools support both sync `invoke()`
-and async `ainvoke()` paths, including notebook environments with an already
-running event loop:
+To let the model decide when to use memory, expose it as tools instead:
+`create_mark_tools(LocalMarkBackend(mark))` from `mark.adapters.langchain`
+returns `mark_retrieve`, `mark_write`, and `mark_observe`. Use one surface by default: middleware for automatic context, or tools for
+deliberate reads and writes.
 
-```python
-from mark.adapters.langchain import create_mark_tools
+### 9. MCP server
 
-tools = create_mark_tools(LocalMarkBackend(mark))
-agent = create_agent(model, [*tools, *my_other_tools])
-```
-
-Use one surface by default: middleware for automatic context loading, or tools
-when the model should deliberately write canonical facts. Combining both is an
-advanced mode for targeted recall/write operations; keep injected context small
-so MARK does not duplicate information already loaded by the middleware.
-
-And `mark.adapters.mcp` serves the same memory to any MCP-compatible client:
+`mark.adapters.mcp` serves memory to any MCP client over stdio. It works with
+`mcp` 1.x and 2.x and exposes `mark_retrieve`, `mark_write`, and
+`mark_observe`. With `briefing=True` it also exposes `mark_briefing`: the
+client passes the latest message (or recent messages) and a `session_id`, and
+gets back a ready-made briefing, optionally capped by `budget_tokens`. Each
+session has its own watch; `mark://briefing/{session_id}` reads the current
+briefing without observing anything.
 
 ```python
+from mark import Mark
 from mark.adapters.backend import LocalMarkBackend
 from mark.adapters.mcp import create_mark_mcp_server
 
-server = create_mark_mcp_server(
-    LocalMarkBackend(mark),
-    allowed_agent_ids={"__mark__"},  # optional: restrict client-selected namespaces
-)
-server.run()  # stdio MCP server
-```
-
-The adapter supports both `mcp` 2.x (`MCPServer`) and 1.x (`FastMCP`).
-
-The full middleware walkthrough — the same agent run with and without MARK,
-side by side — lives in the tutorial notebook under
-[examples/](examples/).
-
-### 6. Keep canonical creative facts in a world bible
-
-```python
-from mark import Mark
-
 with Mark.local(".") as mark:
-    mark.world_bible.remember(
-        "Elena is left-handed and always wears the red scarf in episode 01.",
-        tags=["character:elena", "wardrobe"],
+    server = create_mark_mcp_server(
+        LocalMarkBackend(mark),
+        allowed_agent_ids={"__mark__"},   # restrict which namespaces clients may use
+        briefing=True,                    # add the mark_briefing tool
     )
-
-    facts = mark.world_bible.check("Elena wardrobe and physical traits")
-    for fact in facts:
-        print(fact.content)
+    server.run()                          # blocks; speaks MCP over stdio
 ```
 
-### 7. Use any local embedding model
+### 10. Command line
 
-The zero-dependency default (`HashEmbeddingProvider`) needs no model download.
-For semantic recall, plug in any local model server or in-process model:
-
-```python
-from mark import Mark
-from mark.embeddings import (
-    OllamaEmbeddingProvider,            # Ollama: batch /api/embed
-    OpenAICompatibleEmbeddingProvider,  # llama.cpp server, LM Studio, vLLM, LocalAI
-    FastEmbedProvider,                  # ONNX, no torch:   mark-sdk[fastembed]
-    Model2VecProvider,                  # static, numpy:    mark-sdk[model2vec]
-)
-
-embedder = OpenAICompatibleEmbeddingProvider(
-    base_url="http://localhost:1234/v1",   # LM Studio
-    model="nomic-embed-text-v1.5",
-)
-with Mark.local(".", embedder=embedder) as mark:
-    ...
-```
-
-HTTP providers batch requests, use connect/read timeouts, and retry transient
-failures with jittered backoff. MARK records each embedder's fingerprint, so
-switching models re-embeds existing memory instead of mixing vector spaces.
-
-### 8. Track values that change over time
-
-Facts record the current value of something and keep its full history.
-Later values supersede earlier ones by when they became true, not by when
-they were written:
-
-```python
-with Mark.local(".") as mark:
-    memory = mark.runtime.memory("ops")
-    memory.facts.set("atlas-core", "port", "6430", valid_from="2026-03-01")
-    memory.facts.set("atlas-core", "port", "4444", valid_from="2026-03-30")
-
-    memory.facts.get("atlas-core", "port").value              # "4444"
-    [f.value for f in memory.facts.history("atlas-core", "port")]   # ["6430", "4444"]
-
-    # Retrieval understands "now" and "originally":
-    result = memory.retrieve_sync("Which port does atlas-core use now?")
-    result.facts            # current facts about atlas-core
-    result.missing_anchors  # names in the query that memory has never seen
-```
-
-Free-text memories can carry an event time too
-(`store_sync(text, occurred_at="2026-03-30")`, or a leading `[2026-03-30]`
-stamp), and "current"/"original" questions order matching records by it.
-
-### 9. Let MARK anticipate what the agent needs
-
-`ContextWatch` follows a conversation and keeps relevant memory ready before
-the agent asks: facts about the subjects being discussed (and subjects they
-link to), corrections when the agent states an outdated value, and notices for
-subjects memory has never seen.
-
-```python
-from mark import ContextWatch
-
-with Mark.local(".") as mark, ContextWatch(mark.runtime.memory("ops")) as watch:
-    watch.observe("Please look into ticket HAL-4433.", role="user")
-    system_prompt = base_prompt + watch.briefing().text   # before each model call
-    watch.observe(model_reply, role="assistant")
-```
-
-`MarkAgentMiddleware` does this automatically for LangChain agents
-(`anticipate=True` by default).
-
-### 10. Use memory from the command line
+The `mark` command works on a store given by `--db`, `$MARK_DB`, or
+`./.mark/memory.db`, in the agent namespace given by `--agent`, `$MARK_AGENT`,
+or `__mark__`.
 
 ```bash
-mark ingest ops.log --session day-1
+printf '[2026-03-01] atlas-core port is 6430.\n[2026-03-02] HAL-4433: checkout returns 502 errors.\n' > ops.log
+mark ingest ops.log --session day-1 --extract-facts   # one memory per line, facts from stated values
+mark store "dana owns atlas-core" --occurred-at 2026-03-05
 mark fact set atlas-core port 4444 --valid-from 2026-03-30
+mark fact get atlas-core
+mark fact history atlas-core port
 mark recall "Which port does atlas-core use now?"
+mark timeline atlas-core port                  # every port event, oldest first
 printf 'Who owns atlas-core?\nWhat is HAL-4433 about?\n' | mark recall-many -
-mark serve &          # keep the store warm: each call then takes about 0.1 s
+mark stats
 ```
 
-The store comes from `--db` or `$MARK_DB`; the server binds to loopback only
-and requires a token kept next to the database.
+`mark fact set --correction` replaces a wrong value, and `mark fact retract`
+withdraws one. `recall` and `recall-many` accept `-k N` and `--json`;
+`recall --chronological` lists results oldest first. `timeline` accepts
+`--limit N`, `--since`, `--until`, and `--json`.
 
-## Comparative Samples
+`mark serve` keeps the store open so each command answers in about 0.1 s. It
+binds to loopback only, requires a token kept in a private state file next to
+the database, and allows one server per database. Other `mark` commands use it
+automatically; `--no-server` runs in-process. See [SECURITY.md](SECURITY.md).
 
-MARK examples are written as A/B comparisons: the same task runs once with
-ordinary short-term context and once with MARK-backed recall.
+The CLI uses the default embedder (or `$MARK_EMBEDDER`) and refuses to open
+encrypted stores; use the Python API for those.
 
-| Scenario | Without MARK | With MARK | What to inspect |
-| --- | --- | --- | --- |
-| Coding agent | The agent answers from the current prompt only. Project conventions must be repeated. | MARK recalls stored conventions before the model reasons. | `examples/02_agent_with_memory.py` and `examples/getting_started_with_mark.ipynb` |
-| LangChain agent | Message history is whatever LangChain keeps in the active loop. | `MarkAgentMiddleware` retrieves compact memory before model calls and observes useful tool/model evidence. | README section 5 and the tutorial notebook |
-| Creative continuity | A generator without MARK only sees its prompt and short-term carryover. | A MARK-aware agent recalls canonical identity/world facts and writes continuity observations between steps. | `MarkAgent`, sessions, and `world_bible` |
+### 11. Local embedding models
 
-Generated media demo outputs and heavyweight provider clients are not included
-in `mark-sdk`.
+The default `HashEmbeddingProvider` is deterministic and needs no model
+download. For semantic recall, pass a provider or a spec string:
 
-## Features
+```python
+from mark import Mark
 
-- **Agent-loop integration:** wrap simple callables, attach LangChain
-  middleware, expose MARK as tools, or serve memory over MCP.
-- **Pluggable middleware:** compose framework-neutral middleware for recall
-  defaults, observation metadata, compression, query expansion, gap healing,
-  lifecycle maintenance, observability, and sync envelope preparation.
-- **Structured memory:** fragments, sessions, graph nodes, graph edges,
-  world-bible facts, and graph-scoped blocks.
-- **Hybrid retrieval:** SQLite FTS5 (BM25) lexical search and vector search
-  fused with Reciprocal Rank Fusion, so exact identifiers, names, and
-  paraphrases all hit. Agent- and session-scoped filters are applied before
-  scoring, graph expansion is damped per hop, and gap reports are calibrated on
-  real query evidence. No LLM calls on the write or read hot path.
-- **Creative continuity:** session prefixes, tags, scopes, world-bible facts,
-  and blocks make it natural to track characters, objects, locations, shots,
-  styles, and generated artifacts.
-- **Workflow memory:** store plans, conventions, decisions, tool outputs, test
-  results, and implementation state for coding or autonomous agents.
-- **Provenance and integrity:** SHA-256 block sealing, whole-chain verification,
-  pinpointed corruption reports, and quarantine isolation.
-- **Memory lifecycle:** working memory with TTL expiry, consolidation,
-  deduplication, pruning, reinforcement, and local governance gates.
-- **Multi-agent sharing:** trust-aware local bus for publisher trust,
-  subscriptions, snapshots, and trust-filtered retrieval.
-- **Local observability:** JSONL traces, replay support, session activity logs,
-  and middleware observation of reasoning/tool outcomes.
+# "auto": the best model already on disk (Model2Vec, then FastEmbed), else hash.
+# Explicit specs: "hash[:dim]", "model2vec[:model]", "fastembed[:model]",
+# "ollama[:model][|url]", "openai:<base_url>|<model>".
+with Mark.local(".", embedder="ollama:nomic-embed-text-v2-moe") as mark:
+    mark.memory.block("project").write("The API framework is FastAPI.")
+    print(mark.memory.retrieve("Which web framework do we use?").as_text())
+```
 
-Everything in this package runs locally under the Apache-2.0 license.
+`"auto"` never downloads a model or contacts a server; Ollama and
+OpenAI-compatible servers are used only when named. `MARK_EMBEDDER` sets the
+spec for every store opened without `embedder=` (including the CLI), and
+`MARK_EMBEDDER_API_KEY` supplies an OpenAI-compatible key. Provider classes
+(`OllamaEmbeddingProvider`, `FastEmbedProvider`, `Model2VecProvider`,
+`OpenAICompatibleEmbeddingProvider`) are in `mark.embeddings`.
+
+Hybrid fusion adapts to the embedder: lexical embedders keep rank fusion, and
+semantic models use score fusion so the vector channel's best paraphrase match
+is not outranked by a stray keyword. MARK records each embedder's fingerprint,
+so switching models re-embeds existing memory once instead of mixing vector
+spaces.
+
+### 12. Image memory
+
+`memory.images` remembers image files by path and SHA-256 (never their bytes),
+links them to the current facts of their subjects, finds them by caption, and
+checks a frame against those facts with a describer you supply.
+
+```python
+from pathlib import Path
+
+from mark import Mark
+
+Path("scene5.png").write_bytes(b"stand-in for a generated frame")
+
+with Mark.local(".") as mark:
+    story = mark.runtime.memory("story")
+    story.facts.set("Elena", "scarf", "red")
+    frame = story.images.remember("scene5.png", caption="Elena at the station", subjects=["Elena"])
+    print(story.images.find("Elena station", k=1)[0].record.caption)
+
+    describe = lambda path: {"scarf": "blue"}     # a vision model in real use
+    report = story.images.check_consistency(frame, "Elena", describe=describe)
+    print(report.ok, report.mismatches)           # False [{'attribute': 'scarf', 'expected': 'red', 'observed': 'blue', ...}]
+    print(story.images.verify(frame).ok)          # True: the file still matches its hash
+```
+
+`mark.media.OpenAIVisionDescriber` uses a vision model on any
+OpenAI-compatible server, and `ClipImageEmbeddingProvider` (`mark-sdk[vision]`)
+adds search by image similarity.
+
+### 13. Provenance blocks
+
+`memory.blocks()` groups memories into blocks, and `memory.chain()` seals
+them into a per-agent SHA-256 hash chain that can be verified later
+(`verify`, `verify_chain`). `quarantine` removes a block's members from
+recall without deleting them. See [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Middleware
+
+Framework-neutral middleware in `mark.middlewares` wraps the runtime's
+`store`, `observe`, and `retrieve` operations. None of it is active unless you
+pass it in, for example
+`Mark.local(".", middleware=[RecallMiddleware(expand=True), ObservabilityMiddleware()])`.
+
+Available middleware: recall, observe, compression, query expansion, gap
+healing, governance, lifecycle, observability, sync, trust bus, sandbox, and
+media continuity. See [ARCHITECTURE.md](ARCHITECTURE.md) for what each does.
+
+## Encryption
+
+With `mark-sdk[crypto]`, `Mark.local(".", encryption=FernetEncryptionProvider(passphrase=...))`
+encrypts memory content and fact values at rest. Tags, metadata, session ids,
+fact subjects and attributes, graph labels, and embeddings stay in plaintext so
+they can be filtered. Encrypted stores use vector search only. An encrypted
+store opened without its key (or with the wrong one) raises an error instead
+of being read or written. On POSIX, the `.mark/` directory MARK creates is
+private (`0700`) and the database file is `0600`. See [SECURITY.md](SECURITY.md).
 
 ## Performance
 
@@ -404,94 +457,33 @@ SQLite on disk, numpy installed):
 | 10,000 | 0.7 ms | 32 ms | 81 ms | 14/14 / 14/14 |
 
 Reproduce with `uv run --extra fast python benchmarks/bench_runtime.py`.
+`benchmarks/retention_ab/` compares a relay of agents with and without MARK.
+
+## Examples
+
+[examples/](examples/) holds short scripts that run offline: recall, an LLM
+with and without memory, sessions, facts over time, `ContextWatch`, redacted
+sync, briefings in a plain loop, visual continuity, and MARK as the context
+window. A notebook walks through middleware, tools, and MCP.
+
+```bash
+python examples/run_live_examples.py
+```
 
 ## MARK Cloud — coming soon
 
 Watch out for MARK Cloud updates.
 
-## Examples
+## Contributing and support
 
-See [examples/](examples/) for runnable developer usage tests and walkthroughs:
-
-```bash
-python examples/run_live_examples.py
-```
-
-The examples cover recalling memory, an LLM answering with and without MARK,
-sessions, facts that change over time, anticipatory context with
-`ContextWatch`, and redacted sync. Examples that need a model call any local
-OpenAI-compatible server (Ollama, LM Studio, llama.cpp) via `MARK_LLM_URL`.
-
-The notebook in [examples/](examples/) provides a longer step-by-step
-walkthrough for memory, retrieval, sessions, middleware, tools, MCP exposure,
-memory inspection, and provenance sealing.
-
-Planned proof-oriented examples:
-
-- `examples/multi-agent-coding/`: demonstrate planner, implementer, and tester
-  agents sharing decisions and workflow state through MARK.
-
-## Development
-
-```bash
-python examples/run_live_examples.py
-uv run --extra dev pytest
-uv build
-```
-
-## Middleware
-
-Core middleware lives under `mark.middlewares` and wraps existing public runtime
-operations. It is framework-neutral, so LangChain, MCP, and future adapters can
-share the same behavior instead of reimplementing recall, observation,
-compression, tracing, and sync logic.
-
-```python
-from mark import Mark, ObserveMiddleware, ObservabilityMiddleware, RecallMiddleware
-
-with Mark.local(
-    ".",
-    middleware=[
-        RecallMiddleware(compress=True, expand=True),
-        ObserveMiddleware(source="agent", tags=["workflow"]),
-        ObservabilityMiddleware(),
-    ],
-) as mark:
-    memory = mark.runtime.memory("coder")
-    memory.observe("Use FastAPI dependency injection for routes.")
-    result = memory.retrieve_sync("How should routes be implemented?")
-```
-
-Middleware is local and Apache-2.0-safe. Optional integrations can be attached
-through explicit hooks or caller-supplied clients.
-
-Middleware batteries are opt-in. Without a middleware instance in the runtime,
-MARK stores and retrieves through the core memory primitives only; governance,
-trust-bus publication, sandbox execution, media continuity defaults, sync
-envelopes, compression, expansion, and automatic observation structuring are
-not activated.
-
-Available local middleware includes recall, observe/writeback, compression,
-query expansion, governance, lifecycle, observability, sync, trust bus,
-sandbox, gap healing, and media continuity wrappers. Each middleware lives in
-its own package under `mark.middlewares`.
-
-## Contributing & support
-
-- **Found a bug? Have an idea?** [Open an issue](https://github.com/emsoftanalytics/MARK-SDK/issues/new/choose) —
-  the templates take two minutes, and "this surprised me" reports are welcome too.
-- **Want to contribute?** Start with [CONTRIBUTING.md](CONTRIBUTING.md) and the
-  [`good first issue`](https://github.com/emsoftanalytics/MARK-SDK/labels/good%20first%20issue) label.
-  Contributions should be made from a separate branch and submitted through a
-  Pull Request for review before they land on `main`. Draft PRs and questions
-  are encouraged.
-- **Want to know where MARK is going?** See [ROADMAP.md](ROADMAP.md) for the
-  current SDK roadmap and contributor-friendly work areas.
-- **Using MARK in a project?** Tell us in
-  [Discussions](https://github.com/emsoftanalytics/MARK-SDK/discussions) — real
-  workloads drive the roadmap.
-- **Security issues:** see [SECURITY.md](SECURITY.md) — please report privately.
+- Bugs and ideas: [open an issue](https://github.com/emsoftanalytics/MARK-SDK/issues/new/choose).
+- Contributing: read [CONTRIBUTING.md](CONTRIBUTING.md). Work happens on
+  branches and lands on `main` through reviewed pull requests.
+- Design and code layout: [ARCHITECTURE.md](ARCHITECTURE.md).
+- Plans: [ROADMAP.md](ROADMAP.md).
+- Questions and use cases: [Discussions](https://github.com/emsoftanalytics/MARK-SDK/discussions).
+- Security issues: report privately, see [SECURITY.md](SECURITY.md).
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE).

@@ -6,9 +6,20 @@ from mark.embeddings.base import EmbeddingProvider
 
 
 class Model2VecProvider(EmbeddingProvider):
-    """Very fast CPU static embeddings via ``model2vec``; the model loads on construction."""
+    """Very fast CPU static embeddings via ``model2vec``; the model loads on construction.
 
-    def __init__(self, model_name: str = "minishlab/potion-base-8M", **model_kwargs: object) -> None:
+    ``local_path`` loads the weights from a directory (e.g. a resolved Hugging
+    Face cache snapshot) so no network request is made, while ``model_name``
+    still names the embedding space in the fingerprint.
+    """
+
+    def __init__(
+        self,
+        model_name: str = "minishlab/potion-base-8M",
+        *,
+        local_path: str | None = None,
+        **model_kwargs: object,
+    ) -> None:
         try:
             from model2vec import StaticModel  # type: ignore[import-not-found]
         except ImportError as exc:
@@ -16,7 +27,7 @@ class Model2VecProvider(EmbeddingProvider):
                 'Model2VecProvider requires `model2vec`: install "mark-sdk[model2vec]".'
             ) from exc
         self.model_name = model_name
-        self.model = StaticModel.from_pretrained(model_name, **model_kwargs)
+        self.model = StaticModel.from_pretrained(local_path or model_name, **model_kwargs)
         dim = getattr(self.model, "dim", None)
         self._dim: int | None = int(dim) if isinstance(dim, int) and dim > 0 else None
 

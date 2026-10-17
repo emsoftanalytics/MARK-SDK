@@ -4,6 +4,120 @@ All notable changes to the MARK Python SDK will be documented here.
 
 This project follows semantic versioning for public package releases.
 
+## 0.2.0a9 - 2026-10-15
+
+### Added
+
+- Automatic fact extraction: with `Mark.local(..., fact_extractor="patterns")`
+  or `store_sync(..., extract_facts=True)` / `store_many_sync(...,
+  extract_facts=True)`, stated changes in stored text ("moved from port A to
+  port B", "is owned by", "status: resolved") are recorded as bi-temporal
+  facts, dated by the memory's event time and linked to their source memory.
+  Present-tense descriptions are recognised too ("runs on port 6430", "runs
+  in eu-west-1", "dana owns X", "is based in Berlin", "reports to Y", "uses
+  PostgreSQL 15", "is assigned to Y"), including lines that list several
+  facts about one subject in comma- or "and"-separated clauses.
+  Built-in rule packs (`PatternFactExtractor`, `RulePack`, `BUILTIN_PACKS`)
+  run inline and accept custom packs; `LLMFactExtractor` uses a local
+  OpenAI-compatible model from a durable background queue, and
+  `memory.facts.extract_pending(wait=True)` drains that queue on demand and
+  waits for jobs the worker is still running, so their facts are readable
+  when it returns (`wait=False` or a timeout in seconds). Any object
+  implementing the `FactExtractor` protocol can be used. On the retention
+  benchmark's large profile, the generic packs reached precision 1.0 on every
+  target attribute, with recall 1.0 for owner, port, region, database, team,
+  city, and ticket assignee, and 0.96 for ticket status.
+- `mark ingest --extract-facts` records the facts that ingested lines state.
+- Subject timelines: `memory.timeline(subject, attribute=None, limit=,
+  since=, until=)` returns every fact and memory about a subject, oldest
+  first and without a top-k cap, as a `Timeline` with `latest()`,
+  `as_text()`, `as_context()`, and `to_dict()`. `mark timeline SUBJECT
+  [ATTRIBUTE]` offers the same with `--limit`, `--since`, `--until`, and
+  `--json`.
+- `retrieve_sync(..., order="chronological")` and `mark recall
+  --chronological` list recall results oldest first by event time.
+- Briefings for any agent loop: `ContextWatch.observe_messages()` follows an
+  OpenAI-style or LangChain message list, `inject(messages, briefing)` places
+  the briefing in the system message without accumulating copies, and
+  `ContextWatch.for_small_models()` is a compact preset for small local
+  models. `ContextWatch.refresh()` re-fetches subjects after new memories are
+  stored.
+- MCP briefings: `create_mark_mcp_server(..., briefing=True)` adds a
+  `mark_briefing` tool and a `mark://briefing/{session_id}` resource, with one
+  isolated watch per session.
+- Token budgets: `ContextBudget(max_tokens, fill=False, token_counter=None)`
+  caps injected context in tokens and keeps lines by priority (corrections,
+  then unknown subjects, facts, records, and linked subjects). It is available
+  as `ContextWatch(budget_tokens=...)`, `inject(..., budget_tokens=...)`,
+  `mark_briefing(budget_tokens=...)`, and
+  `MarkAgentMiddleware(budget_tokens=..., token_counter=...)`, which applies
+  one cap to everything the middleware injects. `Briefing.usage` reports the
+  tokens used per section.
+- Context replacement: `MarkAgentMiddleware(history="mark", keep_last=6)`
+  sends the model only recent messages plus MARK's context. Dropped turns are
+  stored first, tool calls are never separated from their results, and the
+  full history is sent if storing fails. `MarkChat` is a reference chat loop
+  for any OpenAI-compatible endpoint that works the same way, and
+  `split_history` is available for custom loops.
+- Embedder selection by spec string: `embedder="auto"`, `"hash[:dim]"`,
+  `"model2vec[:model]"`, `"fastembed[:model]"`, `"ollama[:model][|url]"`, or
+  `"openai:<base_url>|<model>"`, plus `auto_embedder()`, `resolve_embedder()`,
+  and the `MARK_EMBEDDER` and `MARK_EMBEDDER_API_KEY` environment variables.
+  `"auto"` uses a model already on disk and never downloads or contacts a
+  server.
+- Image memory: `memory.images` (`ImageMemory`) remembers image files by path
+  and SHA-256, links them to their subjects' facts, finds them by caption or
+  CLIP similarity (`ClipImageEmbeddingProvider`, `mark-sdk[vision]`),
+  verifies files, and checks a frame against expected facts with a describer
+  such as `OpenAIVisionDescriber`.
+- Async `memory.retrieve_many()`.
+- Examples for briefings in a plain loop, visual continuity, and MARK as the
+  context window.
+
+### Changed
+
+- Hybrid retrieval adapts to the embedder: lexical embedders keep rank
+  fusion, and semantic models use score fusion (`FusionConfig`, set through
+  `RetrievalPipeline(fusion=...)` or `pipeline.configure_fusion()`;
+  `EmbeddingProvider.semantic` marks the kind). On a 60-query evaluation
+  (paraphrase, synonym, identifier, and name queries), hybrid hit@1 rose from 44 to 51 (potion-base-8M), 45 to 54
+  (potion-retrieval-32M), 48 to 59 (bge-small), and 49 to 58 (MiniLM); the
+  default hash embedder is unchanged.
+- The default embedder is still the deterministic hash embedder; semantic
+  models are opt-in.
+- `RetrievalResult.facts` contains only the facts that answer the query (the
+  attribute asked about, the role a who-question names, such as `owner` for
+  "Who owns X?" or `assignee` for "Who is assigned to X?", or all of them for
+  an open question). A who-question about a subject without that fact
+  returns no facts rather than unrelated ones.
+- Briefings no longer report subjects that only the model mentioned as "Not
+  in memory"; such subjects appear once memory confirms them. Bare numbers
+  (ports, counts, years, dates) are never reported as unknown subjects or as
+  `missing_anchors`.
+- On POSIX, a new `.mark/` directory is created with mode `0700` and new
+  database files with mode `0600`.
+- Store schema version 5 adds the fact-extraction job queue and extraction
+  ledger; existing stores upgrade in place.
+
+### Fixed
+
+- An encrypted store opened without its key, or with the wrong one, could
+  fail on read or accept new writes in plaintext. It now raises
+  `EncryptionRequiredError` or `EncryptionKeyError`, and supplying a key for
+  a store that already holds plaintext raises `PlaintextStoreError` (an
+  empty store may become encrypted). The errors are in `mark.errors` and
+  `mark.security`.
+- Switching to an embedding provider whose dimension is not known in advance
+  did not re-embed existing memories; switching embedders now re-embeds once.
+- Opening a new store from several processes at once could fail while
+  enabling WAL mode.
+- A store written by a newer MARK is now refused with `StoreVersionError`
+  before anything is written, so an older installation can no longer migrate
+  or modify a store it does not understand.
+- A memory whose stored content cannot be decrypted (for example plaintext
+  written into an encrypted store by an older release opened without its key)
+  is set aside as unreadable instead of making every retrieval fail.
+
 ## 0.2.0a8 - 2026-10-15
 
 ### Added

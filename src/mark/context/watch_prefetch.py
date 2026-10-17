@@ -61,6 +61,19 @@ class _WatchPrefetchMixin:
             self._anchors.pop(key, None)
             self._results.pop(key, None)
 
+    def refresh(self, *, unknown_only: bool = False) -> None:
+        """Re-fetch the active subjects, e.g. after new memories were stored.
+
+        A subject first seen before anything about it was stored stays "Not in
+        memory" until it is re-fetched; loops that store each turn call this
+        after storing. ``unknown_only`` limits it to subjects reported unknown.
+        """
+        with self._lock:
+            labels = [a.label for a in self._anchors.values()
+                      if not unknown_only or a.known is False]
+        if labels:
+            self._schedule(labels, None)
+
     def _schedule(self, queries: list[str], task: str | None) -> None:
         """Run a prefetch inline (background=False) or queue it on the single worker."""
         if self._executor is None:

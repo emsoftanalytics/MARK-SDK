@@ -28,6 +28,7 @@ class _Anchor:
     mentions: int = 1
     known: bool | None = None   # None until a prefetch has answered
     linked: bool = False        # anticipated via a link, not mentioned by anyone yet
+    assistant_only: bool = False  # only the model has named it (may be its own wording)
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,8 @@ class Briefing:
     memory_ids: list[str] = field(default_factory=list)
     pending: int = 0            # prefetches still running (briefing may be incomplete)
     latency_ms: float = 0.0
+    usage: Any = None           # BudgetUsage when a token budget was applied, else None
+    items: tuple = ()           # all candidate BudgetItems (budgeted briefings only)
 
     def __bool__(self) -> bool:
         return bool(self.text)

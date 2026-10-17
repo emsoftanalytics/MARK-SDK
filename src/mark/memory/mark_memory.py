@@ -7,9 +7,12 @@ behaviour is composed from focused mixins in :mod:`mark.memory.facade`:
 mixin                       responsibility
 ==========================  ==============================================
 ``WriteMixin``              store / store_sync / store_many_sync, facts
+``FactExtractionMixin``     automatic fact extraction after writes
 ``GuardMixin``              consolidation gate, quarantine, last_rejection
 ``RetrieveMixin``           retrieve / retrieve_sync / retrieve_many_sync
+``BatchRetrieveMixin``      retrieve_many (async twin of retrieve_many_sync)
 ``HealingMixin``            gap healing via an explicit web lookup
+``TimelineMixin``           timeline(): a subject's whole ordered history
 ``ObserveMixin``            observe() and optional graph structuring
 ``GraphMixin``              node / attach_node / link_nodes / neighborhood
 ``LifecycleMixin``          list / forget / promote / clear
@@ -31,6 +34,8 @@ from mark.memory.facade.graph_ops import _NODE_TYPE_ALIASES, GraphMixin, _resolv
 from mark.memory.facade.lifecycle import LifecycleMixin
 from mark.memory.facade.observing import ObserveMixin
 from mark.memory.facade.retrieve import RetrieveMixin
+from mark.memory.facade.retrieve_async import BatchRetrieveMixin
+from mark.memory.facade.timeline import TimelineMixin
 from mark.memory.facade.views import ViewsMixin
 from mark.memory.facade.write import WriteMixin
 from mark.memory.facade.write_guard import GuardMixin, MemoryWriteRejection, _with_occurred_at  # noqa: F401
@@ -58,6 +63,8 @@ logger = logging.getLogger(__name__)
 
 class MarkMemory(
     RetrieveMixin,
+    BatchRetrieveMixin,
+    TimelineMixin,
     ObserveMixin,
     LifecycleMixin,
     ViewsMixin,
@@ -84,6 +91,7 @@ class MarkMemory(
         consolidation_gate: Any = None,
         middleware_stack: MiddlewareStack | None = None,
         runtime: Any = None,
+        fact_extraction: Any = None,
     ) -> None:
         self.agent_id = agent_id
         self._store = store
@@ -96,3 +104,5 @@ class MarkMemory(
         # Middleware routing needs both the stack and the runtime it is bound to.
         self._middleware = middleware_stack
         self._runtime = runtime
+        # Default fact extraction for writes (FactExtractionService or None).
+        self._fact_extraction = fact_extraction

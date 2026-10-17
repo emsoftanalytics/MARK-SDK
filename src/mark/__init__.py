@@ -11,6 +11,8 @@ _LAZY_EXPORTS = {
     "AgentPersona": "mark.middlewares.skills",
     "Briefing": "mark.context",
     "ContextWatch": "mark.context",
+    "ContextBudget": "mark.context",
+    "MarkChat": "mark.context",
     "AgentResult": "mark.agent",
     "AgentRun": "mark.agent",
     "BlockChain": "mark.memory",
@@ -150,6 +152,8 @@ def __getattr__(name: str):
 __all__ = [
     "Briefing",
     "ContextWatch",
+    "ContextBudget",
+    "MarkChat",
     "AgentResult",
     "AgentRun",
     "AgentPersona",

@@ -193,6 +193,11 @@ class _RunState:
     # Anticipatory context (ContextWatch) for this run and how many messages it has seen.
     watch: Any = None
     watch_seen: int = 0
+    # Token-budget mode: candidate lines per source, gathered for one fit per step.
+    watch_items: tuple = ()
+    recall_items: dict[str, list[Any]] = field(default_factory=dict)
+    step_queries: list[str] = field(default_factory=list)
+    last_usage: Any = None   # BudgetUsage of the latest budgeted injection
 
     def close(self) -> None:
         """Release resources owned by the run (the watch's worker thread)."""

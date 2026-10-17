@@ -1285,6 +1285,9 @@ tutorial = [
     { name = "python-dotenv" },
     { name = "requests" },
 ]
+vision = [
+    { name = "fastembed" },
+]
 web = [
     { name = "beautifulsoup4" },
     { name = "duckduckgo-search" },
@@ -1300,6 +1303,7 @@ requires-dist = [
     { name = "duckduckgo-search", marker = "extra == 'all'", specifier = ">=6.0" },
     { name = "duckduckgo-search", marker = "extra == 'web'", specifier = ">=6.0" },
     { name = "fastembed", marker = "extra == 'fastembed'", specifier = ">=0.5" },
+    { name = "fastembed", marker = "extra == 'vision'", specifier = ">=0.5" },
     { name = "langchain", marker = "extra == 'adapters'", specifier = ">=1.0" },
     { name = "langchain", marker = "extra == 'all'", specifier = ">=1.0" },
     { name = "langchain", marker = "extra == 'langchain'", specifier = ">=1.0" },
@@ -1339,7 +1343,7 @@ requires-dist = [
     { name = "wikipedia-api", marker = "extra == 'all'", specifier = ">=0.6" },
     { name = "wikipedia-api", marker = "extra == 'web'", specifier = ">=0.6" },
 ]
-provides-extras = ["adapters", "all", "crypto", "dev", "fast", "fastembed", "langchain", "mcp", "middleware", "middleware-compression", "middleware-gap-healing", "middleware-governance", "middleware-lifecycle", "middleware-media-continuity", "middleware-observability", "middleware-observe", "middleware-query-expansion", "middleware-recall", "middleware-sandbox", "middleware-sync", "middleware-trust-bus", "model2vec", "ollama", "rl", "sentence-transformers", "tutorial", "web"]
+provides-extras = ["adapters", "all", "crypto", "dev", "fast", "fastembed", "langchain", "mcp", "middleware", "middleware-compression", "middleware-gap-healing", "middleware-governance", "middleware-lifecycle", "middleware-media-continuity", "middleware-observability", "middleware-observe", "middleware-query-expansion", "middleware-recall", "middleware-sandbox", "middleware-sync", "middleware-trust-bus", "model2vec", "ollama", "rl", "sentence-transformers", "tutorial", "vision", "web"]
 
 [[package]]
 name = "markdown-it-py"

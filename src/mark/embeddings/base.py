@@ -38,6 +38,16 @@ class EmbeddingProvider(ABC):
         """
         return f"{type(self).__module__}.{type(self).__qualname__}:{self.dim}"
 
+    @property
+    def semantic(self) -> bool:
+        """True when similar *meanings* (not just shared words) embed close together.
+
+        Retrieval uses this to decide how much to trust the vector channel
+        over lexical matches. Model-based providers are semantic, so that is
+        the default; purely lexical embedders (feature hashing) override it.
+        """
+        return True
+
 
 # Small English stopword list: function words that carry no topical signal.
 _STOPWORDS = frozenset(
@@ -125,3 +135,8 @@ class HashEmbeddingProvider(EmbeddingProvider):
     def fingerprint(self) -> str:
         """Identity of the v2 hash embedding space."""
         return f"mark.hash-v2:{self._dim}"
+
+    @property
+    def semantic(self) -> bool:
+        """Hashed words and n-grams: lexical similarity only."""
+        return False

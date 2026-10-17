@@ -11,6 +11,10 @@ nothing is deleted.
     mem.facts.history("atlas-core", "port")      # oldest → newest
     mem.facts.as_of("atlas-core", "port", "2026-03-20")
 
+Facts can also be extracted automatically from stored memories (see
+:mod:`mark.intelligence.fact_extraction`); slow extractors queue their work,
+which :meth:`FactsView.extract_pending` processes on demand.
+
 Subjects and attributes are matched case- and punctuation-insensitively
 ("Atlas-Core" == "atlas core"). Values are encrypted at rest when the store
 is; subjects and attributes are not (they are lookup keys).
@@ -50,11 +54,13 @@ class Fact:
 class FactsView:
     """Agent-scoped access to the store's fact timeline."""
 
-    def __init__(self, store: Any, agent_id: str) -> None:
+    def __init__(self, store: Any, agent_id: str, *, extraction: Any = None) -> None:
         if not hasattr(store, "fact_set"):
             raise TypeError("this memory store does not support facts (requires LocalMemoryStore v4+)")
         self._store = store
         self._agent_id = agent_id
+        # The runtime's FactExtractionService (None when extraction is off).
+        self._extraction = extraction
 
     def set(
         self,
@@ -106,6 +112,22 @@ class FactsView:
         return self._store.fact_retract(
             self._agent_id, subject, attribute, value=None if value is None else str(value),
         )
+
+    def extract_pending(self, *, limit: int | None = None, wait: float | bool = True) -> int:
+        """Finish this agent's background extraction jobs now; returns how many finished.
+
+        Queued jobs are processed in the calling thread. Jobs the background
+        worker has already claimed are not re-run; with ``wait`` (default
+        True: up to the job lease, 300 s by default; a float: that many
+        seconds; False: no waiting) the call blocks until they are done, so
+        their facts are readable when it returns. The count includes jobs the
+        worker finished while waiting. Returns 0 when no background extractor
+        is configured (inline extractors have no queue).
+        """
+        service = self._extraction
+        if service is None or not getattr(service, "background", False):
+            return 0
+        return service.drain(agent_id=self._agent_id, limit=limit, wait=wait)
 
     def subjects(self) -> list[str]:
         """Normalised subjects that have facts."""

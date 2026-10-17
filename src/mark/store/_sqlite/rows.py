@@ -14,15 +14,27 @@ from mark.types import BlockLink, BlockStatus, MemoryBlock, MemoryDocument, Memo
 from mark.types import MemoryScope, MemoryState, MemoryTier
 from mark.types.graph import EdgeRelation, NodeType
 
+# Stand-in content for a row whose stored bytes cannot be decrypted or decoded.
+_UNREADABLE = "[unreadable memory: stored content could not be decrypted]"
+
 
 class RowDecodingMixin:
     """Row -> model converters shared by every read path."""
 
     def _decode_fragment(self, row: dict[str, object]) -> tuple[MemoryFragment, bool]:
-        """Decode a row; returns (fragment, tampered). Tampered rows are relabelled CONTRADICTED."""
+        """Decode a row; returns (fragment, tampered). Tampered rows are relabelled CONTRADICTED.
+
+        Content that cannot be decrypted or decoded (e.g. plaintext written into
+        an encrypted store by an older MARK, or a corrupted row) is treated as
+        tampered too, so one bad row never breaks every read.
+        """
+        try:
+            content = self.encryption.decrypt_str(_as_bytes(row["content"]))
+        except Exception:  # noqa: BLE001 - any provider error means "unreadable"
+            content = None
         fragment = MemoryFragment(
             id=str(row["id"]),
-            content=self.encryption.decrypt_str(_as_bytes(row["content"])),
+            content=content if content is not None else _UNREADABLE,
             block_id=_optional_str(row["block_id"]),
             scope=MemoryScope(str(row["scope"])),
             tier=MemoryTier(str(row["tier"])),
@@ -43,7 +55,7 @@ class RowDecodingMixin:
         )
         # Report tampering only on the first detection: a row already stored as
         # CONTRADICTED needs no further write.
-        if not ContentHasher.check(fragment, self.encryption):
+        if content is None or not ContentHasher.check(fragment, self.encryption):
             already = fragment.state == MemoryState.CONTRADICTED
             return fragment.model_copy(update={"state": MemoryState.CONTRADICTED}), not already
         return fragment, False

@@ -34,9 +34,10 @@ class _Engine:
     """Loads MARK lazily and executes commands against one database."""
 
     def __init__(self, db: Path) -> None:
+        from mark._private_fs import ensure_private_dir
         from mark.memory.runtime import MarkRuntime
 
-        db.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(db.parent)  # 0700 when created here
         self.runtime = MarkRuntime.local(store_path=db)
 
     def close(self) -> None:
@@ -53,10 +54,14 @@ class _Engine:
         return self.runtime.memory(agent)
 
     def cmd_ingest(self, agent: str, lines: list[str], session: str | None = None,
-                   tags: list[str] | None = None) -> dict[str, Any]:
+                   tags: list[str] | None = None, extract_facts: bool = False) -> dict[str, Any]:
         texts = [line.strip() for line in lines if line.strip()]
-        ids = self._memory(agent).store_many_sync(texts, session_id=session, tags=tags or None)
-        return {"stored": len(ids)}
+        # extract_facts=True: built-in pattern packs, each line's "[YYYY-MM-DD]" stamp as valid_from.
+        ids = self._memory(agent).store_many_sync(texts, session_id=session, tags=tags or None,
+                                                  extract_facts=True if extract_facts else None)
+        if not extract_facts:
+            return {"stored": len(ids)}
+        return {"stored": len(ids), "facts": len(self.runtime.store.fact_current(agent))}
 
     def cmd_store(self, agent: str, text: str, session: str | None = None,
                   occurred_at: str | None = None, importance: float = 0.8) -> dict[str, Any]:
@@ -65,16 +70,29 @@ class _Engine:
         )
         return {"id": fid}
 
-    def cmd_recall(self, agent: str, query: str, k: int = 10) -> dict[str, Any]:
-        return self.cmd_recall_many(agent, [query], k)["results"][0]
+    def cmd_recall(self, agent: str, query: str, k: int = 10,
+                   order: str = "relevance") -> dict[str, Any]:
+        return self.cmd_recall_many(agent, [query], k, order)["results"][0]
 
-    def cmd_recall_many(self, agent: str, queries: list[str], k: int = 10) -> dict[str, Any]:
+    def cmd_recall_many(self, agent: str, queries: list[str], k: int = 10,
+                        order: str = "relevance") -> dict[str, Any]:
         from mark.intelligence.retrieval import RetrievalPolicy
+        from mark.memory.timeline_order import apply_order
 
         k = max(1, min(int(k), 15))
         policy = RetrievalPolicy.DEEP if k > 10 else RetrievalPolicy.BALANCED
         results = self._memory(agent).retrieve_many_sync(list(queries), policy=policy)
-        return {"results": [_result_json(result, k) for result in results]}
+        # Chronological order re-sorts the shown top-k, never widens it.
+        return {"results": [_result_json(result, k, order) for result in results]}
+
+    def cmd_timeline(self, agent: str, subject: str, attribute: str | None = None,
+                     limit: int | None = None, since: str | None = None,
+                     until: str | None = None) -> dict[str, Any]:
+        timeline = self._memory(agent).timeline(subject, attribute, limit=limit,
+                                                since=since, until=until)
+        payload = timeline.to_dict()
+        payload["text"] = timeline.as_text()
+        return payload
 
     def cmd_fact_set(self, agent: str, subject: str, attribute: str, value: str,
                      valid_from: str | None = None, correction: bool = False) -> dict[str, Any]:
@@ -106,10 +124,15 @@ def _fact_json(fact: Any) -> dict[str, Any]:
     }
 
 
-def _result_json(result: Any, k: int) -> dict[str, Any]:
+def _result_json(result: Any, k: int, order: str = "relevance") -> dict[str, Any]:
     from mark.intelligence.temporal_order import same_day_order
+    from mark.memory.timeline_order import fragment_order
 
     shown = list(zip(result.fragments, result.scores))[:k]
+    if order == "chronological":
+        shown = [shown[i] for i, _ in fragment_order([fragment for fragment, _ in shown])]
+    elif order != "relevance":
+        raise ValueError(f"order must be 'relevance' or 'chronological', got {order!r}")
     same_day = same_day_order([fragment for fragment, _ in shown])
     return {
         "query": result.query,

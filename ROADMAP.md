@@ -1,114 +1,81 @@
 # MARK SDK Roadmap
 
-This roadmap describes the open Python SDK direction. It is intentionally
-focused on work that can be implemented, tested, documented, and shipped in the
-`mark-sdk` package.
+This roadmap covers the open Python SDK: work that can be implemented,
+tested, documented, and shipped in the `mark-sdk` package. Plans change as we
+learn from real workloads; open a discussion if something here matters to you.
 
-MARK's current promise is simple: agents should not forget important work.
+## Current release: 0.2.0a9
 
-## Current Release: 0.2.0a8
+Everything from 0.2.0a8 (local memory, hybrid recall, time-aware recall,
+bi-temporal facts, gap reports, batch operations, `ContextWatch`, LangChain
+middleware and tools, the MCP server, the `mark` command line, local
+embedders, provenance blocks, and encryption at rest), plus:
 
-The current alpha provides:
+- **Automatic fact extraction.** Built-in rule packs record facts from stored
+  text (`fact_extractor="patterns"` or `extract_facts=True`). A local LLM
+  extractor runs from a durable background queue. `mark ingest
+  --extract-facts` does the same from the command line.
+- **Subject timelines.** `memory.timeline(subject, attribute)` and
+  `mark timeline` list everything memory knows about a subject, oldest first.
+  `order="chronological"` and `mark recall --chronological` sort recall
+  results the same way.
+- **Proactive context beyond LangChain.** `observe_messages()` and `inject()`
+  bring briefings to any agent loop, MCP clients get an opt-in
+  `mark_briefing` tool and resource, and `ContextWatch.for_small_models()`
+  is a preset for small models.
+- **Token-budgeted context.** `ContextBudget` puts a hard token cap, filled by
+  priority, on briefings and on everything the middleware injects.
+- **Context replacement.** `MarkAgentMiddleware(history="mark")` and the
+  `MarkChat` reference loop keep only recent messages in the prompt and let
+  MARK supply the rest.
+- **Better embeddings.** `embedder="auto"` and spec strings, with fusion that
+  adapts to the embedder (hybrid hit@1 up 7 to 11 queries out of 60 for
+  semantic models). The deterministic hash embedder stays the default.
+- **Image memory.** `memory.images` remembers images by path and hash, finds
+  them by caption or CLIP similarity, and checks them against facts.
+- **Hardening.** Encrypted stores refuse to open without the right key, and
+  new store directories and files are private on POSIX.
 
-- Hybrid lexical + vector retrieval with rank fusion, time-aware ordering,
-  and calibrated gap reports, with no LLM calls on the hot path.
-- Bi-temporal facts with full history, and anticipatory context
-  (`ContextWatch`) that prepares memory before the agent asks.
-- A `mark` command line with a warm local server.
-- Pluggable local embedders: Ollama, any OpenAI-compatible local server,
-  FastEmbed, Model2Vec, sentence-transformers, or the zero-dependency default.
+## Next: 0.2.0a10
 
-- Local-first memory through `Mark.local()`.
-- Persistent memory storage and retrieval.
-- `MarkAgent` for memory-aware callable and LLM workflows.
-- Optional middleware for recall, observation, compression, query expansion,
-  governance, lifecycle hooks, observability, sync envelope preparation,
-  trust-bus publishing, sandbox hooks, gap healing, and media continuity.
-- LangChain tools and middleware adapters.
-- MCP server adapter for exposing MARK memory to compatible clients.
-- Graph-scoped memory blocks with provenance sealing, verification, and
-  quarantine.
-- Offline examples, tests, and packaging checks.
+- **Fast cold start and backup.** Faster first use of a large store, and
+  simple backup and restore.
+- **A simpler API.** Fewer entry points for common tasks.
+- **Windows and macOS CI, and fuzzing.** Test every release on all three
+  platforms, and fuzz the parsers and the store.
+- **The retention A/B benchmark as a regression suite.** Run it on every
+  release so recall quality cannot quietly regress.
+- **Fact extraction for multi-clause lines.** Lines that state several
+  changes at once, the main gap in the current rule packs.
+- **Alias resolution in timelines.** Gather a subject's events under all of
+  its names.
+- **Encryption support in the command line.**
 
-## Next
+## Later
 
-- Optional sealing of fact timelines into the block chain.
-- An entity channel as a third retrieval signal.
-- A durable background extraction queue that keeps writes fast.
-- An optional local cross-encoder reranker.
-- A reproducible long-memory evaluation harness with a pinned local judge.
+Under consideration: sealing fact timelines into the block chain, an entity
+channel as a third retrieval signal, an optional local reranker, and a
+reproducible long-memory evaluation harness.
 
-## Near Term
+## Good areas for contributors
 
-These are the best areas for contributors who want to help MARK become more
-usable and reliable.
+- **Examples and recipes** for coding, research, and creative-continuity
+  agents, each comparing behaviour with and without MARK.
+- **Adapter hardening**: LangChain edge cases, MCP client setup notes, tests.
+- **Retrieval diagnostics**: explain why a memory was returned.
+- **Migrations**: fixtures for older alpha stores.
+- **Redaction coverage** for sync envelopes and logs.
+- **Documentation** that describes what MARK does today, without claims the
+  SDK does not support.
 
-- Improve beginner documentation:
-  - Add small recipes for common agent memory patterns.
-  - Keep README examples short and runnable.
-  - Expand troubleshooting for installation, optional extras, and notebooks.
-- Grow examples:
-  - Add local-only examples for coding agents, research agents, and creative
-    continuity.
-  - Keep heavyweight provider clients and generated media outside the package.
-  - Add examples that compare behavior with and without MARK.
-- Strengthen adapters:
-  - Add more LangChain edge-case tests.
-  - Improve MCP tool documentation and client setup notes.
-  - Keep adapters as thin glue over public MARK APIs.
-- Improve contributor experience:
-  - Label starter issues.
-  - Keep tests fast and offline by default.
-  - Document release and package-boundary expectations.
+## Not in scope for this package
 
-## SDK Quality
+- Account-based or hosted infrastructure (MARK Cloud — coming soon).
+- Required network calls during normal local use.
+- Heavy media-generation dependencies in the install path.
+- Generated media in the repository or distribution.
 
-These items harden MARK for serious adoption.
+## How to help
 
-- Retrieval quality:
-  - Add clearer retrieval policies and examples.
-  - Add tests around ranking, session filters, block filters, and metadata.
-  - Improve diagnostics for why a memory was returned.
-- Middleware behavior:
-  - Keep middleware opt-in and composable.
-  - Document when to use middleware versus tools.
-  - Add tests for middleware ordering, stop conditions, and failure handling.
-- Storage and migration:
-  - Keep SQLite migrations explicit and tested.
-  - Improve export/import examples.
-  - Add fixtures for older alpha stores.
-- Security and privacy:
-  - Keep the core offline by default.
-  - Maintain URL safety checks for web lookup.
-  - Expand redaction coverage for sync envelopes and logs.
-
-## Community Ideas
-
-Good community contributions include:
-
-- Framework adapters and examples.
-- Better memory inspection and debugging tools.
-- Local benchmark scripts for long-running agent tasks.
-- More realistic examples for software projects, research workflows, and
-  creative continuity.
-- Documentation that explains what MARK can do today without making claims the
-  SDK does not yet support.
-
-## Not In Scope For This SDK Package
-
-The SDK should not absorb every possible product feature. To keep the package
-clear and deployable, the following are not part of the core package today:
-
-- Account-based infrastructure.
-- Required network calls during normal local memory use.
-- Heavy media generation dependencies in the install path.
-- Generated media artifacts in the repository or distribution bundle.
-- Service-side logic outside the local package boundary.
-
-## How To Help
-
-Start with a small issue, open a branch, and submit a Pull Request. The best
-first contributions are focused docs fixes, missing tests, example improvements,
-adapter hardening, and small runtime bugs with a clear reproduction.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the branch and Pull Request flow.
+Start with a small issue, work on a branch, and open a pull request. See
+[CONTRIBUTING.md](CONTRIBUTING.md).

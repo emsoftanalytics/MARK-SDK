@@ -1,20 +1,21 @@
 ---
 name: Mark Feature request
-about: Suggest an idea for this project
+about: Suggest an improvement to the MARK SDK
 title: ''
 labels: ''
 assignees: ''
 
 ---
 
-**Is your feature request related to a problem? Please describe.**
-A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
+**What problem does this solve?**
+Describe the agent workload or task and what is hard today.
 
-**Describe the solution you'd like**
-A clear and concise description of what you want to happen.
+**Proposed solution**
+What you would like MARK to do. A short code sketch of the API you would
+expect is welcome.
 
-**Describe alternatives you've considered**
-A clear and concise description of any alternative solutions or features you've considered.
+**Alternatives considered**
+Other approaches or workarounds you have tried.
 
 **Additional context**
-Add any other context or screenshots about the feature request here.
+Anything else, such as store size, integrations used, or related issues.

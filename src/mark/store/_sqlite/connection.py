@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from typing import Iterable, Iterator
 
@@ -152,8 +153,25 @@ class ConnectionMixin:
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA busy_timeout=5000")
         if path != ":memory:":
-            conn.execute("PRAGMA journal_mode=WAL")
+            ConnectionMixin._enable_wal(conn)
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA temp_store=MEMORY")
         conn.execute("PRAGMA cache_size=-32000")
         return conn
+
+    @staticmethod
+    def _enable_wal(conn: sqlite3.Connection, attempts: int = 50) -> None:
+        """Switch to WAL, retrying while another connection holds the lock.
+
+        Several connections opening a brand-new database at once can race on
+        the journal-mode switch, and SQLite reports "database is locked"
+        without consulting the busy timeout, so back off and retry here.
+        """
+        for attempt in range(attempts):
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc) or attempt == attempts - 1:
+                    raise
+                time.sleep(0.01 * (attempt + 1))
