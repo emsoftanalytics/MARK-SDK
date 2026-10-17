@@ -12,19 +12,18 @@
 - a changed embedder fingerprint re-embeds the agent's memories once.
 
 Legacy stores/indexes are supported via ``getattr`` probes and ``TypeError``
-fallbacks. The host class provides ``_store``, ``_index``, ``_embedder``,
+fallbacks (helpers in ``retrieval_index_compat``). The host class provides ``_store``, ``_index``, ``_embedder``,
 ``_sync_lock``, ``_verified_agents`` and ``EMBEDDER_META_KEY``.
 """
 from __future__ import annotations
 
 import logging
-from typing import Iterable
-
 from mark.index import VectorSearchResult
 from mark.intelligence.index_bulk_load import (
     _same_embedding_space, bulk_index, changed_ids, index_each, restore_snapshot, save_snapshot, scope_ids,
     sync_delta, wants_numpy,
 )
+from mark.intelligence.retrieval_index_compat import _StoreCompatMixin
 from mark.intelligence.retrieval_policy import _RETRIEVABLE_STATES, SessionFilter
 from mark.types import MemoryFragment
 
@@ -32,7 +31,7 @@ from mark.types import MemoryFragment
 logger = logging.getLogger("mark.retrieval")
 
 
-class _IndexSyncMixin:
+class _IndexSyncMixin(_StoreCompatMixin):
     """Write path, scope filtering, index synchronisation and the two search channels."""
 
     # ── Write path ────────────────────────────────────────────────────────────
@@ -128,8 +127,10 @@ class _IndexSyncMixin:
         count = getattr(self._index, "count", None)
         before = count(agent_id) if count is not None else None
         find_missing = getattr(self._index, "missing", None)  # C-level set difference
-        missing = allowed_ids if before == 0 else (
-            find_missing(allowed_ids, agent_id) if find_missing else allowed_ids - self._index_ids(agent_id))
+        if before == 0:  # a plain frozenset: per-row membership tests stay C-level
+            missing = allowed_ids.frozen() if hasattr(allowed_ids, "frozen") else allowed_ids
+        else:
+            missing = find_missing(allowed_ids, agent_id) if find_missing else set(allowed_ids) - self._index_ids(agent_id)
         if not missing:
             return True
         # Large cold start: snapshot first; (re)save one after a full row load.
@@ -202,20 +203,6 @@ class _IndexSyncMixin:
                     update(fragment.id, vector)
                 self._index_add(fragment.id, vector, fragment.content, agent_id)
 
-    def _stored_embeddings(self, agent_id: str, ids: set[str] | None) -> dict[str, list[float] | None]:
-        fetch = getattr(self._store, "embeddings_for_agent", None)
-        if fetch is not None and (ids is None or len(ids) > 2_000):  # a few ids: read just their rows
-            rows = fetch(agent_id)
-            return {fid: vec for fid, vec in rows if ids is None or fid in ids}
-        if ids is None:
-            try:
-                fragments = self._store.list_by_agent(agent_id, states=_RETRIEVABLE_STATES, limit=None)
-            except TypeError:
-                fragments = self._store.list_by_agent(agent_id, states=_RETRIEVABLE_STATES, limit=1_000_000)
-            return {f.id: f.embedding for f in fragments}
-        found = self._get_many(list(ids))
-        return {fid: f.embedding for fid, f in found.items()}
-
     # ── Search channels ───────────────────────────────────────────────────────
 
     def _vector_search(
@@ -244,57 +231,3 @@ class _IndexSyncMixin:
             logger.warning("lexical search failed: %s", exc)
             return []
         return [(fid, score) for fid, score in hits if fid in allowed_ids]
-
-    # ── Store / index compatibility helpers ───────────────────────────────────
-
-    def _get_many(self, ids: Iterable[str]) -> dict[str, MemoryFragment]:
-        ids = list(ids)
-        get_many = getattr(self._store, "get_many", None)
-        if get_many is not None:
-            return dict(get_many(ids))
-        found: dict[str, MemoryFragment] = {}
-        for fid in ids:
-            fragment = self._store.get(fid)
-            if fragment is not None:
-                found[fid] = fragment
-        return found
-
-    def _index_add(self, fragment_id: str, vector: list[float], content: str, agent_id: str) -> None:
-        try:
-            self._index.add(fragment_id, vector, content, agent_id=agent_id)
-        except TypeError:  # legacy/custom index without agent partitions
-            self._index.add(fragment_id, vector, content)
-
-    def _index_ids(self, agent_id: str) -> set[str]:
-        ids = getattr(self._index, "ids", None)
-        if ids is not None:
-            try:
-                return set(ids(agent_id))
-            except TypeError:
-                return set(ids())
-        return {fid for fid in getattr(self._index, "_vectors", {})}
-
-    def _index_search(
-        self,
-        q_vec: list[float],
-        agent_id: str,
-        scope_ids: set[str] | None,
-        depth: int,
-        allowed_ids: set[str],
-    ) -> list[VectorSearchResult]:
-        try:
-            return self._index.search(q_vec, top_k=depth, include_ids=scope_ids, agent_id=agent_id)
-        except TypeError:
-            # Legacy index without agent partitions: always restrict to the agent's ids.
-            return self._index.search(q_vec, top_k=depth, include_ids=allowed_ids)
-
-    def _remove_agent_from_index(self, agent_id: str, ids: Iterable[str]) -> None:
-        clear = getattr(self._index, "clear", None)
-        if clear is not None:
-            try:
-                clear(agent_id)
-                return
-            except TypeError:
-                pass
-        for fid in ids:
-            self._index.remove(fid)

@@ -25,7 +25,7 @@ from typing import Any, Iterable, Sequence
 
 # _dot and _sumprod are not used here; they stay importable from this module.
 from mark.index.vector_backends import _dot, _load_numpy, _normalize, _NumpyPartition, _PythonPartition, _sumprod
-from mark.index.vector_bulk import _bulk_add
+from mark.index.vector_bulk import _bulk_add, _promote
 from mark.index.vector_storage import _index_payload, _read_index_file, _write_json_atomic
 
 #: Vector count at which ``backend="auto"`` switches to numpy (when installed).
@@ -166,8 +166,11 @@ class VectorIndex:
         """The given ids not indexed under *agent_id*: one C-level pass over the given ids."""
         with self._lock:
             partition = self._partitions.get(agent_id)
+            keys = partition.keys() if partition is not None else ()
+            if hasattr(fragment_ids, "frozen_base"):  # ScopeIds: C-level difference on its base
+                return set(fragment_ids.difference(keys))
             wanted = fragment_ids if isinstance(fragment_ids, (set, frozenset)) else set(fragment_ids)  # no copy
-            return wanted.difference(partition.keys() if partition is not None else ())
+            return wanted.difference(keys)
 
     def clear(self, agent_id: str | None = None) -> None:
         """Remove every vector, or only one agent's when agent_id is given."""
@@ -259,24 +262,8 @@ class VectorIndex:
         return True
 
     def _promote_to_numpy(self) -> None:
-        """Switch every partition to the numpy backend (caller holds the lock).
-
-        Searches already running keep scoring their Python snapshots; since
-        both backends share the same ordering contract, results don't change.
-        """
-        self._auto = False  # decide once, whether or not numpy is available
-        np = _load_numpy()
-        if np is None or self._dim is None:
-            return
-        self._np = np
-        for owner, partition in list(self._partitions.items()):
-            if isinstance(partition, _PythonPartition):
-                promoted = _NumpyPartition(np, self._dim)
-                if len(partition):
-                    promoted.add_matrix(
-                        list(partition.vectors), np.asarray(list(partition.vectors.values()), dtype=np.float32),
-                    )
-                self._partitions[owner] = promoted
+        """Switch every partition to the numpy backend (caller holds the lock); see ``vector_bulk``."""
+        _promote(self)
 
     def _set_content(self, fragment_id: str, content: str) -> None:
         if content:

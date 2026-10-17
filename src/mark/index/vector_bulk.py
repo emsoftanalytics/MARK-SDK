@@ -56,6 +56,29 @@ def _bulk_add(index: "VectorIndex", ids: list[str], embeddings: Any, agent_id: s
         index.revision += 1
 
 
+def _promote(index: "VectorIndex") -> None:
+    """Switch every partition of *index* to numpy (caller holds the index lock).
+
+    Searches already running keep scoring their Python snapshots; since
+    both backends share the same ordering contract, results don't change.
+    """
+    from mark.index.vector_backends import _load_numpy, _NumpyPartition, _PythonPartition
+
+    index._auto = False  # decide once, whether or not numpy is available
+    np = _load_numpy()
+    if np is None or index._dim is None:
+        return
+    index._np = np
+    for owner, partition in list(index._partitions.items()):
+        if isinstance(partition, _PythonPartition):
+            promoted = _NumpyPartition(np, index._dim)
+            if len(partition):
+                promoted.add_matrix(
+                    list(partition.vectors), np.asarray(list(partition.vectors.values()), dtype=np.float32),
+                )
+            index._partitions[owner] = promoted
+
+
 def _export_rows(index: "VectorIndex", agent_id: str | None) -> tuple[list[str], Any] | None:
     """(ids, float32 matrix) of a numpy partition's live rows, in insertion order; None otherwise."""
     with index._lock:
