@@ -87,9 +87,12 @@ def print_result(args: Any, cmd: str, result: dict[str, Any]) -> None:
         print(f"superseded {result['superseded'][:8]} with {result['id'][:8]}")
     elif cmd in {"export", "import"}:
         skipped = f", {result['skipped']} skipped" if result.get("skipped") else ""
+        invalid = f", {result['invalid']} invalid line(s)" if result.get("invalid") else ""
         verb = "exported" if cmd == "export" else "imported"
         print(f"{verb} {result['memories']} memories, {result['facts']} facts, "
-              f"{result['documents']} documents{skipped} ({result['path']})")
+              f"{result['documents']} documents{skipped}{invalid} ({result['path']})")
+        for problem in result.get("problems", []):
+            print(f"  {problem}")
     elif cmd == "config-show":
         print(f"store: {result['db']}\nuser subject: {result['user_subject']}\n"
               f"schema version: {result['schema_version']}\nembedder: {_embedder(result['embedder'])}")
