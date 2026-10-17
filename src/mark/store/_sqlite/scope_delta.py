@@ -189,7 +189,8 @@ class ScopeCacheMixin:
                 if left is not None:
                     soonest = min(soonest, max(0.0, float(left)))
         ids = entry.ids
-        if not present.issubset(ids) or not ids.isdisjoint(touched.difference(present)):
+        # Membership tests on the cached scope (never set.issubset(scope): that copies it).
+        if not all(map(ids.__contains__, present)) or not ids.isdisjoint(touched.difference(present)):
             ids = ScopeIds.derive(ids, present, touched.difference(present))
         return _Entry(ids, version, min(entry.expiry, now + soonest), entry.refresh)
 
