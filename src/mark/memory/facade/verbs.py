@@ -20,6 +20,7 @@ from typing import Any
 
 from mark.kinds import DEFAULT_CONFIDENCE, DEFAULT_IMPORTANCE, kind_tag, normalize_kind
 from mark.memory.facade.core import MemoryCore
+from mark.memory.facade.write_validation import check_content
 
 
 def _invalid(exc: Exception, what: str = "memory") -> Exception:
@@ -64,6 +65,8 @@ class VerbsMixin(MemoryCore):
         """
         from mark.errors import InvalidInputError
 
+        if not isinstance(text, str) and text is not None:
+            check_content(text)  # bytes / paths: say what to call instead (remember_file)
         if not isinstance(text, str) or not text.strip():
             raise InvalidInputError("memory text must be a non-empty string")
         all_tags = list(dict.fromkeys(tags or []))

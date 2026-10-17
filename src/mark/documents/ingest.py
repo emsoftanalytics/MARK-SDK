@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from mark.documents.chunking import chunk_text
-from mark.documents.loaders import LoadedFile, load_file
+from mark.documents.loaders import OFFICE_TYPES, LoadedFile, load_file
 from mark.documents.records import DocumentRecord
 from mark.errors import InvalidMemoryError
 from mark.media.errors import TranscriberRequiredError, UnsupportedFileError
@@ -128,7 +128,7 @@ def remember_file(memory: Any, path: str | Path, *, caption: str | None = None, 
     if media_type.startswith("image/"):
         image_options = {k: options[k] for k in ("session_id", "occurred_at", "metadata", "tags") if k in options}
         return memory.images.remember(file, caption=caption, subjects=subjects, **image_options)
-    if media_type in ("text/plain", "application/pdf"):
+    if media_type in ("text/plain", "application/pdf") or media_type in OFFICE_TYPES:
         return store_document(memory, file, **options)
     if media_type.startswith(("audio/", "video/")):
         transcriber = transcriber or getattr(memory, "transcriber", None)
@@ -144,7 +144,8 @@ def remember_file(memory: Any, path: str | Path, *, caption: str | None = None, 
         title = options.pop("title", None) or f"Transcript of {file.name}"
         return store_document(memory, text, title=title, metadata=meta, source=str(file), **options)
     raise UnsupportedFileError(
-        f"{file.name} looks like {media_type}; MARK remembers text, Markdown, code, HTML, PDF, images, and "
+        f"{file.name} looks like {media_type}; MARK remembers text, Markdown, code, HTML, PDF, Word/Excel/"
+        "PowerPoint (docx/xlsx/pptx), images, and "
         "audio/video with a transcriber")
 
 
