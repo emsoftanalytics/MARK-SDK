@@ -1,17 +1,16 @@
 """CLI client: find a live ``mark serve`` process and talk to it, else run in-process.
 
-Standard library only: when a server answers, the client never imports MARK.
+Standard library only: when a server answers, the client never imports MARK,
+and it speaks HTTP through :mod:`mark._cli.wire` (a raw loopback socket), so
+it never imports ``urllib``/``http.client``/``ssl`` either (start-up time).
 """
 from __future__ import annotations
 
 import hmac
-import http.client
 import json
 import secrets
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -28,11 +27,15 @@ def _live_server(state: Path) -> dict[str, Any] | None:
     """
     try:
         data = json.loads(state.read_text())
+    except (OSError, ValueError):
+        return None  # no state file: no server (the common, cold case)
+    try:
+        from mark._cli.wire import call_json
+
         nonce = secrets.token_hex(16)
-        url = f"{_base_url(data)}/hello?nonce={nonce}"
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open(url, timeout=1.0) as response:
-            hello = json.loads(response.read())
+        status, hello = call_json(data["host"], int(data["port"]), "GET", f"/hello?nonce={nonce}", timeout=1.0)
+        if status != 200:
+            return None
         if not hmac.compare_digest(str(hello.get("proof", "")), _proof(data["token"], nonce)):
             return None
         if hello.get("protocol") != protocol_fingerprint():
@@ -55,19 +58,12 @@ def _base_url(server: dict[str, Any]) -> str:
 
 def _call_server(server: dict[str, Any], cmd: str, args: dict[str, Any]) -> dict[str, Any]:
     """POST one command to an authenticated server; raise ``RuntimeError`` on failure."""
-    request = urllib.request.Request(
-        f"{_base_url(server)}/",
-        data=json.dumps({"cmd": cmd, "args": args}, ensure_ascii=False).encode("utf-8"),
-        headers={"Authorization": f"Bearer {server['token']}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # never via a proxy
-    try:
-        with opener.open(request, timeout=300) as response:
-            payload = json.loads(response.read())
-    except urllib.error.HTTPError as exc:
-        payload = json.loads(exc.read() or b"{}")
-    if not payload.get("ok"):
+    from mark._cli.wire import call_json
+
+    # Loopback socket: never via a proxy, never TLS (see mark._cli.wire).
+    _status, payload = call_json(server["host"], int(server["port"]), "POST", "/",
+                                 {"cmd": cmd, "args": args}, token=server["token"], timeout=300)
+    if not isinstance(payload, dict) or not payload.get("ok"):
         raise RuntimeError(payload.get("error", "server error"))
     return payload["result"]
 
@@ -100,7 +96,7 @@ def stop_server(db: Path, *, timeout: float = 10.0) -> bool:
         return False
     try:
         _call_server(server, "stop", {})
-    except (OSError, RuntimeError, ValueError, http.client.HTTPException):
+    except (OSError, RuntimeError, ValueError):
         pass  # it may close the connection while stopping; confirm below
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -125,8 +121,9 @@ def _ingest_in_chunks(server: dict[str, Any], args: dict[str, Any]) -> dict[str,
         # Counts add up; other fields (e.g. current "facts") come from the last chunk.
         nonlocal result
         part = _call_server(server, "ingest", {**args, "lines": chunk})
-        result = {**part, "stored": result["stored"] + part["stored"],
-                  **({"extracted": result.get("extracted", 0) + part["extracted"]} if "extracted" in part else {})}
+        summed = {key: result.get(key, 0) + part[key]
+                  for key in ("stored", "existing", "skipped", "extracted") if key in part}
+        result = {**part, **summed}
 
     for line in args["lines"]:
         line_size = len(line.encode("utf-8")) + 8  # + JSON quoting/separator slack
