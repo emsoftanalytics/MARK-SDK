@@ -4,7 +4,7 @@ All notable changes to the MARK Python SDK will be documented here.
 
 This project follows semantic versioning for public package releases.
 
-## 0.2.0a10 - 2026-10-15
+## 0.2.0a10 - 2026-10-17
 
 ### Added
 
@@ -164,10 +164,18 @@ This project follows semantic versioning for public package releases.
   takes an id), dates, kinds and relevance scores; `ingest` reports the facts
   it extracted.
 - `wrap_agent()` agents are callable (`agent(...)`, `invoke`, `ainvoke`).
-<!-- perf follow-up lines -->
+- Recall right after a write no longer rescans the store: each write records
+  which memories it changed (also seen by other processes), and the cached
+  scope and vector index apply just that change. At 100k memories the first
+  recall after `remember()` takes 43 ms instead of 440 ms, and `mark serve`
+  warms a 100k store in under a second.
+- Chinese, Japanese and Korean names are recognised in timelines, fact
+  lookups and "not in memory" checks.
 
 ### Fixed
 
+- `update_embedding()` keeps vector snapshots correct, so a re-embedded memory
+  is never served from an older snapshot.
 - Writes validate their input up front and raise `InvalidMemoryError` (or
   `MemoryTooLargeError` above `max_memory_bytes`, default 1 MB) instead of
   raw pydantic, JSON or Unicode errors; bytes are no longer coerced to text.
