@@ -41,14 +41,20 @@ Data and processes
     stats                                        number of memories and current facts,
                                                  and which embedder is active
     serve [start|stop] [--host H] [--port N]     keep MARK warm (loopback only)
-    mcp [--briefing]                             run the MCP server (stdio) on this store
+    mcp [--db P] [--agent ID] [--briefing] [--preset default|small|tiny]
+        [--tools T,...] [--allow-agent ID ...] [--user-subject NAME]
+                                                 run the MCP server (stdio) on this store
+    config show [--json] | config user-subject NAME
+                                                 store settings; the user subject (who
+                                                 "I"/"my" is) is stored with the store
 
 KINDS for --kind: decision, todo, bug, fix, preference, snippet, api, note.
 IDs: recall and list print 8-character short ids; any unambiguous prefix works.
 
-The database comes from ``--db`` or ``$MARK_DB`` (default ``./.mark/memory.db``),
-the agent namespace from ``--agent`` or ``$MARK_AGENT`` (default ``__mark__``).
-``Mark.local(path)`` accepts the same database file.
+The database comes from ``--db`` or ``$MARK_DB`` (default ``./.mark/memory.db``):
+a ``.db`` file, a ``.mark`` folder (its ``memory.db``) or a project folder (its
+``.mark/memory.db``) -- the same rule as ``Mark.local(path)`` and ``mark mcp``.
+The agent namespace comes from ``--agent`` or ``$MARK_AGENT`` (default ``__mark__``).
 
 When ``mark serve`` is running for the same database, every other command is
 sent to it over loopback HTTP instead of loading MARK in-process (``--no-server``
@@ -117,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "mcp":
             from mark._cli.extras import run_mcp
 
-            run_mcp(db, agent, briefing=args.briefing)
+            run_mcp(_db_path(args.mcp_db) if args.mcp_db else db, args.mcp_agent or agent, args)
             return 0
         cmd, payload = _request(args, agent)
         result = execute(db, cmd, payload, use_server=not args.no_server)
@@ -184,6 +190,10 @@ def _request(args: argparse.Namespace, agent: str) -> tuple[str, dict[str, Any]]
         return cmd, payload
     if cmd == "agents":
         return cmd, {}
+    if cmd == "config":
+        if args.config_cmd == "show":
+            return "config-show", {}
+        return "config-user-subject", {"name": args.name}
     if cmd == "timeline":
         return cmd, {"agent": agent, "subject": args.subject, "attribute": args.attribute,
                      "limit": args.limit, "since": args.since, "until": args.until}

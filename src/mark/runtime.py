@@ -1,14 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
-#
-# Mark — the single public entrypoint for the local MARK SDK. Mark.local()
-# composes the SQLite-backed MarkRuntime engine; mark.memory is the simple
-# surface and mark.runtime.memory(agent_id) the per-agent one. Both offer the
-# same verbs (remember / recall / forget / list / ...; a-prefix = async).
 """Mark: the public local entrypoint wiring runtime, memory, skills, and agents.
 
-``MarkConfig`` and the late-binding ``configure_*`` hooks live in
-:mod:`mark.runtime_config`; both are available from this module.
+``Mark.local()`` composes the SQLite-backed MarkRuntime engine;
+``mark.memory`` and ``mark.runtime.memory(agent_id)`` offer the same verbs.
+``MarkConfig`` and the ``configure_*`` hooks live in :mod:`mark.runtime_config`.
 """
 from __future__ import annotations
 
@@ -22,7 +18,7 @@ from mark.memory.simple import SimpleMemory
 from mark.policies import PolicyRegistry
 from mark.middlewares.base import MarkMiddleware
 from mark.middlewares.skills import SkillRegistry
-from mark.runtime_config import MarkConfig, MarkConfigureMixin
+from mark.runtime_config import MarkConfig, MarkConfigureMixin, apply_user_subject
 from mark.runtime_data import MarkDataMixin, resolve_store_location
 
 if TYPE_CHECKING:
@@ -75,15 +71,7 @@ class Mark(MarkDataMixin, MarkConfigureMixin):
 
     @property
     def runtime(self) -> object:
-        """
-        The underlying MarkRuntime engine.
-
-        Exposes the full pipeline for advanced use cases:
-            mark.runtime.memory("my-agent")
-            mark.runtime.global_bus()
-            mark.runtime.store
-            mark.runtime.plugins
-        """
+        """The underlying MarkRuntime engine (see the class docstring for its API)."""
         return self._runtime_engine
 
     @classmethod
@@ -106,6 +94,7 @@ class Mark(MarkDataMixin, MarkConfigureMixin):
         max_memory_bytes: int | None = 1_000_000,
         redact:          object = True,
         injection:       str = "tag",
+        user_subject:    str | None = None,
     ) -> "Mark":
         """
         Create a local Mark instance backed by SQLite.
@@ -144,6 +133,9 @@ class Mark(MarkDataMixin, MarkConfigureMixin):
                              False, a RedactionPolicy or a WritePolicy.
             injection:       Prompt-injection screening: "tag" (default),
                              "quarantine" or "off".
+            user_subject:    Who "I"/"my" is ("ana"): stored with the store and
+                             applied on every later open, by Python, the CLI and
+                             MCP alike. None keeps the stored one (default "user").
 
         The store folder is created if it does not exist (mode 0700 on
         POSIX); the SQLite database in it is created 0600.
@@ -171,6 +163,8 @@ class Mark(MarkDataMixin, MarkConfigureMixin):
             redact               = redact,
             injection            = injection,
         )
+
+        apply_user_subject(runtime, user_subject)  # stored with the store; None = keep stored
 
         # One-time migration: if a legacy memory.json exists, import it into SQLite
         json_path = mark_dir / "memory.json"
@@ -290,6 +284,10 @@ class Mark(MarkDataMixin, MarkConfigureMixin):
         """Shut down the runtime engine and release resources."""
         if hasattr(self._runtime_engine, "shutdown"):
             self._runtime_engine.shutdown()
+
+    def close(self) -> None:
+        """Alias of :meth:`shutdown` (the name file-like objects use)."""
+        self.shutdown()
 
     def __enter__(self) -> "Mark":
         return self

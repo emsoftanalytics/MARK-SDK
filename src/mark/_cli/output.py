@@ -90,6 +90,11 @@ def print_result(args: Any, cmd: str, result: dict[str, Any]) -> None:
         verb = "exported" if cmd == "export" else "imported"
         print(f"{verb} {result['memories']} memories, {result['facts']} facts, "
               f"{result['documents']} documents{skipped} ({result['path']})")
+    elif cmd == "config-show":
+        print(f"store: {result['db']}\nuser subject: {result['user_subject']}\n"
+              f"schema version: {result['schema_version']}\nembedder: {_embedder(result['embedder'])}")
+    elif cmd == "config-user-subject":
+        print(f"user subject: {result['user_subject']} (stored with the store)")
     elif cmd == "agents":
         for item in result["agents"]:
             print(f"{item['agent']}  ({item['memories']} memories)")
@@ -99,6 +104,10 @@ def print_result(args: Any, cmd: str, result: dict[str, Any]) -> None:
         embedder = result.get("embedder")
         line = f"{result['memories']} memories, {result['facts']} current facts"
         if embedder:
-            kind = "semantic" if embedder["semantic"] else "lexical"
-            line += f"; embedder {embedder['name']} ({kind}, {embedder['source']})"
+            line += f"; embedder {_embedder(embedder)}"
         print(line)
+
+
+def _embedder(info: dict[str, Any]) -> str:
+    kind = "semantic" if info["semantic"] else "lexical"
+    return f"{info['name']} ({kind}, {info['source']})"

@@ -57,8 +57,13 @@ def _stop_by_pid(db: Path, timeout: float = 5.0) -> str:
     return f"stopped mark serve (pid {pid}) for {db}"
 
 
-def run_mcp(db: Path, agent: str, *, briefing: bool = False) -> None:
-    """Serve MARK over MCP (stdio) for *db*; blocks until the client disconnects."""
+def run_mcp(db: Path, agent: str, options: Any = None, *, briefing: bool = False) -> None:
+    """Serve MARK over MCP (stdio) for *db*; blocks until the client disconnects.
+
+    *options* is the parsed ``mark mcp`` namespace (briefing, preset, tools,
+    allowed, user_subject); every option is passed on to the launcher, so
+    ``mark mcp`` and ``python -m mark.adapters.mcp`` accept the same flags.
+    """
     try:
         from mark.adapters import mcp as adapter
     except ImportError as exc:  # pragma: no cover - adapter module is part of the package
@@ -68,10 +73,24 @@ def run_mcp(db: Path, agent: str, *, briefing: bool = False) -> None:
     except ImportError:
         launch = None
     if launch is not None:
-        launch(["--db", str(db), "--agent", agent, *(["--briefing"] if briefing else [])])
+        launch(["--db", str(db), "--agent", agent, *_launcher_flags(options, briefing)])
         return
     from mark.runtime import Mark
 
-    with Mark.local(db) as mark:
+    with Mark.local(db, user_subject=getattr(options, "user_subject", None)) as mark:
         server = adapter.create_mark_mcp_server_from_local(mark, agent_id=agent, briefing=briefing)
         server.run()
+
+
+def _launcher_flags(options: Any, briefing: bool) -> list[str]:
+    """The launcher arguments for a parsed ``mark mcp`` namespace."""
+    flags = ["--briefing"] if briefing or getattr(options, "briefing", False) else []
+    if getattr(options, "preset", None) and options.preset != "default":
+        flags += ["--preset", options.preset]
+    if getattr(options, "tools", None):
+        flags += ["--tools", options.tools]
+    for agent_id in getattr(options, "allowed", None) or []:
+        flags += ["--allow-agent", agent_id]
+    if getattr(options, "user_subject", None):
+        flags += ["--user-subject", options.user_subject]
+    return flags

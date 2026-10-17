@@ -28,8 +28,13 @@ def resolve_db(path: str | Path | None) -> Path:
 
 def build_server(db: str | Path | None = None, *, agent_id: str = "__mark__", briefing: bool = False,
                  preset: str = "default", allowed_agent_ids: Sequence[str] | None = None,
-                 tools: Sequence[str] | None = None, name: str = "mark-memory") -> tuple[Any, Any]:
-    """``(server, runtime)`` over the store at *db*; the caller shuts the runtime down."""
+                 tools: Sequence[str] | None = None, name: str = "mark-memory",
+                 user_subject: str | None = None) -> tuple[Any, Any]:
+    """``(server, runtime)`` over the store at *db*; the caller shuts the runtime down.
+
+    ``user_subject`` names who "I" is and is stored with the store; without
+    it the stored subject (``mark config user-subject``) is applied.
+    """
     from mark.adapters.backend import LocalMarkBackend
     from mark.adapters.mcp import create_mark_mcp_server
     from mark.memory.runtime import MarkRuntime
@@ -39,6 +44,13 @@ def build_server(db: str | Path | None = None, *, agent_id: str = "__mark__", br
     file = resolve_db(db)
     ensure_private_dir(file.parent)  # 0700 when created here, as Mark.local and the CLI do
     runtime = MarkRuntime.local(store_path=file)
+    try:
+        from mark.runtime_config import apply_user_subject
+
+        apply_user_subject(runtime, user_subject)
+    except Exception:
+        runtime.shutdown()
+        raise
     server = create_mark_mcp_server(
         LocalMarkBackend(runtime, default_agent_id=agent_id), name=name, default_agent_id=agent_id,
         allowed_agent_ids=allowed_agent_ids, briefing=briefing, briefing_preset=preset, tools=tools,
@@ -68,6 +80,7 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--allow-agent", action="append", dest="allowed", metavar="ID",
                     help="restrict clients to these namespaces (repeatable)")
     ap.add_argument("--tools", help=f"comma-separated subset of: {', '.join(ALL_TOOLS)}")
+    ap.add_argument("--user-subject", help="who 'I'/'my' is in memories (stored with the store)")
     return ap
 
 
@@ -75,4 +88,4 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser().parse_args(argv)
     tools = [t.strip() for t in args.tools.split(",") if t.strip()] if args.tools else None
     run_mcp(args.db, agent_id=args.agent, briefing=args.briefing, preset=args.preset,
-            allowed_agent_ids=args.allowed, tools=tools)
+            allowed_agent_ids=args.allowed, tools=tools, user_subject=args.user_subject)

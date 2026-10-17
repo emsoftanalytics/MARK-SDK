@@ -6,6 +6,7 @@ is standard-library only too, so building the parser never loads MARK.
 from __future__ import annotations
 
 import argparse
+from typing import Any
 
 from mark._cli.config import DEFAULT_AGENT
 from mark.kinds import KINDS
@@ -114,6 +115,31 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("action", nargs="?", choices=("start", "stop"), default="start")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=0)
-    p = sub.add_parser("mcp", help="run the MARK MCP server on stdio for this database")
-    p.add_argument("--briefing", action="store_true", help="also expose the mark_briefing tool")
+    _config_parser(sub)
+    _mcp_parser(sub)
     return parser
+
+
+def _config_parser(sub: Any) -> None:
+    config = sub.add_parser("config", help="show or change store settings (user subject)")
+    commands = config.add_subparsers(dest="config_cmd", required=True, metavar="{show,user-subject}")
+    p = commands.add_parser("show", help="store path, user subject, schema version and embedder")
+    p.add_argument("--json", action="store_true")
+    p = commands.add_parser("user-subject", help="who 'I'/'my' is in this store's memories "
+                                                 "(stored with the store; default 'user')")
+    p.add_argument("name")
+
+
+def _mcp_parser(sub: Any) -> None:
+    """``mark mcp``: the options of ``python -m mark.adapters.mcp`` (same launcher)."""
+    p = sub.add_parser("mcp", help="run the MARK MCP server on stdio for this database")
+    # Own dests: argparse lets sub-command defaults overwrite the global --db/--agent.
+    p.add_argument("--db", dest="mcp_db", help="store (same rule as the global --db)")
+    p.add_argument("--agent", dest="mcp_agent", help="default memory namespace")
+    p.add_argument("--briefing", action="store_true", help="also expose the mark_briefing tool")
+    p.add_argument("--preset", default="default", choices=("default", "small", "tiny"),
+                   help="briefing size for the client's model")
+    p.add_argument("--tools", help="comma-separated subset of the MCP tools to expose")
+    p.add_argument("--allow-agent", action="append", dest="allowed", metavar="ID",
+                   help="restrict clients to these namespaces (repeatable)")
+    p.add_argument("--user-subject", help="who 'I'/'my' is (stored with the store)")

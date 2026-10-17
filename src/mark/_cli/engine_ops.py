@@ -1,7 +1,7 @@
 """Lifecycle and data-management commands of the CLI engine.
 
 ``forget``, ``resolve``, ``supersede``, ``list``, ``export``, ``import``,
-``brief`` and ``agents``, mixed into :class:`mark._cli.engine._Engine` (so
+``brief``, ``agents`` and ``config``, mixed into :class:`mark._cli.engine._Engine` (so
 they are reachable in-process and through ``mark serve`` alike, and part of
 the protocol fingerprint). Commands that take a memory id accept the short
 8-character id that ``recall``/``list`` print, as long as it is unambiguous.
@@ -81,6 +81,22 @@ class EngineOpsMixin:
         page = memory.list(limit=max(1, int(limit)), offset=max(0, int(offset)), **filters)
         return {"memories": [memory_json(f) for f in page], "total": memory.count(**filters),
                 "offset": max(0, int(offset))}
+
+    def cmd_config_show(self) -> dict[str, Any]:
+        from mark.embeddings.info import embedder_info
+        from mark.runtime_config import DEFAULT_USER_SUBJECT, USER_SUBJECT_KEY
+
+        store = self.runtime.store
+        return {"db": str(getattr(self, "db", "")),
+                "user_subject": store.get_meta(USER_SUBJECT_KEY) or DEFAULT_USER_SUBJECT,
+                "schema_version": store.schema_version(),
+                "embedder": embedder_info(self.runtime.embedder).to_dict()}
+
+    def cmd_config_user_subject(self, name: str) -> dict[str, Any]:
+        from mark.runtime_config import apply_user_subject
+
+        # Stored with the store and applied to this (possibly long-lived server) runtime.
+        return {"user_subject": apply_user_subject(self.runtime, name)}
 
     def cmd_agents(self) -> dict[str, Any]:
         store = self.runtime.store

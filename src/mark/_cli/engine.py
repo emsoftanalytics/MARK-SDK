@@ -43,9 +43,12 @@ class _Engine(EngineOpsMixin):
     def __init__(self, db: Path) -> None:
         from mark._private_fs import ensure_private_dir
         from mark.memory.runtime import MarkRuntime
+        from mark.runtime_config import apply_user_subject
 
         ensure_private_dir(db.parent)  # 0700 when created here
+        self.db = db
         self.runtime = MarkRuntime.local(store_path=db)
+        apply_user_subject(self.runtime)  # the subject stored with the store (mark config)
 
     def close(self) -> None:
         self.runtime.shutdown()
