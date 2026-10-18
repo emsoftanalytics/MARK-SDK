@@ -24,6 +24,7 @@ OFF_KIND = 0.5
 _KIND_PREFIXES = (("todo", "todo"), ("task", "todo"), ("action item", "todo"), ("bug", "bug"),
                   ("decision", "decision"), ("fix", "fix"), ("snippet", "snippet"), ("preference", "preference"))
 _FETCH_LIMIT = 50
+_HINTS = ("todo", "to-do", "task", "action item", "bug", "decision", "fix", "snippet", "preference")
 
 
 class KindAsk(NamedTuple):
@@ -46,6 +47,9 @@ def _ask_re() -> re.Pattern[str]:
 
 def asked_kind(query: str) -> KindAsk | None:
     """The kind (and whether only open ones) a listing question asks for, or None."""
+    low = (query or "").lower()
+    if not any(word in low for word in _HINTS):
+        return None  # most questions: no regex (its first compile costs ~30 ms)
     match = _ask_re().search(query or "")
     if match is None:
         return None
