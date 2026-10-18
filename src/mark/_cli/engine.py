@@ -79,6 +79,7 @@ class _Engine(EngineOpsMixin):
         key = "ingest:" + hashlib.sha256("\n".join(texts).encode("utf-8", "surrogatepass")).hexdigest()
         # remember_many: "TODO:"/"BUG:"... lines get their kind, as `mark remember` does.
         # extract_facts=True: built-in pattern packs, each line's "[YYYY-MM-DD]" stamp as valid_from.
+        mark_before = self.runtime.store.fact_watermark() if extract_facts else None
         report = self._memory(agent).remember_many(texts, kind=kind, tags=tags or None, session_id=session,
                                                    extract_facts=True if extract_facts else None,
                                                    idempotency_key=key)
@@ -87,9 +88,9 @@ class _Engine(EngineOpsMixin):
         if report.skipped:
             result["skipped"] = len(report.skipped)
         if extract_facts:
-            # Facts this call extracted (not the store-wide total).
+            # Facts this call created (not the store-wide total, not ones a re-ingest found).
             ids = [fid for fid in report if fid]
-            result["extracted"] = self.runtime.store.facts_from_fragments(agent, ids)
+            result["extracted"] = self.runtime.store.facts_from_fragments(agent, ids, after=mark_before)
             result["facts"] = len(self.runtime.store.fact_current(agent))
         return result
 
@@ -100,6 +101,7 @@ class _Engine(EngineOpsMixin):
         from mark.kinds import DEFAULT_IMPORTANCE
 
         memory = self._memory(agent)
+        mark_before = self.runtime.store.fact_watermark() if extract_facts else None
         fid = memory.remember(
             text, session_id=session, occurred_at=occurred_at, kind=kind, tags=tags,
             importance=DEFAULT_IMPORTANCE if importance is None else importance,
@@ -107,7 +109,7 @@ class _Engine(EngineOpsMixin):
         )
         result: dict[str, Any] = {"id": fid}
         if extract_facts:
-            result["extracted"] = self.runtime.store.facts_from_fragments(agent, [fid])
+            result["extracted"] = self.runtime.store.facts_from_fragments(agent, [fid], after=mark_before)
         return result
 
     cmd_remember = cmd_store

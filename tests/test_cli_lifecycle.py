@@ -29,7 +29,7 @@ def test_remember_flags_and_store_alias(tmp_path: Path, capsys) -> None:
     db = str(tmp_path / "m.db")
     out = _run(capsys, db, "remember", "[2026-03-01] atlas-core runs on port 6430.", "--kind", "api",
                "--tag", "infra", "--importance", "0.9", "--extract-facts", "--session", "s1")
-    assert out.startswith("stored ") and out.rstrip().endswith("(1 facts extracted)")
+    assert out.startswith("stored ") and out.rstrip().endswith("(1 fact extracted)")
     _run(capsys, db, "store", "Legacy alias still works.", "--occurred-at", "2026-02-01")
     second, first = sorted(_ids(capsys, db), key=lambda m: m["content"])  # "L" < "["
     assert first["kind"] == "api" and first["tags"] == ["infra"] and first["date"] == "2026-03-01"

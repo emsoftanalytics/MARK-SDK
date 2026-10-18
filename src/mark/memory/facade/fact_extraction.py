@@ -27,9 +27,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Built-in pattern extractor shared by every memory that asks for
-# extract_facts=True without a configured extractor (compiled once).
-_DEFAULT_PATTERNS: Any = None
+# Built-in pattern extractors shared by every memory that asks for
+# extract_facts=True without a configured extractor, one per user subject
+# (who "I"/"my" is; the store's ``mark config user-subject``).
+_DEFAULT_PATTERNS: dict[str, Any] = {}
 
 
 class FactExtractionMixin(MemoryCore):
@@ -47,11 +48,14 @@ class FactExtractionMixin(MemoryCore):
             return configured
         from mark.intelligence.fact_extraction import FactExtractionService, PatternFactExtractor
 
-        global _DEFAULT_PATTERNS
-        if _DEFAULT_PATTERNS is None:
-            _DEFAULT_PATTERNS = PatternFactExtractor()
+        # The user subject applied to this runtime (stored with the store), so
+        # "I live in Lisbon" becomes "Sam city = Lisbon", not "user city".
+        subject = getattr(getattr(self, "_pipeline", None), "_user_subject", None) or "user"
+        extractor = _DEFAULT_PATTERNS.get(subject)
+        if extractor is None:
+            extractor = _DEFAULT_PATTERNS.setdefault(subject, PatternFactExtractor(user_subject=subject))
         # Inline extractor: no worker thread is started, so this is cheap.
-        return FactExtractionService(self._store, _DEFAULT_PATTERNS, start_worker=False)
+        return FactExtractionService(self._store, extractor, start_worker=False)
 
     def _extract_stored(self, fragment_ids: list[str], extract_facts: bool | None) -> int:
         """Extract facts from just-written fragments (by id, as stored); never raises.
