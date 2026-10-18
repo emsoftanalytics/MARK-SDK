@@ -29,8 +29,11 @@ def stop_server(db: Path) -> str:
     except (ImportError, AttributeError):
         return _stop_by_pid(db)
     result = stop(db)
-    return result if isinstance(result, str) else (
-        f"stopped mark serve for {db}" if result else f"no mark serve running for {db}")
+    if isinstance(result, str):
+        return result
+    # False also means "a server from another MARK build" (the handshake
+    # refuses it): signal the pid in its 0600 state file instead.
+    return f"stopped mark serve for {db}" if result else _stop_by_pid(db)
 
 
 def _stop_by_pid(db: Path, timeout: float = 5.0) -> str:

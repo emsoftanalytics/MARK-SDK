@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hmac
 import json
-import secrets
+import os
 import sys
 import time
 from pathlib import Path
@@ -32,7 +32,7 @@ def _live_server(state: Path) -> dict[str, Any] | None:
     try:
         from mark._cli.wire import call_json
 
-        nonce = secrets.token_hex(16)
+        nonce = os.urandom(16).hex()  # what secrets.token_hex does, without importing random
         status, hello = call_json(data["host"], int(data["port"]), "GET", f"/hello?nonce={nonce}", timeout=1.0)
         if status != 200:
             return None

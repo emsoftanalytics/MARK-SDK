@@ -100,13 +100,19 @@ from mark._cli.engine import _Engine, _fact_json, _result_json  # noqa: F401
 from mark._cli.output import print_recall as _print_recall  # noqa: F401
 from mark._cli.output import print_result as _print_result
 from mark._cli.parser import build_parser as _parser
-from mark._cli.server import (  # noqa: F401
-    _acquire_lock,
-    _pid_alive,
-    _release_lock,
-    _write_state,
-    serve,
-)
+
+# The server module imports http.server (and with it http.client, ssl and the
+# email parser): ~50 ms that a served `mark recall` must not pay. Its names
+# stay importable from here, loaded on first use (PEP 562).
+_SERVER_NAMES = {"_acquire_lock", "_pid_alive", "_release_lock", "_write_state", "serve"}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _SERVER_NAMES:
+        from mark._cli import server
+
+        return getattr(server, name)
+    raise AttributeError(f"module 'mark.cli' has no attribute {name!r}")
 
 # Errors a command may raise that are the user's to fix: print, exit 1.
 _USER_ERRORS = (RuntimeError, ValueError, OSError, KeyError, TypeError)
@@ -158,6 +164,8 @@ def _serve(args: argparse.Namespace, db: Path) -> int:
             return 1
         print(message)
         return 0
+    from mark._cli.server import serve
+
     serve(db, args.host, args.port)  # RuntimeError (e.g. encrypted store) is reported by main
     return 0
 

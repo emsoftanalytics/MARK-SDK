@@ -22,14 +22,18 @@ def protocol_fingerprint() -> str:
     in-process instead). Computed from signatures only — MARK isn't loaded.
     """
     import hashlib
-    import inspect
 
     from mark._version import __version__
 
     parts = [__version__]
     for name in sorted(dir(_Engine)):
         if name.startswith("cmd_"):
-            parts.append(f"{name}{inspect.signature(getattr(_Engine, name))}")
+            # Parameter names and defaults straight from the code object:
+            # `inspect` costs ~10 ms of every served call's start-up.
+            func = getattr(_Engine, name)
+            code = func.__code__
+            params = code.co_varnames[: code.co_argcount + code.co_kwonlyargcount]
+            parts.append(f"{name}{params}{func.__defaults__}{func.__kwdefaults__}")
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
 
 
