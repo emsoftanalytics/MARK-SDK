@@ -44,7 +44,9 @@ def test_recall_output_shows_ids_and_dates_without_same_day_noise(tmp_path: Path
     _run(capsys, db, "remember", "Tomasz Nowak prefers async standups.", "--occurred-at", "2026-03-08")
     lines = _run(capsys, db, "recall", "Tomasz Nowak team", "-k", "3").splitlines()
     assert "same day" not in "\n".join(lines)
-    by_text = {line.split("Tomasz Nowak ")[-1]: line for line in lines}
+    # a10: a statement a later one replaces is labelled "(outdated)".
+    by_text = {line.split("Tomasz Nowak ")[-1].removesuffix(" (outdated)"): line for line in lines}
+    assert by_text["moved to the Messaging team."].endswith("(outdated)")
     # a10: no "#k" rank marker (order is kept; "order" stays in --json).
     assert "#1" not in "\n".join(lines) and "#2" not in "\n".join(lines)
     assert " [2026-04-07] HR" in by_text["moved to the Messaging team."]
@@ -125,8 +127,8 @@ def test_export_import_agents_and_stats(tmp_path: Path, capsys) -> None:
     assert "exported 2 memories, 1 facts" in _run(capsys, db, "export", backup)
     assert "imported 2 memories, 1 facts" in _run(capsys, copy, "import", backup)
     assert "0 memories" in _run(capsys, copy, "import", backup)
-    assert _run(capsys, copy, "agents").splitlines() == ["__mark__  (1 memories)", "coder  (1 memories)"]
-    assert "embedder hash (lexical, default)" in _run(capsys, copy, "stats")
+    assert _run(capsys, copy, "agents").splitlines() == ["__mark__  (1 memory)", "coder  (1 memory)"]
+    assert "embedder hash (lexical, store)" in _run(capsys, copy, "stats")
 
 
 def test_brief(tmp_path: Path, capsys) -> None:

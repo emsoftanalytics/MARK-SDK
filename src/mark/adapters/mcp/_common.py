@@ -130,7 +130,7 @@ def _date(fragment: Any) -> str:
 
 
 def render_retrieval(result: Any, *, max_results: int, budget_tokens: int = 0,
-                     max_item_chars: int = ITEM_CHARS) -> str:
+                     max_item_chars: int = ITEM_CHARS, states: dict[str, str] | None = None) -> str:
     """A retrieval result as bounded plain text: facts, then memories with date and short id.
 
     Each memory is cut to its best passage (``passage_window``, as
@@ -139,7 +139,12 @@ def render_retrieval(result: Any, *, max_results: int, budget_tokens: int = 0,
     that does not fit is cut to the remaining room, later ones are counted
     in a final line. When the gap report is high/critical, memories below
     :data:`RELEVANCE_FLOOR` are left out (they are not the answer).
+    Each memory shows its relevance ("score 0.82") and, when it is not
+    current, "(superseded)", "(resolved)" or "(outdated)" (*states*, see
+    :mod:`mark.memory.result_states`; lifecycle tags are read when omitted).
     """
+    from mark.memory.result_states import states as states_of
+
     from mark.intelligence.passage_window import window
 
     query_text = str(getattr(result, "query", ""))
@@ -153,11 +158,16 @@ def render_retrieval(result: Any, *, max_results: int, budget_tokens: int = 0,
     gap = getattr(result, "gap_report", None)
     severity = getattr(getattr(gap, "severity", None), "value", "none")
     fragments = _relevant(result, severity)[:max_results]
+    labels = states if states is not None else states_of(result)
+    relevance = dict(zip((f.id for f in getattr(result, "fragments", None) or []),
+                         getattr(result, "relevance", None) or getattr(result, "scores", None) or []))
     if fragments:
         lines.append("Memories (most relevant first):")
         for fragment in fragments:
             text, _ = window(" ".join(guard(fragment.content).split()), query_text, max_item_chars)
-            lines.append(f"- {_date(fragment)}[{short(fragment.id)}] {_label(fragment)}{text}")
+            score = f"score {relevance[fragment.id]:.2f} " if fragment.id in relevance else ""
+            state = f"({labels[fragment.id]}) " if fragment.id in labels else ""
+            lines.append(f"- {_date(fragment)}[{short(fragment.id)}] {score}{state}{_label(fragment)}{text}")
     if not lines:
         lines.append("Nothing in memory matches this query.")
     if severity in ("high", "critical"):

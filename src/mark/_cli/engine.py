@@ -118,6 +118,10 @@ class _Engine(EngineOpsMixin):
                    session: str | None = None, since: str | None = None, until: str | None = None,
                    tags: list[str] | None = None, kind: str | None = None,
                    open: bool = False) -> dict[str, Any]:  # noqa: A002 - mirrors `--open`
+        if not str(query or "").strip():
+            raise ValueError("recall query must not be empty")
+        if int(k) < 1:
+            raise ValueError(f"-k must be at least 1 (got {k})")
         if not any((session, since, until, tags, kind, open)):
             return self.cmd_recall_many(agent, [query], k, order)["results"][0]
         # Filtered recall goes through MarkMemory.recall (tag/kind/session
@@ -125,18 +129,25 @@ class _Engine(EngineOpsMixin):
         k = max(1, min(int(k), 15))
         result = self._memory(agent).recall(query, k=k, session_id=session, since=since, until=until,
                                             tags=tags, kind=kind, open=True if open else None)
-        return _result_json(result, k, order)
+        return _result_json(result, k, order, self._states(agent, result), open_only=bool(open))
 
     def cmd_recall_many(self, agent: str, queries: list[str], k: int = 10,
                         order: str = "relevance") -> dict[str, Any]:
         from mark.intelligence.retrieval import RetrievalPolicy
         from mark.memory.timeline_order import apply_order
 
-        k = max(1, min(int(k), 15))
+        if int(k) < 1:
+            raise ValueError(f"-k must be at least 1 (got {k})")
+        k = min(int(k), 15)
         policy = RetrievalPolicy.DEEP if k > 10 else RetrievalPolicy.BALANCED
         results = self._memory(agent).retrieve_many_sync(list(queries), policy=policy)
         # Chronological order re-sorts the shown top-k, never widens it.
-        return {"results": [_result_json(result, k, order) for result in results]}
+        return {"results": [_result_json(result, k, order, self._states(agent, result)) for result in results]}
+
+    def _states(self, agent: str, result: Any) -> dict[str, str]:
+        from mark.memory.result_states import states
+
+        return states(result, self.runtime.store, agent)
 
     def cmd_timeline(self, agent: str, subject: str, attribute: str | None = None,
                      limit: int | None = None, since: str | None = None,
@@ -184,13 +195,16 @@ def _fact_json(fact: Any) -> dict[str, Any]:
     }
 
 
-def _result_json(result: Any, k: int, order: str = "relevance") -> dict[str, Any]:
+def _result_json(result: Any, k: int, order: str = "relevance", states: dict[str, str] | None = None,
+                 *, open_only: bool = False) -> dict[str, Any]:
+    """JSON of one recall; *states* labels memories that are not current (``open_only`` drops them)."""
     from mark.intelligence.temporal_order import same_day_order
     from mark.memory.timeline_order import fragment_order
 
+    states = states or {}
     # Show the calibrated relevance: the same scale the gap report uses.
     scores = getattr(result, "relevance", None) or result.scores
-    shown = list(zip(result.fragments, scores))[:k]
+    shown = [(f, s) for f, s in zip(result.fragments, scores) if not (open_only and f.id in states)][:k]
     if order == "chronological":
         shown = [shown[i] for i, _ in fragment_order([fragment for fragment, _ in shown])]
     elif order != "relevance":
@@ -201,6 +215,7 @@ def _result_json(result: Any, k: int, order: str = "relevance") -> dict[str, Any
     _mark_shared_dates(fragments, rows)
     for row, (fragment, score) in zip(rows, shown):
         row["score"] = round(score, 3)
+        row["state"] = states.get(fragment.id)  # resolved / superseded / outdated (None = current)
         # Kept for JSON consumers of 0.2.0a9; the text output uses "order".
         row["same_day"] = "{}/{}".format(*same_day[fragment.id]) if fragment.id in same_day else None
     return {

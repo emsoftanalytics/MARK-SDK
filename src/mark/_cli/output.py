@@ -19,7 +19,8 @@ def _memory_line(memory: dict[str, Any], prefix: str) -> str:
     # The text already starts with "[<date>]": don't print the date twice.
     if date and content.startswith(f"[{date}"):
         date = ""
-    flag = f" ({memory['lifecycle']})" if memory.get("lifecycle") else ""
+    state = memory.get("lifecycle") or memory.get("state")  # outdated: replaced by a later statement
+    flag = f" ({state})" if state else ""
     kind = f"[{memory['kind']}] " if memory.get("kind") else ""
     head = " ".join(part for part in (prefix, memory.get("short_id") or memory["id"][:8], date) if part)
     return f"{head} {kind}{content}{flag}"
@@ -104,12 +105,12 @@ def print_result(args: Any, cmd: str, result: dict[str, Any]) -> None:
         print(f"user subject: {result['user_subject']} (stored with the store)")
     elif cmd == "agents":
         for item in result["agents"]:
-            print(f"{item['agent']}  ({item['memories']} memories)")
+            print(f"{item['agent']}  ({_count(item['memories'], 'memory')})")
         if not result["agents"]:
             print("(no agents)")
     else:
         embedder = result.get("embedder")
-        line = f"{result['memories']} memories, {result['facts']} current facts"
+        line = f"{_count(result['memories'], 'memory')}, {_count(result['facts'], 'current fact')}"
         if embedder:
             line += f"; embedder {_embedder(embedder)}"
         print(line)

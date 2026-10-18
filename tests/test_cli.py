@@ -35,7 +35,7 @@ def test_in_process_round_trip(tmp_path: Path, capsys) -> None:
     assert "port 4444" in out.splitlines()[1]
     data = json.loads(_run(capsys, "--db", db, "--no-server", "recall", "Who is Marcus Webb?", "--json"))
     assert data["gap"] == "high" and data["missing"] == ["marcus webb"]
-    assert "2 memories, 1 current facts" in _run(capsys, "--db", db, "--no-server", "stats")
+    assert "2 memories, 1 current fact" in _run(capsys, "--db", db, "--no-server", "stats")
 
 
 def test_recall_many_accepts_lines_and_json(tmp_path: Path, capsys, monkeypatch) -> None:

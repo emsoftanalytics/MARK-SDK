@@ -59,6 +59,17 @@ def _kind_tags(tags: list[str] | None, kind: str, content: str) -> list[str]:
     return out
 
 
+async def _states(backend: Any, agent_id: str, result: Any) -> dict[str, str] | None:
+    """Labels of results that are not current, fact-outdated ones included (local backends)."""
+    from mark.adapters.backend import run_off_loop
+    from mark.memory.result_states import states
+
+    memory_for = getattr(backend, "memory_for", None)
+    if memory_for is None:
+        return None
+    return await run_off_loop(lambda: states(result, memory_for(agent_id)._store, agent_id))
+
+
 async def _extract(backend: Any, agent_id: str, fragment_id: str) -> str:
     """Extract facts from a just-written memory; the reply suffix (" (1 fact extracted)")."""
     from mark.adapters.backend import run_off_loop
@@ -112,7 +123,8 @@ def register_core_tools(server: Any, backend: Any, resolve: Callable[[str], str]
             value = result.value
             if hasattr(value, "fragments"):
                 return render_retrieval(value, max_results=max_results, budget_tokens=budget_tokens,
-                                        max_item_chars=max_item_chars)
+                                        max_item_chars=max_item_chars,
+                                        states=await _states(backend, resolve(agent_id), value))
             return str(value.as_text() if hasattr(value, "as_text") else value)
 
     if "mark_observe" in enabled:
