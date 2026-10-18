@@ -18,11 +18,15 @@ need 32+ characters mixing letters and digits, and seed phrases need exactly
 """
 from __future__ import annotations
 
+import math
 import re
 
 from mark.security.rules import Rule, value_of
 from mark.security.secret_rules import SECRET_RULES, _VALUE, _plausible_value
 from mark.security.lazy_regex import lazy_compile
+from mark.security.secret_rules_i18n import INTL_PROSE_RULES
+from mark.security.secret_rules_struct import STRUCT_SECRET_RULES
+from mark.security.secret_rules_vendor import VENDOR_SECRET_RULES
 
 # ── "password <for|on|of|to> <1-5 words> is <value>" ─────────────────────────
 
@@ -59,13 +63,14 @@ def _short_password_ok(match: "re.Match[str]") -> bool:
     return _plausible_value(match, strict_word=True, min_length=4) and _credential_like(value)
 
 
-# ── "API key <32+ chars>", "token is <32+ chars>" ────────────────────────────
+# ── "API key <long key>", "token is <long key>", "bot token <key>" ──────────
 
 _LONG_KEY = lazy_compile(
-    r"(?i)(?<![\w-])(?P<kw>api[ _-]?key|access[ _-]?key|secret[ _-]?key|client[ _-]?secret|secret|token)"
+    r"(?i)(?<![\w-])(?P<kw>api[ _-]?key|access[ _-]?key|secret[ _-]?key|client[ _-]?secret|secret|token"
+    r"|credentials?|password|passphrase)"
     # "the AWS secret for prod is <key>": a short "for/of/on <what>" may sit before "is".
     r"(?:[ \t]+(?:for|of|on|in|to)[ \t]+(?:[\w.@-]+[ \t]+){0,3}?(?:is|was)|[ \t]+(?:is|was)|[ \t]*[:=])?"
-    r"[ \t]+[`\"']?(?P<v>[A-Za-z0-9_\-+/=]{32,})(?![\w/+=-])")
+    r"[ \t]+[`\"']?(?P<v>[A-Za-z0-9_\-+/=]{20,})(?![\w/+=-])")
 _UUID = lazy_compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 
 
@@ -77,13 +82,26 @@ def _long_key_ok(match: "re.Match[str]") -> bool:
     if "/" in value and (value.startswith("/") or "//" in value or not (re.search(r"[a-z]", value)
                                                                      and re.search(r"[A-Z]", value))):
         return False  # a path or URL fragment, not base64 key material
-    return not re.fullmatch(r"[a-z]+(?:[_-][a-z0-9]+)+", value)
+    if re.fullmatch(r"[a-z]+(?:[_-][a-z0-9]+)+", value):
+        return False
+    # 32+ characters is enough; a 20-31 character key must also look random:
+    # upper, lower and digits, with high per-character entropy.
+    return len(value) >= 32 or (bool(re.search(r"[a-z]", value) and re.search(r"[A-Z]", value))
+                                and _entropy(value) >= 3.5)
+
+
+def _entropy(value: str) -> float:
+    """Shannon entropy in bits per character."""
+    counts = [value.count(ch) for ch in set(value)]
+    return -sum(c / len(value) * math.log2(c / len(value)) for c in counts)
 
 
 def _long_key_kind(match: "re.Match[str]") -> str:
     keyword = match.group("kw").lower()
     if "key" in keyword:
         return "api_key"
+    if keyword.startswith("pass"):
+        return "password"
     return "token" if keyword == "token" else "secret"
 
 
@@ -112,13 +130,16 @@ PROSE_SECRET_RULES: list[Rule] = [
 
 
 def _with_prose_rules(rules: list[Rule]) -> list[Rule]:
-    """The default rules with the prose rules inserted before the bearer/card/assignment rules.
+    """The default rules with vendor shapes and prose rules before the bearer/card/assignment rules.
 
     Before ``bearer_token`` so "deploy token <key>" is labelled a token, and
-    before the generic assignments so a seed phrase is redacted whole.
+    before the generic assignments so a seed phrase is redacted whole. The
+    structural rules (any secret-named key, CLI flags, netrc) run last and
+    only see values the specific rules left in place.
     """
     at = next((i for i, rule in enumerate(rules) if rule.kind == "bearer_token"), len(rules))
-    return [*rules[:at], *PROSE_SECRET_RULES, *rules[at:]]
+    return [*rules[:at], *VENDOR_SECRET_RULES, *PROSE_SECRET_RULES, *INTL_PROSE_RULES, *rules[at:],
+            *STRUCT_SECRET_RULES]
 
 
 #: Every default secret rule, in the order the engine applies them.

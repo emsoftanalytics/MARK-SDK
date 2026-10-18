@@ -35,6 +35,53 @@ _REFERENCE = lazy_compile(
     )[,;.)\]}`]*$"""
 )
 _LOWER_WORD = lazy_compile(r"^[a-z]+$")
+# Template placeholders that stand in for a secret: your-api-key-here,
+# YOUR_SECRET_HERE, changeme, replace-me, {{ vault_x }}, xxxx, example.
+_PLACEHOLDER = lazy_compile(
+    r"""(?ix)^[\[(<{"'`]*(?:
+        (?:your|insert|enter|replace|put|paste)[-_ .]\S*
+      | \S*[-_.](?:here|goes[-_.]here|placeholder|example|sample|dummy|redacted)
+      | change[-_.]?me\S* | replace[-_.]?me | placeholder\S* | example\S* | sample\S* | dummy\S* | fake\S*
+      | secret | password | passwd | token | api[-_]?key | redacted | todo | tbd | fixme | test(?:ing)?
+      | (?:x{4,}|\*{3,}|•{3,}|\.{3,}|_{3,}|0{6,}|1234(?:5678?)?)
+      | \{\{.*|\$\{\{.*|%\(.*\)s
+    )[\])>}"'`,;.]*$"""
+)
+# Code keywords and literals: "if not password: raise", "token = None".
+_CODE_WORDS = frozenset(
+    "raise return pass continue break yield await lambda not and or if else elif def class import from "
+    "self this new function nil null none true false undefined void await async".split())
+
+
+# A call, subscript or attribute chain (possibly cut at whitespace), a tuple
+# or list literal, a dunder name, or a hex literal: code, never a credential.
+_CODE_EXPR = lazy_compile(r"^(?:[A-Za-z_][\w.]*[(\[]|[(\[{]|__\w+__|0x[0-9a-fA-F]+\b)")
+
+
+def is_code_expression(value: str) -> bool:
+    """True for a value that is code (an identifier, call, subscript, literal) rather than a secret."""
+    value = value.strip()
+    return bool(_CODE_EXPR.match(value)) or bool(_IDENTIFIER.match(value.rstrip(",;:)]}")))
+
+
+def credential_like(value: str) -> bool:
+    """A free-text value reads as a credential: a digit or symbol, or 10+ characters that are not one word."""
+    value = value.rstrip(".,;:!?)")
+    if len(value) < 4 or is_placeholder(value) or is_code_expression(value):
+        return False
+    if value.startswith(("[", "/", "~", "./", "$", "%", "{", "<")):
+        return False   # an existing placeholder, a path ("pwd is /srv/app"), a variable
+    if re.fullmatch(r"\d+", value):
+        return len(value) >= 6           # "pass is 92" is a score; "password is 48151623" is not
+    if value.isalpha():
+        return len(value) >= 10 and not value.islower() and not value.istitle()
+    return bool(re.search(r"[\d!@#$%^&*+=?~_]", value))
+
+
+def is_placeholder(value: str) -> bool:
+    """True for a template value that names a secret without containing one."""
+    value = value.strip()
+    return bool(_PLACEHOLDER.match(value)) or value.lower() in _CODE_WORDS
 # Code identifiers passed as values: session_id=session_id, token=self._token,
 # api_key=OPENAI_API_KEY, passphrase=args.passphrase. A real secret is
 # rarely a dotted name or an all-lowercase/all-uppercase snake_case word.
@@ -50,13 +97,10 @@ def _plausible_value(match: "re.Match[str]", *, strict_word: bool, min_length: i
     where a lowercase dictionary word ("required", "expired") is prose.
     """
     value = value_of(match).strip()
-    if not value or _REFERENCE.match(value):
+    if not value or _REFERENCE.match(value) or is_placeholder(value):
         return False
-    closes = match.string[match.end():match.end() + 1] in (")", "]")
-    if re.match(r"[A-Za-z_][\w.]*[(\[]", value) and (closes or value[-1] in ")]"):
-        return False  # a call or subscript such as get_secret("db") / token[:-1]
-    if _IDENTIFIER.match(value.rstrip(",;)]}")):
-        return False  # a variable or attribute reference in code
+    if is_code_expression(value):
+        return False  # get_secret("db"), auth[1], colitems[0].session, (user, pw), __root__
     if len(value) < min_length:
         return False  # "1 token = 4 chars"
     if strict_word and _LOWER_WORD.match(value) and len(value) <= 12:
@@ -78,8 +122,9 @@ _SECRET_KW = (
     r"signing[_-]?key|encryption[_-]?key|cookie|credentials?|authorization)"
 )
 
-PASSWORD_ASSIGNMENT = lazy_compile(rf"(?i)(?P<kw>{_PASSWORD_KW})(?P<sep>{_SEP}){_VALUE}")
-SECRET_ASSIGNMENT = lazy_compile(rf"(?i)(?P<kw>{_SECRET_KW})(?P<sep>{_SEP}){_VALUE}")
+# The leading lookahead on first letters lets re skip non-candidates in C.
+PASSWORD_ASSIGNMENT = lazy_compile(rf"(?i)(?=[p_.-])(?P<kw>{_PASSWORD_KW})(?P<sep>{_SEP}){_VALUE}")
+SECRET_ASSIGNMENT = lazy_compile(rf"(?i)(?=[stapec])(?P<kw>{_SECRET_KW})(?P<sep>{_SEP}){_VALUE}")
 
 
 def _key_of(match: "re.Match[str]") -> str | None:
@@ -136,8 +181,20 @@ def _openai_ok(match: "re.Match[str]") -> bool:
 
 
 def _bearer_ok(match: "re.Match[str]") -> bool:
-    token = match.group("v")
+    token = match.group("v").rstrip(".,;:!?")   # "your token expired." ends a sentence
     return bool(re.search(r"[0-9._~+/=\-]", token)) or len(token) >= 20
+
+
+def _url_password_ok(match: "re.Match[str]") -> bool:
+    value = match.group("v")
+    if value.isdigit() and len(value) <= 5:
+        return False  # host:port@ is not a password
+    return not (_REFERENCE.match(value) or is_placeholder(value))
+
+
+def _url_user_key_ok(match: "re.Match[str]") -> bool:
+    value = match.group("v")
+    return bool(re.search(r"\d", value) and re.search(r"[A-Za-z]", value)) and not is_placeholder(value)
 
 
 _AWS_CONTEXT = lazy_compile(r"(?i)aws|secret|access[ _-]?key")
@@ -181,7 +238,10 @@ SECRET_RULES: list[Rule] = [
     Rule("private_key", _rx(
         r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?"
         r"(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|\Z)"), hint="private key"),
-    Rule("password", _rx(r"://[^\s/:@]+:(?P<v>[^\s/@]+)@"), hint="://"),  # scheme://user:pass@host
+    # scheme://user:pass@host and scheme://:pass@host (redis, amqp); a hex or
+    # token-like user with no password is a key (Sentry DSN, git token URLs).
+    Rule("password", _rx(r"://[^\s/:@<>]*:(?P<v>[^\s/@<>]+)@"), validate=_url_password_ok, hint="://"),
+    Rule("api_key", _rx(r"://(?P<v>[A-Za-z0-9_-]{20,})@"), validate=_url_user_key_ok, hint="://"),
     Rule("slack_webhook", _rx(r"https://hooks\.slack\.com/(?:services|workflows)/(?P<v>[A-Za-z0-9/_-]{20,})"),
          hint="hooks.slack"),
     Rule("discord_webhook", _rx(r"https://(?:\w+\.)?discord(?:app)?\.com/api/webhooks/(?P<v>\d+/[\w-]{20,})"),
@@ -222,4 +282,5 @@ SECRET_RULES: list[Rule] = [
          hint=("secret", "token", "key", "cookie", "credential", "authorization")),
 ]
 
-__all__ = ["PASSWORD_ASSIGNMENT", "SECRET_ASSIGNMENT", "SECRET_RULES"]
+__all__ = ["PASSWORD_ASSIGNMENT", "SECRET_ASSIGNMENT", "SECRET_RULES", "credential_like", "is_code_expression",
+           "is_placeholder"]
