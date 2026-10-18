@@ -174,8 +174,7 @@ class LifecycleStoreMixin(PagingStoreMixin):
         """
         if self._shared_conn is not None:  # :memory: — nothing on disk
             return
-        with self._lock:
-            conn = self._conn()
+        with self._lock, self._statement() as conn:
             conn.commit()
             conn.execute("PRAGMA secure_delete = ON")
             if self._fts_enabled:

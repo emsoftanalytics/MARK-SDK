@@ -37,6 +37,7 @@ from mark._cli.config import (
     _state_path,
 )
 from mark._cli.engine import _Engine, protocol_fingerprint
+from mark._cli.server_snapshots import _save_snapshots, _warm  # noqa: F401 - historical home
 from mark._private_fs import ensure_private_dir
 
 logger = logging.getLogger("mark.cli")
@@ -133,7 +134,7 @@ def serve(db: Path, host: str = "127.0.0.1", port: int = 0, *, stop_event: Any =
         server.serve_forever(poll_interval=0.2)
     finally:
         server.server_close()
-        _save_snapshots(engine)  # the next process starts from a snapshot covering every write
+        _save_snapshots(engine)  # refresh a snapshot only when its delta is large (fast stop)
         engine.close()
         # Remove the state file only if it is still ours (never another server's).
         try:
@@ -173,6 +174,7 @@ def _acquire_lock(db: Path) -> _ServerLock:
         if not same:
             os.close(fd)
             continue
+        _refuse_legacy_server(db, fd)
         os.ftruncate(fd, 0)
         os.write(fd, str(os.getpid()).encode())
         from mark.store._sqlite.server_guard import OWN_LOCKS
@@ -180,6 +182,22 @@ def _acquire_lock(db: Path) -> _ServerLock:
         OWN_LOCKS.add(os.path.abspath(lock))  # our own engine may migrate the store
         return _ServerLock(lock, fd)
     raise SystemExit(f"could not acquire the server lock for {db}")
+
+
+def _refuse_legacy_server(db: Path, fd: int) -> None:
+    """Exit if an a8/a9 ``mark serve`` (pid lock file, no OS lock) still serves *db*.
+
+    Its lock file is not OS-locked, so our flock succeeded; serving (and
+    migrating) beside it would split writes between two builds.
+    """
+    from mark.store._sqlite.server_legacy import legacy_server
+
+    pid = legacy_server(str(db))
+    if pid is None:
+        return
+    os.close(fd)  # the file is the old server's: leave its content alone
+    raise SystemExit(f"an older MARK server{f' (pid {pid})' if pid else ''} is running for {db}; "
+                     "stop it first")
 
 
 def _release_lock(lock: _ServerLock) -> None:
@@ -214,33 +232,6 @@ def _read_owner(fd: int) -> str:
         return os.pread(fd, 32, 0).decode("ascii", "replace").strip() if hasattr(os, "pread") else ""
     except OSError:  # e.g. the byte range is locked (Windows)
         return ""
-
-
-def _warm(engine: Any) -> None:
-    """Preload the index for every agent; failures only cost the speed-up."""
-    warm_up = getattr(engine.runtime, "warm_up", None)
-    if warm_up is None:
-        return
-    import time
-
-    started = time.monotonic()
-    try:
-        count = warm_up(sketches=True)  # encrypted stores: timelines and id recalls never pay it
-    except Exception:  # noqa: BLE001 - e.g. shut down while warming
-        logger.debug("mark serve: index warm-up skipped", exc_info=True)
-        return
-    print(f"MARK index warm: {count} memories in {time.monotonic() - started:.1f}s", flush=True)
-
-
-def _save_snapshots(engine: Any) -> None:
-    """Refresh stale vector snapshots on a graceful stop; failures only cost the next cold start."""
-    save = getattr(engine.runtime, "save_vector_snapshots", None)
-    if save is None:
-        return
-    try:
-        save()
-    except Exception:  # noqa: BLE001 - e.g. disk full: never block the shutdown
-        logger.warning("mark serve: could not save the vector snapshot", exc_info=True)
 
 
 def _pid_alive(pid: int) -> bool:

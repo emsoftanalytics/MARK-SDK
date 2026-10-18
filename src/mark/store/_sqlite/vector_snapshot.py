@@ -139,6 +139,21 @@ class VectorSnapshotMixin:
             self._record_scope_if_exact(conn, agent_id, ids, write_version)
         return True
 
+    def vector_snapshot_delta(self, agent_id: str, fingerprint: str) -> int | None:
+        """Rows written since the agent's snapshot (its ``vector_dirty`` set), or None without a usable one.
+
+        New and re-embedded rows are all in the dirty set; deleted rows are
+        not, and cost a load nothing. Lets a host skip rewriting a large
+        snapshot for a small delta (``mark serve`` stop).
+        """
+        if not self._fts_enabled:
+            return None
+        meta = self._fetchone("SELECT fingerprint FROM vector_snapshot_meta WHERE agent_id = ?", (agent_id,))
+        if meta is None or str(meta[0]) != fingerprint:
+            return None
+        row = self._fetchone("SELECT COUNT(*) FROM vector_dirty WHERE agent_id = ?", (agent_id,))
+        return int(row[0]) if row else 0
+
     def drop_vector_snapshot(self, agent_id: str) -> None:
         """Delete the agent's snapshot (triggers stop tracking it)."""
         with self._writing(structural=False) as conn:

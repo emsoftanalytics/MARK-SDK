@@ -18,7 +18,11 @@ same orientation as one budgeted ``<mark_briefing>`` block::
 Rules: current facts first, then open TODOs (a TODO is closed by a status
 or tag, by a memory that ``resolves`` it, or by a later DONE/FIX note that
 names it), decisions, bugs/fixes and changes, newest first, deduped, each
-group capped and the whole block held to ``budget_tokens``. ``focus`` (a
+group capped and the whole block held to ``budget_tokens``. The first
+fact, the top open TODOs and open bugs are reserved (``RESERVED``): they
+outrank the other lines and are shortened at small budgets, so a 100-token brief is not all
+facts; a budget too small for the ``<mark_briefing>`` tags still returns
+the most important line, cut to fit, without them. ``focus`` (a
 query) puts the records retrieved for it first and filters every group to
 records and facts that share a word with it. Retired records (superseded,
 resolved) are never shown as current; a bug and its fix share one line; a
@@ -30,11 +34,13 @@ replies (``mark:assistant``) are never part of a brief.
 """
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
 from mark.context.brief_lines import current_records, fix_pairs, record_line
-from mark.context.budget import BudgetItem, ContextBudget, as_budget, warn_if_empty
+from mark.context.outdated import resolved
+from mark.context.budget import BudgetItem, ContextBudget, as_budget, render_lines, warn_if_empty
 from mark.context.relevance import content_words
 from mark.context.watch_kinds import closed_todos, kind_of, recent_first
 from mark.context.watch_lines import Deduper, current_facts, fact_key, fact_line, trusted
@@ -51,6 +57,14 @@ CHANGE_HEADER = "Recent changes:"
 GROUP_CAPS = {"facts": 12, "todo": 6, "decision": 5, "bug": 5, "change": 5, "focus": 5}
 #: What an empty store briefs as (an empty string looked like a failure).
 EMPTY = "(memory is empty)"
+#: Open TODOs / open bugs that are always shown (a small budget used to fill
+#: with facts and drop every TODO).
+#: The first fact is reserved too, so a small brief is not all TODOs; below
+#: ``_FACT_RESERVE_MIN`` tokens there is room for one line only: a TODO.
+RESERVED = {"facts": 1, "todo": 3, "bug": 2}
+_FACT_RESERVE_MIN = 60
+_MIN_RESERVED_CHARS = 40   # shorter than this a TODO line says too little
+_DATE = re.compile(r"^(- (?:\([a-z]+\) )*)\d{4}-\d{2}-\d{2} ")
 _GROUPS = (("todo", TODO_HEADER), ("decision", DECISION_HEADER), ("bug", BUG_HEADER),
            ("change", CHANGE_HEADER))
 
@@ -97,9 +111,10 @@ def brief(memory: Any, *, budget_tokens: int | ContextBudget = 400, focus: str |
     focus_keys = {fact_key(f) for f in focus_facts}
     for fact in focus_facts:
         add("relevant", fact_line(fact), FACTS_HEADER)
-    for fact in [f for f in facts if fact_key(f) not in focus_keys
-                 and on_focus(f"{f.subject} {f.attribute} {f.value}")][:GROUP_CAPS["facts"]]:
-        add("facts", fact_line(fact), FACTS_HEADER)
+    for rank, fact in enumerate([f for f in facts if fact_key(f) not in focus_keys
+                                 and on_focus(f"{f.subject} {f.attribute} {f.value}")][:GROUP_CAPS["facts"]]):
+        top = rank < RESERVED["facts"] and budget.max_tokens >= _FACT_RESERVE_MIN
+        add("relevant" if top else "facts", fact_line(fact), FACTS_HEADER)
     if focus_result is not None:
         _add_lines(add, "relevant", RELATED_HEADER, GROUP_CAPS["focus"],
                    [f for f in current_records([f for f in focus_result.fragments if trusted(f)])
@@ -116,11 +131,23 @@ def brief(memory: Any, *, budget_tokens: int | ContextBudget = 400, focus: str |
     pairs = fix_pairs(bugs, [f for f in by_kind["bug"] if kind_of(f) == "fix"])
     paired = {fix.id for fix in pairs.values()}
     by_kind["bug"] = [f for f in by_kind["bug"] if f.id not in paired]
+    reserved = {"todo": by_kind["todo"][:RESERVED["todo"]],
+                "bug": [f for f in by_kind["bug"] if kind_of(f) == "bug" and f.id not in pairs
+                        and not resolved(f)][:RESERVED["bug"]]}
+    # The budget's characters (~4 per token) left after tags, headers and the
+    # first fact (~140), shared by the reserved lines (~17 of each is "- " and the id).
+    count = max(1, sum(len(v) for v in reserved.values()))
+    short = max(_MIN_RESERVED_CHARS, min(line_chars, (budget.max_tokens * 4 - 140) // count - 17))
     for name, header in _GROUPS:
         extra = [line for line in _fact_changes(memory, facts) if on_focus(line)] if name == "change" else []
         _add_lines(add, "records", header, GROUP_CAPS[name], by_kind[name], line_chars,
-                   with_id=name == "todo", first=extra, pairs=pairs)
+                   with_id=name == "todo", first=extra, pairs=pairs,
+                   reserved={f.id for f in reserved.get(name, ())}, short=short)
     fit = budget.fit(items, render_briefing)
+    if not fit.text and items and budget.max_tokens:
+        # Too small for the tags and a header: the single most important line, cut to fit.
+        plain = [BudgetItem(i.section, i.text, None, i.ref) for i in items]
+        fit = ContextBudget(budget.max_tokens, token_counter=budget.token_counter).fit(plain, render_lines)
     return Briefing(
         text=fit.text,
         memory_ids=[item.ref for item in fit.items if item.ref],
@@ -157,8 +184,13 @@ def _facts(memory: Any) -> list[Any]:
 
 def _add_lines(add: Any, section: str, header: str, cap: int, fragments: list[Any],
                line_chars: int, *, with_id: bool = False, first: list[str] | None = None,
-               pairs: dict[str, Any] | None = None) -> None:
-    """Up to *cap* new lines under *header*: the *first* text lines, then the records."""
+               pairs: dict[str, Any] | None = None, reserved: set[str] = frozenset(),
+               short: int = 0) -> None:
+    """Up to *cap* new lines under *header*: the *first* text lines, then the records.
+
+    *reserved* records are added to the "relevant" section (above facts) and
+    shortened to *short* characters.
+    """
     count = 0
     for line in first or []:
         if count < cap and add(section, line, header, check=False):
@@ -166,8 +198,12 @@ def _add_lines(add: Any, section: str, header: str, cap: int, fragments: list[An
     for fragment in fragments:
         if count >= cap:
             return
-        line = record_line(fragment, line_chars, with_id=with_id, fix=(pairs or {}).get(fragment.id))
-        if add(section, line, header, fragment.id):
+        keep = fragment.id in reserved
+        line = record_line(fragment, short if keep else line_chars, with_id=with_id,
+                           fix=(pairs or {}).get(fragment.id))
+        if keep and short < line_chars:   # shortened: the date is the first thing to go
+            line = _DATE.sub(r"\1", line, count=1)
+        if add("relevant" if keep else section, line, header, fragment.id):
             count += 1
 
 

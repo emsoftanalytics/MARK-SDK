@@ -17,6 +17,7 @@ licence-plate question was briefed with the dog and the sister lines, and
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from typing import Any, Iterable
 
 _WORD = re.compile(r"[^\W_]+", re.UNICODE)
@@ -44,6 +45,7 @@ _INTRODUCING = re.compile(r"\bmy\s+[a-z]+(?:'s)?\s+(?:[A-Z][a-z]+\s+)?(is|are|wa
                           re.IGNORECASE)
 
 
+@lru_cache(maxsize=16_384)   # a vocabulary is small; long memories repeat words
 def stem(word: str) -> str:
     """A crude, dependency-free stem: enough to match "lives"/"live", "steps"/"step"."""
     for suffix in ("ing", "ies", "es", "ed", "s"):
@@ -53,9 +55,29 @@ def stem(word: str) -> str:
     return word.rstrip("e") if len(word) > 4 else word
 
 
+#: Texts up to this length are memoised (the bound keeps the cache's memory
+#: at ~512 x 32 KB worst case); longer ones are rare and stemmed each time.
+_CACHE_MAX_CHARS = 32_768
+
+
 def content_words(text: str) -> frozenset[str]:
-    """Stemmed words of *text* without stop words or a "User said:" prefix."""
-    text = _ROLE.sub("", text or "", count=1).lower().replace("'s ", " ")
+    """Stemmed words of *text* without stop words or a "User said:" prefix.
+
+    Memoised: one briefing asks for the same memory's words several times
+    (floor, gaps, outdated lines), and stemming 16 KB memories each time cost
+    seconds per briefing (a10 re-test issue 4).
+    """
+    text = text or ""
+    return _content_words_cached(text) if len(text) <= _CACHE_MAX_CHARS else _content_words(text)
+
+
+@lru_cache(maxsize=512)
+def _content_words_cached(text: str) -> frozenset[str]:
+    return _content_words(text)
+
+
+def _content_words(text: str) -> frozenset[str]:
+    text = _ROLE.sub("", text, count=1).lower().replace("'s ", " ")
     return frozenset(stem(w) for w in _WORD.findall(text) if w not in STOP and len(w) > 1)
 
 

@@ -109,3 +109,22 @@ def test_bytes_repr_fact_values_become_the_token(tmp_path) -> None:
     conn = sqlite3.connect(path)
     assert conn.execute("SELECT typeof(value) FROM facts").fetchone()[0] == "blob"
     conn.close()
+
+
+def test_plaintext_rows_cost_no_key_derivation(tmp_path, monkeypatch) -> None:
+    """a10 re-test: each plaintext row was "decrypted", deriving a key from a
+    salt of plaintext bytes (one PBKDF2 run per row: a 14 s first reopen)."""
+    path = tmp_path / "enc.db"
+    store = LocalMemoryStore(path, encryption=_provider())
+    store.store(MemoryFragment(content="launch code 1234", agent_id=AGENT, state=MemoryState.UNVERIFIED))
+    store.close()
+    for _ in range(4):
+        _a8_rows(path)
+    provider = _provider()
+    derivations: list[bytes] = []
+    original = provider._derive_bytes
+    monkeypatch.setattr(provider, "_derive_bytes", lambda salt: derivations.append(salt) or original(salt))
+    store = LocalMemoryStore(path, encryption=provider)
+    assert len(derivations) == 1          # the store's own salt (key check) only
+    assert len(store.unreadable_report()) == 8   # 4 memories + 4 facts still caught
+    store.close()

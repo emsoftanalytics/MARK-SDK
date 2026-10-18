@@ -19,6 +19,7 @@ from __future__ import annotations
 import queue
 import threading
 import time
+import weakref
 from concurrent.futures import Future
 from typing import Any, Callable
 
@@ -31,7 +32,7 @@ class WatchWorker:
     def __init__(self, name: str = "mark-watch", idle_seconds: float = 2.0) -> None:
         self.name = name
         self.idle_seconds = idle_seconds
-        self._queue: queue.Queue[tuple[Future, Callable[..., Any], tuple[Any, ...]]] = queue.Queue()
+        self._queue: queue.Queue[tuple[Any, Any, tuple[Any, ...]]] = queue.Queue()
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._stopped = False
@@ -65,6 +66,10 @@ class WatchWorker:
                         self._thread = None
                         return
                 continue
+            if future is None:   # stop()'s wake-up: exit now, not after idle_seconds
+                with self._lock:
+                    self._thread = None
+                return
             if self._stopped or not future.set_running_or_notify_cancel():
                 future.cancel()
                 continue
@@ -83,7 +88,10 @@ class WatchWorker:
                 future, _, _ = self._queue.get_nowait()
             except queue.Empty:
                 break
-            future.cancel()
+            if future is not None:
+                future.cancel()
+        if thread is not None:
+            self._queue.put((None, None, ()))  # wake an idle thread so join() is immediate
         if wait and thread is not None and thread is not threading.current_thread():
             thread.join(timeout)
 
@@ -124,9 +132,47 @@ class _WatchLifecycleMixin:
         with self._lock:
             return bool(self._task and self._pending and self._task not in self._task_results)
 
+    def _bind_shutdown(self, memory: Any) -> Callable[[], None]:
+        """Have the memory's runtime and store close this watch before the store closes.
+
+        Why: a watch the host never closed kept prefetching on its worker
+        thread while ``Mark.local``'s exit closed the store under it
+        (0.2.0a10 segfault). Both the runtime closer (``register_closer``,
+        when the runtime has it) and the store close hook are used, so a bare
+        ``store.close()`` is covered too. They hold the watch weakly, and a
+        finalizer unregisters them, so an unreferenced watch is still
+        garbage-collected. Returns the unregister function close() calls.
+        """
+        ref = weakref.ref(self)
+
+        def closer() -> None:
+            watch = ref()
+            if watch is not None:
+                watch.close()
+
+        undo: list[Callable[[], Any]] = []
+        runtime = getattr(memory, "_runtime", None)
+        register = getattr(runtime, "register_closer", None)
+        if callable(register):
+            undo.append(register(closer) or (lambda: None))
+        store = getattr(runtime, "store", None) or getattr(memory, "_store", None)
+        add_hook = getattr(store, "add_close_hook", None)
+        if callable(add_hook):
+            undo.append(add_hook(closer))
+
+        def unbind() -> None:
+            while undo:
+                try:
+                    undo.pop()()
+                except Exception:  # noqa: BLE001 - best effort during shutdown
+                    pass
+        weakref.finalize(self, unbind)
+        return unbind
+
     def close(self) -> None:
         """Stop the background worker (queued prefetches are dropped). Idempotent."""
         self._closed = True
+        getattr(self, "_unbind", lambda: None)()
         if self._executor is not None:
             self._executor.stop(wait=True)
             self._executor = None

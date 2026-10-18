@@ -99,6 +99,10 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin, _WatchLifecycleMixi
                     requests (0 = off; small/tiny presets use a few)
     """
 
+    #: A new request's first briefing waits up to this long for its prefetch (links
+    #: too), even past a shorter ``wait``: memory, not "Nothing relevant" (agent N5).
+    cold_wait: float = 1.5
+
     def __init__(
         self,
         memory: Any,
@@ -153,9 +157,7 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin, _WatchLifecycleMixi
         # One worker: prefetches run in order and never compete with each other.
         self._executor = WatchWorker() if background else None
         self._closed = False
-        #: First briefing for a new request waits this long for its prefetch, so
-        #: a cold call returns memory, not "Nothing relevant" (agent test N5).
-        self.cold_wait = 1.5
+        self._unbind = self._bind_shutdown(memory)   # closed before its store closes
         self._subjects_cache: tuple[float, set[str]] = (0.0, set())
 
     # ── stream input ──────────────────────────────────────────────────────────
@@ -230,10 +232,10 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin, _WatchLifecycleMixi
         reports what was kept; without one the ``budget_chars`` renderer runs.
         """
         started = time.perf_counter()
-        if wait > 0:
+        if self._cold():   # a caller's short wait (middleware: 0.25 s) must not cut it off
+            self.flush(timeout=max(wait, self.cold_wait))
+        elif wait > 0:
             self.flush(timeout=wait)
-        elif self._cold():
-            self.flush(timeout=self.cold_wait)
         warn_if_empty(budget_tokens, "ContextWatch.briefing")
         budget = as_budget(budget_tokens) if budget_tokens is not None else self.budget
         lifted = budget is not None and budget.fill   # fill: the budget, not the counts, limits
