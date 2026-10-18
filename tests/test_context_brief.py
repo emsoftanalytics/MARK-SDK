@@ -77,7 +77,7 @@ def test_empty_memory_says_it_is_empty(tmp_path) -> None:
         result = brief(runtime.memory("none"))
     finally:
         runtime.shutdown()
-    assert result.text == "<mark_briefing>\n(memory is empty)\n</mark_briefing>"
+    assert result.text == "(memory is empty)"   # the same words the CLI prints
 
 
 def test_kind_detection_and_explicit_resolution() -> None:

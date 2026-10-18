@@ -30,7 +30,6 @@ replies (``mark:assistant``) are never part of a brief.
 """
 from __future__ import annotations
 
-import re
 import time
 from typing import Any
 
@@ -39,7 +38,7 @@ from mark.context.budget import BudgetItem, ContextBudget, as_budget, warn_if_em
 from mark.context.relevance import content_words
 from mark.context.watch_kinds import closed_todos, kind_of, recent_first
 from mark.context.watch_lines import Deduper, current_facts, fact_key, fact_line, trusted
-from mark.context.watch_render import FACTS_HEADER, RELATED_HEADER, render_briefing, wrap_briefing
+from mark.context.watch_render import FACTS_HEADER, RELATED_HEADER, render_briefing
 from mark.context.watch_support import Briefing
 
 TODO_HEADER = "Open TODOs:"
@@ -68,7 +67,7 @@ def brief(memory: Any, *, budget_tokens: int | ContextBudget = 400, focus: str |
     scanned = _scan(memory, scan)
     facts = _facts(memory)
     if not scanned and not facts:   # say so: an empty answer looked like a failure (agent N8)
-        return Briefing(text=wrap_briefing(EMPTY) if budget.max_tokens else "",
+        return Briefing(text=EMPTY if budget.max_tokens else "",
                         latency_ms=round((time.perf_counter() - started) * 1000, 2))
     fragments = current_records([f for f in scanned if trusted(f)])
     focus_result = _retrieve(memory, focus) if focus else None
