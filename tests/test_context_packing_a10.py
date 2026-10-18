@@ -127,3 +127,22 @@ def test_facts_show_the_value_they_replaced(memory) -> None:
 def test_zero_budget_warns(memory) -> None:
     with pytest.warns(UserWarning, match="budget_tokens=0"):
         ContextWatch(memory, background=False, budget_tokens=0).close()
+
+
+def test_a_correction_is_shown_on_the_next_turn_only(memory) -> None:
+    memory.facts.set("Joao", "phone", "+351 912 345 678", valid_from="2026-01-01")
+    memory.facts.set("Joao", "phone", "+351 934 000 111", valid_from="2026-03-01")
+    with ContextWatch.for_preset(memory, "small", background=False) as watch:
+        watch.observe("What's Joao's phone number?", role="user")
+        watch.observe("Joao's phone is +351 912 345 678.", role="assistant")
+        watch.observe("And Joao's number again?", role="user")
+        assert "Corrections:" in watch.briefing().text
+        watch.observe("What am I allergic to?", role="user")
+        watch.observe("Penicillin.", role="assistant")
+        watch.observe("Thanks. Anything else?", role="user")
+        assert "Corrections:" not in watch.briefing().text
+        # Naming the old value is the answer to a question about it: no correction.
+        watch.observe("What was Joao's old phone number?", role="user")
+        watch.observe("It was +351 912 345 678.", role="assistant")
+        watch.observe("Ok.", role="user")
+        assert "Corrections:" not in watch.briefing().text

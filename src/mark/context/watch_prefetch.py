@@ -224,7 +224,15 @@ class _WatchPrefetchMixin:
         return labels
 
     def _check_claims(self, text: str, keys: list[str]) -> None:
-        """Flag values the agent states that memory knows were superseded."""
+        """Flag values the agent states that memory knows were superseded.
+
+        Not when the user asked about earlier values ("What was Joao's old
+        number?"): naming the old value is then the right answer.
+        """
+        from mark.context.watch_render import _PAST
+
+        if _PAST.search(getattr(self, "_task", "") or ""):
+            return
         lowered = text.lower()
         tokens = set(_TOKEN_RE.findall(lowered))
         try:
@@ -243,6 +251,7 @@ class _WatchPrefetchMixin:
                 history = facts_view.history(fact.subject, fact.attribute)
                 stale = [old for old in history[:-1] if _mentions_value(str(old.value), lowered, tokens)]
                 if stale:
+                    getattr(self, "_correction_turn", {})[f"{key}|{fact.attribute}"] = self._turn
                     self._corrections[f"{key}|{fact.attribute}"] = (
                         f"{fact.subject} {fact.attribute} is {fact.value} now "
                         f"(since {fact.valid_from.date().isoformat()}); "

@@ -147,6 +147,7 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin, _WatchLifecycleMixi
         self._task_results: dict[str, Any] = {}     # task text -> RetrievalResult
         self._task: str = ""
         self._corrections: dict[str, str] = {}      # correction key -> text
+        self._correction_turn: dict[str, int] = {}  # correction key -> user turn it was raised in
         self._turn = 0
         self._seq = 0
         self.follow_links = 3   # linked subjects prefetched per new anchor (0 disables)
@@ -257,7 +258,11 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin, _WatchLifecycleMixi
                             and self._turn - a.last_turn <= 1],
                 "results": {a.key: self._results.get(a.key) for a in active},
                 "task_result": self._task_results.get(self._task),
-                "corrections": list(self._corrections.values()),
+                # A correction answers the reply that made the claim: shown on the next
+                # turn, then dropped (a10: one stale-number correction rode along for
+                # ten unrelated questions and a 1B model repeated it in its answers).
+                "corrections": [text for key, text in self._corrections.items()
+                                if self._correction_turn.get(key, self._turn) >= self._turn - 1],
                 "task": self._task,
                 "relevant_lines": self.relevant_lines,
                 "assistant_lines": self.assistant_lines,
