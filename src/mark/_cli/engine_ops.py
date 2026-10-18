@@ -32,7 +32,7 @@ def memory_json(fragment: Any) -> dict[str, Any]:
         "date": event_time(fragment).date().isoformat(),
         "occurred_at": declared.isoformat() if declared else None,
         "stored_at": fragment.created_at.isoformat(),
-        "kind": kind_of(fragment.tags),
+        "kind": kind_of(fragment),  # its kind: tag, else its leading "TODO:"-style label
         "tags": [t for t in fragment.tags if not t.startswith(("kind:", "mark:"))],
         "lifecycle": lifecycle,
     }
