@@ -143,8 +143,8 @@ quoted in.
 independently of the rules: on a frozen held-out set, redaction caught 45 of
 45 planted secrets and the injection screen 30 of 30, with no false positives
 on 60 and 30 benign texts; on 3,303 Python source files and about 67,000
-docstring paragraphs the final rules produced no new redactions or injection
-flags compared with the previous release. An earlier independent corpus showed how such numbers can fall on
+docstring paragraphs the generalised rules produced no additional
+redactions or injection flags. An earlier independent corpus showed how such numbers can fall on
 unfamiliar text (19 of 37 secrets and 3 of 18 injections caught before the
 rules were generalised). Expect misses on text unlike these samples: do not
 rely on redaction as your only control, encrypt stores that may hold
