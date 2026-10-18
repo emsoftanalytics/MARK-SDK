@@ -146,10 +146,14 @@ a million memories.
   memories unless `--all`), `--session`, `--since`, `--until` and `--tag`.
 - **`embedder_info()`** shows the active embedder and how it was chosen
   (`source="store"` when the store's own embedder is reused).
-- **Prompt-injection screening** on every write: instruction-like memories
-  are tagged `mark:untrusted` with reasons under
-  `metadata["mark_security"]` and labelled as untrusted wherever they are
-  rendered; `injection="quarantine"` keeps them out of recall.
+- **Prompt-injection screening** on every write: instruction overrides,
+  role reassignment and messages addressed to an AI reader in about 25
+  languages, smuggled tool calls and chat-template markers, instructions
+  hidden in invisible HTML, exfiltration links built from templates, and
+  letter-spaced, leetspeak or base64-encoded payloads. Flagged memories are
+  tagged `mark:untrusted` with reasons under `metadata["mark_security"]` and
+  labelled as untrusted wherever they are rendered; `injection="quarantine"`
+  keeps them out of recall.
 - **Write options** on `Mark.local()` and `MarkRuntime.local()`: `redact=`,
   `injection=`, `max_memory_bytes=`, `fact_job_lease=` and `user_subject=`.
 - `store_many_sync` / `remember_many` return a `StoreReport` that lists
@@ -187,11 +191,6 @@ a million memories.
   such as `your-api-key-here` are kept. `RedactionPolicy(pii=True)` also
   removes emails, phone numbers (international and national formats),
   checksum-validated IBANs and SSNs.
-- **Injection screening** covers instruction overrides, role reassignment
-  and messages addressed to an AI reader in about 25 languages, smuggled
-  tool calls and chat-template markers, instructions hidden in invisible
-  HTML, exfiltration links built from templates, and letter-spaced,
-  leetspeak or base64-encoded payloads.
 - **Errors are remembered by default** so agents can learn from failures;
   `FailureFilter` is an explicit opt-in on `ConsolidationGate`.
 - The top-level `mark` namespace is curated (29 names); see the upgrade
