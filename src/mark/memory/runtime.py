@@ -29,10 +29,11 @@ from mark.types.llm import LLMProvider
 from mark.memory.facade.write_validation import DEFAULT_MAX_MEMORY_BYTES
 from mark.memory.global_bus import GlobalMemoryBus
 from mark.memory.mark_memory import MarkMemory
+from mark.memory.runtime_closers import ClosersMixin
 from mark.memory.runtime_maintenance import MaintenanceMixin
 
 
-class MarkRuntime(MaintenanceMixin):
+class MarkRuntime(ClosersMixin, MaintenanceMixin):
     """Stronger local hippocampus/cortex runtime for agent applications."""
 
     def __init__(
@@ -286,6 +287,7 @@ class MarkRuntime(MaintenanceMixin):
         """
         if self._closed:
             return
+        self._run_closers()  # background readers (ContextWatch workers) stop before the store closes
         self._closed = True
         if self.fact_extraction is not None:
             self.fact_extraction.close(timeout)  # queued jobs stay in the store
