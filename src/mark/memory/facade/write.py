@@ -14,7 +14,6 @@ content, metadata, tags or options raise :class:`mark.errors.InvalidMemoryError`
 """
 from __future__ import annotations
 
-import asyncio
 import functools
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -62,6 +61,8 @@ class WriteMixin(BatchWriteMixin, FactExtractionMixin, GuardMixin):
         governance, redaction, consolidation gate) on the executor, so async
         callers can never bypass write-time policy.
         """
+        import asyncio  # only async callers pay for it (CLI start-up stays lean)
+
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor,
@@ -116,6 +117,7 @@ class WriteMixin(BatchWriteMixin, FactExtractionMixin, GuardMixin):
         metadata, tags = check_metadata(metadata), check_tags(tags)
         check_number("importance", importance)
         check_number("confidence", confidence)
+        tags = _with_label_kind(content, tags)
         fragment_id = self._store_sync_routed(
             content, importance=importance, scope=scope, tags=tags, source=source, state=state,
             confidence=confidence, session_id=session_id, ttl_seconds=ttl_seconds,
@@ -233,3 +235,17 @@ class WriteMixin(BatchWriteMixin, FactExtractionMixin, GuardMixin):
         if not accepted:
             return self._store.store(fragment)
         return self._pipeline.index_fragment(fragment).id
+
+
+def _with_label_kind(content: str, tags: list[str] | None) -> list[str] | None:
+    """Add ``kind:<k>`` for a leading label ("TODO: ...") unless a kind tag is already given.
+
+    remember(), remember_many(), the CLI and MCP do the same, so a note is
+    the same kind whichever entry point stored it.
+    """
+    from mark.kinds import KIND_TAG_PREFIX, kind_from_text, kind_tag
+
+    if any(tag.startswith(KIND_TAG_PREFIX) for tag in tags or ()):
+        return tags
+    kind = kind_from_text(content)
+    return [*(tags or []), kind_tag(kind)] if kind else tags
