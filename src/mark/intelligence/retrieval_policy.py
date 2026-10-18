@@ -151,6 +151,8 @@ class SessionFilter:
                     bound is a datetime, a date, ISO text or a natural
                     expression ("last week", "2026-10-05", "yesterday").
                     Both are inclusive; a date-only ``until`` covers that day.
+    exclude_tags    drop memories carrying any listed tag before scoring
+                    (e.g. ["mark:resolved", "mark:superseded"] for open items only)
 
     Pass no arguments for whole-agent retrieval (default, cross-session).
     Fragments inside QUARANTINED blocks are always excluded regardless of
@@ -165,6 +167,7 @@ class SessionFilter:
     block_ids:      list[str] | None   = None
     since:          object             = None
     until:          object             = None
+    exclude_tags:   list[str] | None   = None
 
 
 # QueryAnalysis is the Pydantic model from intelligence.classifier; any

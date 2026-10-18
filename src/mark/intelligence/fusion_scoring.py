@@ -24,6 +24,10 @@ from collections.abc import Iterable, Mapping
 from mark.index import VectorSearchResult
 from mark.intelligence.query_understanding import _anchor_norm, _contains_anchor
 from mark.intelligence.retrieval_policy import RRF_K, FusionConfig
+from mark.types import MemoryFragment
+
+# Seed factor for memories outside a date window the question names (soft, not a filter).
+OUT_OF_WINDOW = 0.7
 
 
 def uses_score_fusion(config: FusionConfig, embedder: object) -> bool:
@@ -99,3 +103,23 @@ def merge_max(target: dict[str, float], update: Mapping[str, float]) -> None:
     for key, value in update.items():
         if value > target.get(key, -1.0):
             target[key] = value
+
+
+def literal_hit(query_terms: list[str], coverage: Mapping[str, float]) -> bool:
+    """True when the query has terms no stemmer splits (emoji, CJK) and a memory has them all."""
+    return any(not term.isascii() for term in query_terms) and any(cov >= 0.999 for cov in coverage.values())
+
+
+def scored_text(fragment: MemoryFragment) -> str:
+    """The text term coverage is computed on: a document chunk without its heading-path line.
+
+    Chunks start with "# Title › Section" (see ``mark.documents.chunking``);
+    those words are shared by every chunk of the document, so counting them
+    made the chunk holding the answer tie with every other chunk.
+    """
+    content = fragment.content
+    if content.startswith("# ") and (fragment.metadata or {}).get("document_id"):
+        newline = content.find("\n")
+        if newline != -1:
+            return content[newline + 1:]
+    return content

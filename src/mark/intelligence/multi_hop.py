@@ -180,7 +180,9 @@ def _place_after(out: _Ranked, source: MemoryFragment, candidate: MemoryFragment
         tail = out[top_k - 1][2] if len(out) >= top_k else 0.0
         if tail >= _WEAK_MATCH and tail >= evidence:
             return False
-        entry = (candidate, 0.0, _relevance(query_terms, candidate.content, 0.0))
+        # A hop shows the evidence it inherits when that beats its own words:
+        # the displayed score is what put it in the list.
+        entry = (candidate, 0.0, max(evidence, _relevance(query_terms, candidate.content, 0.0)))
     # Behind the source, the hops already placed behind it (same score), and
     # any direct match at least as strong as the evidence the hop inherits.
     score = out[at][1]

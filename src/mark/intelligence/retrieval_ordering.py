@@ -9,11 +9,15 @@ Runs on the materialised top-k of one query, in this order:
    present-tense questions, behind it for "originally/previously" ones.
    Skipped when the question names a date: "where did I live in 2024?"
    asks about that time, not about now;
-3. facts — the subjects asked about (see ``_ReportingMixin._matching_facts``);
-4. ``order_by_fact_agreement`` — memories stating a current fact value go
+3. ``state_band`` — unnamed updates ("I moved to Porto") and conflicting
+   statements about the asked subject and attribute (newest first, flagged);
+4. facts — the subjects asked about (see ``_ReportingMixin._matching_facts``);
+5. ``order_by_fact_agreement`` — memories stating a current fact value go
    ahead of memories stating only an earlier value of it;
-5. missing anchors and the calibrated gap report;
-6. optional contextual compression (``_maybe_compress``).
+6. displayed scores made non-increasing, then the relevance floor
+   (``retrieval_finish``);
+7. missing anchors and the calibrated gap report;
+8. optional contextual compression (``_maybe_compress``).
 
 Expects the host class to provide ``_compressor`` and the ``_ReportingMixin`` methods.
 """
@@ -26,6 +30,8 @@ from mark.intelligence.query_understanding import (
     anchor_present,
     query_anchors,
 )
+from mark.intelligence.retrieval_finish import apply_floor, display_scores
+from mark.intelligence.state_change import apply_band, state_band
 from mark.intelligence.supersession import order_by_fact_agreement, order_by_supersession
 from mark.intelligence.temporal_order import temporal_order
 from mark.types import GapReport, MemoryFragment
@@ -45,18 +51,37 @@ class _OrderingMixin:
         relevances: list[float],
         *,
         names_date: bool,
-    ) -> tuple[list[MemoryFragment], list[float], list[float], TemporalIntent, list, list[str], GapReport]:
-        """Order the top-k for the query's point in time; return it with facts, missing anchors, gap."""
+        time_scoped: bool = False,
+    ) -> tuple:
+        """Order the top-k for the query's point in time; return it with facts, missing anchors, gap.
+
+        Returns (fragments, scores, relevances, intent, facts, missing, gap,
+        outdated ids, conflicts by id).
+        """
         fragments, scores, relevances, intent = temporal_order(query, fragments, scores, relevances)
+        outdated: set[str] = set()
+        conflicts: dict[str, list[str]] = {}
         if not names_date:
-            fragments, scores, relevances = order_by_supersession(query, intent, fragments, scores, relevances)
+            fragments, scores, relevances = order_by_supersession(
+                query, intent, fragments, scores, relevances, outdated)
+            band = state_band(query, intent, fragments)
+            if band is not None:
+                fragments, scores, relevances = apply_band(band, fragments, scores, relevances)
+                outdated |= band.outdated
+                conflicts = band.conflicts
         facts = self._matching_facts(query, agent_id, intent, fragments)
         if facts and intent != TemporalIntent.ORIGINAL:
             current, stale = self._stale_fact_values(agent_id, facts)
             fragments, scores, relevances = order_by_fact_agreement(fragments, scores, relevances, current, stale)
+        relevances = display_scores(relevances)
+        fragments, scores, relevances = apply_floor(query, fragments, scores, relevances, time_scoped=time_scoped)
+        kept = {f.id for f in fragments}
+        outdated &= kept
+        conflicts = {k: [v for v in vs if v in kept] for k, vs in conflicts.items() if k in kept}
+        conflicts = {k: vs for k, vs in conflicts.items() if vs}
         missing = self._missing_anchors(query, agent_id, fragments, facts)
         gap = self._gap_report(relevances, spec, analysis, query, missing, top_covers_anchors(query, fragments))
-        return fragments, scores, relevances, intent, facts, missing, gap
+        return fragments, scores, relevances, intent, facts, missing, gap, outdated, conflicts
 
     def _maybe_compress(self, compress, query, spec, analysis, fragments, scores, relevances, missing, gap):
         """Filter / rewrite fragments with the configured compressor, keeping scores by id.

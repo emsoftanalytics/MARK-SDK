@@ -47,6 +47,7 @@ from mark.intelligence.retrieval_policy import (
     SessionFilter,
 )
 from mark.intelligence.retrieval_config import _PipelineConfigMixin
+from mark.intelligence.retrieval_finish import materialise
 from mark.intelligence.retrieval_ordering import _OrderingMixin
 from mark.intelligence.retrieval_reporting import _ReportingMixin
 from mark.intelligence.retrieval_result import RetrievalResult
@@ -54,7 +55,7 @@ from mark.intelligence.retrieval_time import _TimeMixin, query_date_ranges
 from mark.plasticity.hebbian import EdgeCoActivation, HebbianReinforcement
 from mark.plugins import HOOK_POLICY_ENGINE, PluginRegistry
 from mark.store.sqlite import LocalMemoryStore
-from mark.types import GapReport, MemoryFragment
+from mark.types import GapReport
 
 
 class RetrievalPipeline(
@@ -159,6 +160,8 @@ class RetrievalPipeline(
             sf = replace(sf, since=since if since is not None else sf.since,
                          until=until if until is not None else sf.until)
         allowed_ids = self._allowed_ids(agent_id, sf)
+        if sf.exclude_tags:
+            allowed_ids = self._without_tags(agent_id, allowed_ids, sf.exclude_tags)
         if sf.since is not None or sf.until is not None:
             allowed_ids = self._time_scope(agent_id, allowed_ids, sf.since, sf.until)
         if not allowed_ids or all(is_blank_query(q) for q in queries):
@@ -171,6 +174,7 @@ class RetrievalPipeline(
             self._no_search_result(query, agent_id, policy) if is_blank_query(query) else self._retrieve_one(
                 query, agent_id, policy, allowed_ids, scope_ids,
                 compress=compress, expand=expand, reinforce_mode=reinforce_mode,
+                time_scoped=sf.since is not None or sf.until is not None,
             )
             for query in queries
         ]
@@ -197,6 +201,7 @@ class RetrievalPipeline(
         compress: bool,
         expand: bool,
         reinforce_mode: ReinforceMode,
+        time_scoped: bool = False,
     ) -> RetrievalResult:
         """Run every stage for one query against an already-synced scope."""
         analysis = self._analyzer.analyze(query)
@@ -228,23 +233,14 @@ class RetrievalPipeline(
             spec, seed_scores, effective_top_k, agent_id, allowed_ids,
             fragments_by_id, relevance, cosine, query_terms,
         )
+        # Rank a wider pool: per-document diversification may skip chunks.
         ranked = self._rank(
             query, policy, agent_id, analysis, expanded_scores,
-            fragments_by_id, contradiction_ids, effective_top_k,
+            fragments_by_id, contradiction_ids, effective_top_k * 2,
         )
-
-        # Re-check state at materialisation: a plugin scorer may return ids
-        # that were never fetched, or whose state changed since.
-        fragments: list[MemoryFragment] = []
-        scores: list[float] = []
-        relevances: list[float] = []
-        for result in ranked:
-            fragment = fragments_by_id.get(result.fragment_id) or self._store.get(result.fragment_id)
-            if fragment is None or fragment.state not in _RETRIEVABLE_STATES:
-                continue
-            fragments.append(fragment)
-            scores.append(result.score)
-            relevances.append(relevance.get(result.fragment_id, 0.0))
+        fragments, scores, relevances = materialise(
+            ranked, fragments_by_id, relevance, self._store.get, _RETRIEVABLE_STATES, effective_top_k,
+        )
 
         # Follow names / identifiers in the best results (one hop per graph level, max 2).
         lookups: dict = {}  # entity lookups shared by both stages, for this query only
@@ -257,9 +253,9 @@ class RetrievalPipeline(
                 query, query_terms, fragments, scores, relevances,
                 agent_id, allowed_ids, scope_ids, effective_top_k, lookups,
             )
-        fragments, scores, relevances, intent, facts, missing, gap_report = self._order_and_report(
-            query, agent_id, spec, analysis, fragments, scores, relevances, names_date=bool(date_ranges),
-        )
+        fragments, scores, relevances, intent, facts, missing, gap_report, outdated, conflicts = (
+            self._order_and_report(query, agent_id, spec, analysis, fragments, scores, relevances,
+                                   names_date=bool(date_ranges), time_scoped=time_scoped or bool(date_ranges)))
         self._reinforce_results(fragments, relevances, spec, reinforce_mode)
 
         fragments, scores, relevances, gap_report, was_compressed = self._maybe_compress(
@@ -279,6 +275,8 @@ class RetrievalPipeline(
             temporal_intent=intent.value,
             missing_anchors=missing,
             facts=facts,
+            outdated=sorted(outdated),
+            conflicts=conflicts,
         )
 
     def _resolve_spec(self, policy: RetrievalPolicy, analysis: QueryAnalysis) -> RetrievalPolicySpec:
