@@ -4,18 +4,22 @@
 
 Write and revise
     remember TEXT [--kind K] [--tag T ...] [--importance X] [--extract-facts]
-                  [--session S] [--occurred-at T]
-                                                 store one memory (`store` is an alias)
+                  [--session S] [--occurred-at T] [--json]
+                                                 store one memory; prints its short id
+                                                 (`store` is an alias)
     ingest FILE [--session S] [--tag T ...] [--kind K] [--extract-facts]
                                                  store each non-empty line as a memory
+                                                 (safe to repeat: counts new vs present)
     forget ID [--secure] | forget --match TEXT   forget memories and the facts taken from
                                                  them (--secure erases the text from disk)
     resolve ID [--note TEXT]                     mark a TODO/bug as done
     supersede ID TEXT                            replace a memory, keeping its history
 Read
     recall QUERY [-k N] [--chronological] [--json] [--session S] [--since T]
-                 [--until T] [--tag T ...] [--kind K]
-                                                 hybrid recall (facts first, then memories)
+                 [--until T] [--tag T ...] [--kind K [--all]] [--open]
+                                                 hybrid recall (facts first, then memories;
+                                                 --kind/--open hide resolved/superseded
+                                                 memories, --all keeps them)
     recall-many [FILE|-] [-k N] [--chronological] [--json]
                                                  one query per line (or a JSON list)
     list [--kind K] [--tag T ...] [--open] [--limit N] [--offset N] [--json]
@@ -31,6 +35,7 @@ Facts
                                                  the value(s) recorded for that time)
     fact get SUBJECT [ATTRIBUTE]                 current value(s)
     fact history SUBJECT ATTRIBUTE               every value over time
+    fact list [SUBJECT]                          every current fact (of SUBJECT)
     fact retract SUBJECT [ATTRIBUTE] [--value V] withdraw facts recorded by mistake
                                                  (kept for audit)
 Data and processes
@@ -48,7 +53,12 @@ Data and processes
                                                  store settings; the user subject (who
                                                  "I"/"my" is) is stored with the store
 
-KINDS for --kind: decision, todo, bug, fix, preference, snippet, api, note.
+KINDS for --kind: decision, todo, bug, fix, preference, snippet, api, note. Without
+--kind, a leading "TODO:", "DECISION:"/"ADR:", "BUG:", "FIX:", "DONE:"/"NOTE:", "API:"
+or "SNIPPET:" label sets it. Times (--occurred-at, --valid-from, --since, --until)
+are ISO dates or words such as "yesterday" or "3 May 2026". Fact commands take
+--json too. Read commands on a missing store say "no store at PATH" and create
+nothing.
 IDs: recall and list print 8-character short ids; any unambiguous prefix works.
 
 The database comes from ``--db`` or ``$MARK_DB`` (default ``./.mark/memory.db``):
