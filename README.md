@@ -254,8 +254,9 @@ with Mark.local("./.mark") as mark:
 With `fact_extractor="patterns"` (or `extract_facts=True` on one write, or
 `mark ingest FILE --extract-facts`), stated values become facts: "moved from
 port A to port B", "X is owned by Y", "I live in Porto", key: value lines,
-JSON/YAML records, Markdown tables, prices and measurements with units, and
-`DECISION:`/`TODO:`/`BUG:`/`FIX:` notes. "No longer" retracts a value and
+JSON/YAML records, Markdown tables, prices and measurements with units,
+ticket status ("DONE: ABC-12 ...") and values stated in developer notes
+("DECISION: the job queue uses SQLite"). "No longer" retracts a value and
 "Correction:" replaces one. `LLMFactExtractor` uses a local model from a
 durable background queue for phrasing the rules miss.
 

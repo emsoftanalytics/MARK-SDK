@@ -101,9 +101,10 @@ a million memories.
   number changes, rescheduled appointments, prices and measurements with
   units, counts, tools and project settings, key/value lines, JSON and YAML
   records, config blocks, Markdown tables, lists of ports, owners, emails or
-  languages, numbered steps, ticket status and developer notes. "No longer",
-  "quit", "gave up", "used to" and "Correction:" retract or replace a value,
-  "from A to B" keeps A in history, and "Starting <date>" schedules a value.
+  languages, numbered steps, ticket status and values stated in developer
+  notes ("the CLI entry point is ..."). "No longer", "quit", "gave up",
+  "used to" and "Correction:" retract or replace a value, "from A to B"
+  keeps A in history, and "Starting <date>" schedules a value.
   Only the user's words in a chat are extracted, never assistant or tool
   text. Writes and documents report how many facts they produced.
 - **A user subject stored with the store**: `Mark.local(user_subject=...)`,
