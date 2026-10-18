@@ -42,6 +42,15 @@ _NOT_FERNET = ("substr({col}, 1, 5) IS NOT X'6741414141' AND substr({col}, 17, 5
 _REPORT_LIMIT = 50
 
 
+def _token_shaped(data: bytes) -> bool:
+    """Could *data* be a Fernet token, bare or after a 16-byte passphrase salt?
+
+    The SQL filter compares BLOB prefixes, so tokens stored as TEXT reach the
+    scan too; those are decrypted normally.
+    """
+    return data[:5] == b"gAAAA" or data[16:21] == b"gAAAA"
+
+
 class UnreadableRowsMixin:
     """Finds, quarantines and reports rows an encrypted store cannot decrypt."""
 
@@ -90,6 +99,12 @@ class UnreadableRowsMixin:
             sql += " AND " + _NOT_FERNET.format(col=column)
         bad = []
         for row_id, data, label in conn.execute(sql, (after,)).fetchall():
+            if fernet and not _token_shaped(_as_bytes(data)):
+                # Plaintext from a keyless a8: decrypting it would derive a key
+                # from a "salt" of plaintext bytes (one PBKDF2 run, seconds,
+                # per row: a 14 s first reopen in the a10 re-test).
+                bad.append((str(row_id), label))
+                continue
             try:
                 self.encryption.decrypt(_as_bytes(data))
             except Exception:  # noqa: BLE001 - any provider error: not ciphertext for this key
