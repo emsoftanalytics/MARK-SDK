@@ -58,6 +58,7 @@ from mark.store._sqlite.mentions import MentionMixin
 from mark.store._sqlite.rows import RowDecodingMixin
 from mark.store._sqlite.schema import SchemaMixin
 from mark.store._sqlite.search import SearchMixin
+from mark.store._sqlite.unreadable import UnreadableRowsMixin
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,7 @@ class LocalMemoryStore(
     RowDecodingMixin,
     SchemaMixin,
     EncryptionGuardMixin,
+    UnreadableRowsMixin,
     ConnectionMixin,
 ):
     """Thread-safe SQLite store for fragments, blocks, documents, nodes, and edges.

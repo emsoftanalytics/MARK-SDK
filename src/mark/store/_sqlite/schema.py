@@ -70,10 +70,11 @@ class SchemaMixin(SchemaDDL):
     # ── maintenance ───────────────────────────────────────────────────────────
 
     def integrity_check(self) -> list[str]:
-        """Run PRAGMA integrity_check. Returns [] on a healthy database."""
+        """Run PRAGMA integrity_check (and list unreadable encrypted rows). Returns [] when healthy."""
         rows = self._fetchall("PRAGMA integrity_check")
         results = [str(row[0]) for row in rows]
-        return [] if results == ["ok"] else results
+        # Plus rows an encrypted store could not decrypt (quarantined at open).
+        return ([] if results == ["ok"] else results) + self.unreadable_report()
 
     def export(self, dest_path: str | Path) -> None:
         """Backup the database to dest_path using the SQLite backup API."""
@@ -135,6 +136,8 @@ class SchemaMixin(SchemaDDL):
             # Must run before FTS setup: a keyless open of an encrypted store
             # would otherwise "backfill" ciphertext into the plaintext index.
             error = self._init_encryption(conn)
+            if error is None and self._encrypting:
+                self._quarantine_unreadable(conn)  # plaintext written by a keyless a8 (see unreadable.py)
             if error is None:
                 self._init_fts(conn)
         if error is not None:
