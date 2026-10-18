@@ -97,6 +97,7 @@ class SchemaMixin(SchemaDDL):
         into a layout it does not understand.
         """
         self._refuse_newer_schema()
+        self._refuse_migration_under_server()
         with self._writing() as conn:
             # Take the write lock before reading the schema stamp: two processes
             # creating the same new database must not both run migrations.
@@ -153,6 +154,27 @@ class SchemaMixin(SchemaDDL):
         if row is not None and int(row[0]) > self.CURRENT_SCHEMA_VERSION:
             self.close()
             raise StoreVersionError(str(self.db_path), int(row[0]), self.CURRENT_SCHEMA_VERSION)
+
+    def _refuse_migration_under_server(self) -> None:
+        """Raise StoreInUseError if a migration is due while another process serves the store.
+
+        See :mod:`mark.store._sqlite.server_guard`: an older ``mark serve``
+        would keep writing into the migrated layout with its old code.
+        """
+        from mark.store._sqlite.server_guard import StoreInUseError, foreign_server
+
+        if self.db_path == ":memory:":
+            return
+        try:
+            row = self._fetchone("SELECT value FROM schema_info WHERE key = 'schema_version'")
+        except sqlite3.OperationalError:  # new database: nothing to migrate
+            return
+        if row is None or int(row[0]) >= self.CURRENT_SCHEMA_VERSION:
+            return
+        held, pid = foreign_server(self.db_path)
+        if held:
+            self.close()
+            raise StoreInUseError(self.db_path, pid)
 
     def _run_migrations(self, conn: sqlite3.Connection, from_version: int) -> None:
         """Bring the schema up to CURRENT_SCHEMA_VERSION.

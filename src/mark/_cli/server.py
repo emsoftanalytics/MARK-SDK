@@ -175,12 +175,18 @@ def _acquire_lock(db: Path) -> _ServerLock:
             continue
         os.ftruncate(fd, 0)
         os.write(fd, str(os.getpid()).encode())
+        from mark.store._sqlite.server_guard import OWN_LOCKS
+
+        OWN_LOCKS.add(os.path.abspath(lock))  # our own engine may migrate the store
         return _ServerLock(lock, fd)
     raise SystemExit(f"could not acquire the server lock for {db}")
 
 
 def _release_lock(lock: _ServerLock) -> None:
     """Remove the lock file (while still holding it, so no one else can lose it), then unlock."""
+    from mark.store._sqlite.server_guard import OWN_LOCKS
+
+    OWN_LOCKS.discard(os.path.abspath(lock.path))
     try:
         lock.path.unlink()
     except OSError:
