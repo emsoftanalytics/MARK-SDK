@@ -177,6 +177,7 @@ PLANTED_A10: list[tuple[str, str, str]] = [
     ("weather API key is " + _B62_32, _B62_32, "api_key"),
     ("the secret is " + _HEX32[::-1], _HEX32[::-1], "secret"),
     ("deploy token " + _B62_32[::-1] + " expires Friday", _B62_32[::-1], "token"),
+    ("The AWS secret for prod is wJalrXUtnFEMI/K7MDENG/" + "bPxRfiCYzzzzzzKEY", "bPxRfiCYzzzzzzKEY", "secret"),
     ("wallet seed: " + _SEED12, "absorb abstract absurd", "seed_phrase"),
     ("My recovery phrase is " + _SEED24 + ".", "tackle swamp hobby", "seed_phrase"),
     ("mnemonic phrase:\n" + _SEED12, "absent absorb", "seed_phrase"),
@@ -207,6 +208,7 @@ BENIGN_A10: list[str] = [
     "Versions 0.10.12 and 1.2.3 are supported; dates 01-02-2026 and 01.02.2026.",
     "UUID 550e8400-e29b-41d4-a716-446655440000 is the tenant id.",
     "The secret ingredient is cardamom.",
+    "The token for the demo is in /etc/demo/keys/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1234",
     "commit " + _HEX32 + "abcdef12 touched the token parser",
     "def rotate(token):\n    return refresh(token, secret=settings.SECRET)",
 ]

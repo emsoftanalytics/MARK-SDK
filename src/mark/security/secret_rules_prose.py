@@ -44,11 +44,15 @@ def _prose_password_ok(match: "re.Match[str]") -> bool:
 # Short keywords only with an explicit ":"/"=" (never "is"): "pass" is also a
 # verb and an exam result ("pass: 45"), so its value must be 6+ characters and
 # not only digits; "pw" is unambiguous enough for 4+.
-_SHORT_PASSWORD = re.compile(rf"(?i)(?<![\w-])(?P<kw>pw|pass)[ \t]*[:=](?![/=])[ \t]*{_VALUE}")
+# The separator must touch the keyword ("pw: x"), so docstrings such as
+# "pass :data:`h11.CLIENT`" (the verb, then a reST role) stay untouched.
+_SHORT_PASSWORD = re.compile(rf"(?i)(?<![\w-])(?P<kw>pw|pass)[:=](?![/=:])[ \t]*{_VALUE}")
 
 
 def _short_password_ok(match: "re.Match[str]") -> bool:
     value = value_of(match)
+    if "`" in value or value.startswith(":"):
+        return False  # markup ("pass=`x`" in docs), not a credential
     if match.group("kw").lower() == "pass" and (len(value) < 6 or value.isdigit()):
         return False
     return _plausible_value(match, strict_word=True, min_length=4) and _credential_like(value)
@@ -58,7 +62,9 @@ def _short_password_ok(match: "re.Match[str]") -> bool:
 
 _LONG_KEY = re.compile(
     r"(?i)(?<![\w-])(?P<kw>api[ _-]?key|access[ _-]?key|secret[ _-]?key|client[ _-]?secret|secret|token)"
-    r"(?:[ \t]+(?:is|was)|[ \t]*[:=])?[ \t]+[`\"']?(?P<v>[A-Za-z0-9_\-]{32,})(?![\w-])")
+    # "the AWS secret for prod is <key>": a short "for/of/on <what>" may sit before "is".
+    r"(?:[ \t]+(?:for|of|on|in|to)[ \t]+(?:[\w.@-]+[ \t]+){0,3}?(?:is|was)|[ \t]+(?:is|was)|[ \t]*[:=])?"
+    r"[ \t]+[`\"']?(?P<v>[A-Za-z0-9_\-+/=]{32,})(?![\w/+=-])")
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 
 
@@ -67,6 +73,9 @@ def _long_key_ok(match: "re.Match[str]") -> bool:
     # A key mixes letters and digits; identifiers ("token_refresh_handler_v2") are snake_case words.
     if not (re.search(r"\d", value) and re.search(r"[A-Za-z]", value)) or _UUID.match(value):
         return False
+    if "/" in value and (value.startswith("/") or "//" in value or not (re.search(r"[a-z]", value)
+                                                                     and re.search(r"[A-Z]", value))):
+        return False  # a path or URL fragment, not base64 key material
     return not re.fullmatch(r"[a-z]+(?:[_-][a-z0-9]+)+", value)
 
 

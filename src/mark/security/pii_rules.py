@@ -28,7 +28,7 @@ _NANP_PHONE = re.compile(r"(?<![\w(+.])(?:\(\d{3}\)[ .\-]?|\d{3}[.\-])\d{3}[.\-]
 # 06 12 34 56 78, (020) 7946 0959): 3+ separated groups and 9-11 digits, so
 # versions (0.10.12), dates (01-02-2026) and times never qualify.
 _NATIONAL_PHONE = re.compile(
-    r"(?<![\w+(.\-/:])(?:\(0\d{1,4}\)[ .\-]?\d{2,4}(?:[ .\-]\d{2,4}){1,3}|0\d{1,4}(?:[ .\-]\d{2,4}){2,4})"
+    r"(?<![\w+(.\-/:])(?:\(0[1-9]\d{0,3}\)[ .\-]?\d{2,4}(?:[ .\-]\d{2,4}){1,3}|0[1-9]\d{0,3}(?:[ .\-]\d{2,4}){2,4})"
     r"(?![\w\-/:]|\.\d)")
 _IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,3})?\b")
 _SSN = re.compile(r"\b(?!000|666|9\d\d)\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b")
@@ -44,7 +44,12 @@ def _national_phone_ok(match: "re.Match[str]") -> bool:
     digits = sum(ch.isdigit() for ch in text)
     # One separator style throughout: "06 12 34 56 78" is a phone, "01.02.2026 10" is not.
     separators = set(re.findall(r"[ .\-]", text.replace(") ", ")")))
-    return 9 <= digits <= 11 and len(separators) <= 1
+    if not (9 <= digits <= 11 and len(separators) <= 1):
+        return False
+    # Hex dumps ("7f 45 4c 46 02 01 01 00 00 00") are byte pairs, not phone groups.
+    before = match.string[max(0, match.start() - 4):match.start()]
+    after = match.string[match.end():match.end() + 4]
+    return not (re.search(r"\b[0-9A-Fa-f]{2} $", before) or re.match(r" [0-9A-Fa-f]{2}\b", after))
 
 
 def _iban_ok(match: "re.Match[str]") -> bool | int:
