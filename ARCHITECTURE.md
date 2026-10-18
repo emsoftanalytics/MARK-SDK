@@ -34,27 +34,27 @@ through hooks and clients that the developer supplies.
 
 | Package | Responsibility | Start reading at |
 | --- | --- | --- |
-| `mark` (`__init__.py`) | The curated public names (25), loaded lazily so `import mark` stays fast; former names import with a `DeprecationWarning` | `__init__.py` |
-| `mark.runtime` | `Mark`: the high-level entry point (`Mark.local()`); store-wide data operations (`agents`, `export_jsonl`, `import_jsonl`, `vacuum`) in `runtime_data.py`, late-binding `configure_*` hooks in `runtime_config.py` | `runtime.py` |
+| `mark` (`__init__.py`) | The curated public names (29), loaded lazily so `import mark` stays fast; former names import with a `DeprecationWarning` | `__init__.py` |
+| `mark.runtime` | `Mark`: the high-level entry point (`Mark.local()`); store-wide data operations (`agents`, `export_jsonl`, `import_jsonl`, `vacuum`) in `runtime_data.py`, late-binding `configure_*` hooks in `runtime_config.py`, the embedder a store remembers (`runtime_embedder.py`) | `runtime.py` |
 | `mark.kinds` | Memory kinds (`decision`, `todo`, `bug`, `fix`, `preference`, `snippet`, `api`, `note`) and lifecycle tags; standard library only, so the CLI can use it | `kinds.py` |
-| `mark.memory` | `MarkRuntime` (wiring, `shutdown`, `configure_user_subject`; maintenance in `runtime_maintenance.py`), `MarkMemory` (per-agent facade), `SimpleMemory` (`mark.memory`, verbs in `simple_verbs.py`), facts, blocks, timelines | `memory/runtime.py`, `memory/mark_memory.py` |
-| `mark.memory.facade` | Mixins that make up `MarkMemory`: `verbs` (remember/recall and async twins), `write`, `write_batch` (`StoreReport`), `write_validation`, `write_guard`, `fact_extraction`, `retrieve`, `retrieve_async`, `revisions` (supersede/update/resolve), `lifecycle` (forget, get, list, count), `portability` (JSONL), `documents`, `timeline`, `observing`, `graph_ops`, `healing`, `views` | `memory/facade/__init__.py` |
+| `mark.memory` | `MarkRuntime` (wiring, `shutdown`, `configure_user_subject`; maintenance and `warm_up` in `runtime_maintenance.py`, `register_closer` in `runtime_closers.py`), `MarkMemory` (per-agent facade), `SimpleMemory` (`mark.memory`, verbs in `simple_verbs.py`), facts, blocks, timelines | `memory/runtime.py`, `memory/mark_memory.py` |
+| `mark.memory.facade` | Mixins that make up `MarkMemory`: `verbs` (remember/recall and async twins), `write`, `write_batch` (`StoreReport`), `write_validation`, `write_guard`, `fact_extraction`, `retrieve`, `retrieve_async`, `revisions` (supersede/update/resolve), `lifecycle` (forget, get, list, count), `forget_match` (whole-word `forget(match=)`), `portability` (JSONL), `documents`, `timeline`, `observing`, `graph_ops`, `healing`, `views` | `memory/facade/__init__.py` |
 | `mark.memory.timeline*` | Subject timelines: `Timeline`/`TimelineEvent` (`timeline.py`), collection (`timeline_build.py`), the two-clock ordering shared with chronological recall (`timeline_order.py`) | `memory/timeline.py` |
 | `mark.documents` | `store_document` / `remember_file`: loaders (text, Markdown, code, HTML, PDF), structure-aware chunking, `DocumentRecord`, the `memory.documents` view | `documents/__init__.py` |
 | `mark.store` | `LocalMemoryStore` (SQLite), `JsonMemoryStore`, session activity log | `store/sqlite.py` |
-| `mark.store._sqlite` | Store mixins: `schema`, `ddl`, `connection`, `encryption_guard`, `fragments`, `fragment_reads`, `lifecycle` (cascading forget, secure erase, vacuum), `document_index`, `mentions`, `search`, `fts_text`/`fts_query` (two FTS5 tables, bounded keyword queries), `vector_snapshot`, `sketches`/`sketch_store` (encrypted timelines), `facts`, `facts_multi`, `fact_codec` (typed values), `fact_jobs`, `job_owner`, `blocks`, `graph`, `events`, `rows`, `codec` | `store/_sqlite/__init__.py` |
-| `mark.intelligence` | Retrieval pipeline and its stages: `retrieval_index`, `index_bulk_load`, `retrieval_time` + `date_parsing`, `retrieval_fusion` + `fusion_scoring`, `graph_expansion`, `reranker`, `multi_hop`, `supersession`, `retrieval_ordering` + `temporal_order`, `retrieval_reporting` + `fact_relevance` + `query_anchors`, `passage_window`; plus extraction, compression and query expansion | `intelligence/retrieval_pipeline.py` |
+| `mark.store._sqlite` | Store mixins: `schema`, `ddl`, `connection` with its statement `gate`, `server_guard` + `server_legacy` (no migration under a running server), `encryption_guard`, `unreadable` (quarantine of rows that do not decrypt), `fragments`, `fragment_reads`, `lifecycle` (cascading forget, secure erase, vacuum), `document_index`, `mentions`, `search`, `fts_text`/`fts_query` (two FTS5 tables, bounded keyword queries), `vector_snapshot`, `scope_delta` + `scope_ids` + `scope_snapshot` (retrievable-id scopes kept current from the write log), `sketches`/`sketch_store`/`sketch_search` (encrypted timelines and identifier recall), `facts`, `facts_multi`, `fact_codec` (typed values), `fact_import`, `fact_jobs`, `job_owner`, `blocks`, `graph`, `events`, `rows`, `codec` | `store/_sqlite/__init__.py` |
+| `mark.intelligence` | Retrieval pipeline and its stages: `retrieval_index`, `index_bulk_load`, `retrieval_time` + `date_parsing`, `retrieval_fusion` + `fusion_scoring`, `graph_expansion`, `reranker`, `multi_hop`, `supersession`, `retrieval_ordering` + `temporal_order`, `retrieval_reporting` + `fact_relevance` + `query_anchors` + `subject_index` (known fact subjects a text names), `passage_window`; plus extraction, compression and query expansion | `intelligence/retrieval_pipeline.py` |
 | `mark.intelligence.fact_extraction` | `FactCandidate`, the `FactExtractor` protocol, `RulePack` and `BUILTIN_PACKS`, `PatternFactExtractor`, `LLMFactExtractor`, `FactExtractionService` and its background worker | `intelligence/fact_extraction/__init__.py` |
 | `mark.index` | In-memory cosine `VectorIndex` with pure-Python and numpy backends, bulk loading (`vector_bulk.py`) | `index/vector.py` |
 | `mark.embeddings` | Embedding providers (hash v3 by default), the embedding cache, Unicode-aware segmentation (`segments.py`), `auto_embedder` / `resolve_embedder` (`auto.py`), `embedder_info()` (`info.py`) | `embeddings/__init__.py` |
 | `mark.context` | `ContextWatch` and `Briefing` (`watch*.py`), presets by model size (`presets.py`), provenance and trust of conversation memories (`provenance.py`), the session brief (`session_brief.py`), `ContextBudget` (`budget.py`), `split_history` (`history.py`), `MarkChat` (`loop.py`), `ContextBuilder` | `context/watch.py` |
 | `mark.media` | Image memory (`ImageMemory`, records, caption and CLIP search, consistency checks, `OpenAIVisionDescriber`), file sniffing (`files.py`), transcribers for audio and video (`transcribers.py`) | `media/memory.py` |
-| `mark.cli`, `mark._cli` | The `mark` command (`parser.py`, `output.py`, `engine.py`, `engine_ops.py`), `mark serve` and its client, `mark mcp` and `mark serve stop` (`extras.py`) | `cli.py`, `_cli/server.py` |
+| `mark.cli`, `mark._cli` | The `mark` command (`parser.py`, `output.py`, `engine.py`, `engine_ops.py`, `confirm.py`), `mark serve` and its client (`server.py`, `daemon.py` for `--detach`, `server_snapshots.py`), `mark mcp` and `mark serve stop`/`status` (`extras.py`) | `cli.py`, `_cli/server.py` |
 | `mark.adapters` | `LocalMarkBackend`, LangChain middleware and tools, the MCP server and its launcher (`python -m mark.adapters.mcp`), LangGraph state | `adapters/backend.py` |
 | `mark.middlewares` | Opt-in middleware batteries and packaged agent skills (`mark-usage`, `mark-memory-middleware`, opt-in `mark-memory-compact`) | `middlewares/base.py` |
 | `mark.agent`, `mark._agent` | `MarkAgent`: wraps a callable or LLM with memory, policies, and skills | `agent.py` |
 | `mark.plasticity` | Decay, Hebbian reinforcement, pruning | `plasticity/__init__.py` |
-| `mark.security` | The write policy (`write_policy.py`): secret and PII redaction (`redaction.py`, `secret_rules.py`, `pii_rules.py`) and prompt-injection screening (`injection.py`); encryption providers; content hashing | `security/write_policy.py` |
+| `mark.security` | The write policy (`write_policy.py`): secret and PII redaction (`redaction.py` over the rule modules `secret_rules.py`, `secret_rules_struct.py` (secret-named keys and flags in any syntax), `secret_rules_vendor.py`, `secret_rules_prose.py`, `secret_rules_i18n.py`, `pii_rules.py`) and prompt-injection screening (`injection.py`, `injection_intl.py` for other languages, `injection_markup.py` for hidden markup, links and encodings); boundary defusal for plain-text renderings (`boundary.py`); patterns compiled on first use (`lazy_regex.py`); encryption providers; content hashing | `security/write_policy.py` |
 | `mark.errors` | Exception hierarchy: `MarkError`, store encryption and version errors, `InvalidInputError` / `InvalidMemoryError` / `MemoryTooLargeError`, `UnknownBlockError`, `MemoryNotFoundError`, `StoreClosedError`, `EmbedderUnavailableError` | `errors.py` |
 | `mark._private_fs` | Creates `.mark/` (0700) and database and export files (0600) on POSIX | `_private_fs.py` |
 | `mark.types` | Pydantic data types: fragments, blocks, graph, gap reports | `types/memory.py` |
@@ -63,7 +63,7 @@ through hooks and clients that the developer supplies.
 ## Main objects
 
 ```text
-Mark.local(folder or file.db, redact=, injection=, max_memory_bytes=, fact_extractor=, embedder=, encryption=)
+Mark.local(folder or file.db, redact=, injection=, max_memory_bytes=, fact_extractor=, embedder=, encryption=, user_subject=)
  ├─ .memory   SimpleMemory                    the memory verbs + blocks, agent "__mark__"
  ├─ .runtime  MarkRuntime                     wiring, lifecycle, write policy, buses, tracer
  │    ├─ store      LocalMemoryStore          SQLite, schema v6
@@ -82,7 +82,7 @@ Mark.local(folder or file.db, redact=, injection=, max_memory_bytes=, fact_extra
  │          ├─ .images ImageMemory            image memory (path + sha256)
  │          ├─ export_jsonl / import_jsonl / vacuum / embedder_info
  │          └─ .blocks() / .chain()           BlockGraph / BlockChain
- ├─ .agents(), .export_jsonl(), .import_jsonl(), .vacuum(), .embedder_info()
+ ├─ .agents(), .export_jsonl(), .import_jsonl(), .vacuum(), .embedder_info(), .close() / .shutdown()
  ├─ .wrap_agent(fn) -> MarkAgent              callable, invoke, ainvoke
  └─ .policies, .skills, .world_bible
 ```
@@ -143,7 +143,8 @@ fact     → (subject, attribute) → value, with a validity interval and histor
 in `store/_sqlite/`. Tables: `fragments`, `documents`, `nodes`, `edges`,
 `blocks`, `block_nodes`, `block_links`, `facts`, `fact_jobs`,
 `fact_job_owners`, `fact_extractions`, `session_events`, `vector_snapshots`,
-`vector_snapshot_meta`, `vector_dirty`, and `schema_info`. Two FTS5 tables
+`vector_snapshot_meta`, `vector_dirty`, `scope_snapshots`, `write_log`, and
+`schema_info` (which also records the store's embedder and user subject). Two FTS5 tables
 index fragment content: an English one with the porter stemmer and a
 multilingual one with no stemmer, CJK text segmented into bigrams, and emoji
 and symbols kept as tokens (`fts_text.py`). Image memory adds
@@ -156,11 +157,17 @@ and symbols kept as tokens (`fts_text.py`). Image memory adds
   open: `ddl.py` holds per-version migrations (`_MIGRATIONS`,
   `_COLUMN_MIGRATIONS`) and `schema.py` applies them in one transaction. A
   store stamped with a newer version than this build supports is refused
-  before any write (`StoreVersionError`).
+  before any write (`StoreVersionError`). Before migrating, `server_guard.py`
+  checks that no `mark serve` holds the store (the OS lock of current
+  servers; `server_legacy.py` recognises 0.2.0a8/0.2.0a9 servers by their pid
+  files or `/hello` answer) and raises `StoreInUseError` if one does.
 - **Concurrency.** File databases use one connection per thread in WAL mode;
   switching a new database to WAL is retried when several processes open it
   at once. Every write runs in `_writing`: one locked transaction that rolls
-  back on error. The in-memory store serialises all access.
+  back on error. The in-memory store serialises all access. Every statement
+  passes the gate in `gate.py`, so `close()` refuses new statements
+  (`StoreClosedError`), waits up to 5 s for running ones, and never closes a
+  connection another thread is using.
 - **Permissions.** `_private_fs.py` creates the `.mark/` directory 0700 and
   the database file 0600 on POSIX (SQLite's `-wal` and `-shm` files inherit
   that). Existing paths keep their permissions.
@@ -181,13 +188,26 @@ and symbols kept as tokens (`fts_text.py`). Image memory adds
   least 50,000 memories get a **vector snapshot** (`vector_snapshot.py`): the
   normalised vectors in a few large blobs, keyed by embedder fingerprint, so
   a large store reopens in about a second and a half at 100k memories
-  instead of eleven. Writes record changed ids in `vector_dirty`, so a
-  snapshot never serves a stale vector. Encrypted stores never write one.
+  instead of eleven. Snapshots load memory-mapped. Writes record changed ids
+  in `vector_dirty`, so a snapshot never serves a stale vector; a secure
+  forget drops the snapshot. Encrypted stores never write one.
+- **Scopes.** Recall needs the agent's retrievable ids. Every structural
+  write bumps `write_version` and logs the ids it changed in `write_log`
+  (seen by other processes too), so the cached scope applies just that
+  delta (`scope_delta.py`, `scope_ids.py`) instead of rescanning. A
+  `scope_snapshot` stores the ids of a large agent, so a cold start loads
+  them and applies the logged delta.
 - **Encrypted timelines.** Without an FTS index, an encrypted store finds a
   subject's mentions through keyed token sketches (`sketches.py`): a 512-bit
   keyed Bloom filter per memory, kept in process memory, so only candidate
-  memories are decrypted. `persist_token_sketches()` keeps them on disk
-  (with the leakage trade-off described in [SECURITY.md](SECURITY.md)).
+  memories are decrypted. The same sketches give encrypted stores exact
+  identifier recall (`sketch_search.py`). `persist_token_sketches()` keeps
+  them on disk (with the leakage trade-off described in
+  [SECURITY.md](SECURITY.md)).
+- **Unreadable rows** (`unreadable.py`). On an encrypted store opened with
+  its key, rows added since the last check that do not decrypt (plaintext
+  written by a keyless 0.2.0a8) are quarantined, tagged `mark:unreadable`
+  and reported by `integrity_check()`.
 - **Lifecycle** (`lifecycle.py`). `forget_fragment` deletes the row, its FTS
   rows and extraction jobs, and retracts the facts extracted from it;
   `secure=True` overwrites the content first, hard-deletes those facts and
@@ -538,7 +558,7 @@ stored as a document. MARK never decodes audio itself.
 | --- | --- | --- |
 | LangChain middleware | `adapters/langchain/middleware.py` and `_middleware_*.py` mixins | Retrieval before model calls, briefing, observation of model and tool output. Sync and async. Per-run state. |
 | LangChain tools | `adapters/langchain/tools.py` | `mark_retrieve`, `mark_write`, `mark_observe`. |
-| MCP server | `adapters/mcp/__init__.py`, `_tools.py`, `_tools_more.py`, `_briefing.py`, `launcher.py` | `mark_retrieve`, `mark_write`, `mark_observe`, `mark_fact`, `mark_timeline`, `mark_brief`, `mark_forget` over stdio, with plain-text output and domain errors returned as `isError` results. `tools=` exposes a subset and `allowed_agent_ids` restricts namespaces. `briefing=True` adds `mark_briefing` and `mark://briefing/{session_id}`, one watch per (agent, session) in a bounded LRU. `python -m mark.adapters.mcp --db PATH` and `mark mcp` start it on a store file or `.mark` folder. Supports `mcp` 1.x and 2.x. |
+| MCP server | `adapters/mcp/__init__.py`, `_tools.py`, `_tools_more.py`, `_tools_lifecycle.py`, `_briefing.py`, `launcher.py` | `mark_retrieve`, `mark_write`, `mark_observe`, `mark_fact`, `mark_timeline`, `mark_brief`, `mark_list`, `mark_resolve`, `mark_supersede`, `mark_forget` over stdio, with plain-text output, 8-character ids, and domain and argument errors returned as one-sentence `isError` results. `tools=` exposes a subset and `allowed_agent_ids` restricts namespaces. `briefing=True` adds `mark_briefing` and `mark://briefing/{session_id}`, one watch per (agent, session) in a bounded LRU. `python -m mark.adapters.mcp --db PATH` and `mark mcp` start it on a store file or `.mark` folder. Supports `mcp` 1.x and 2.x. |
 | Reference chat loop | `context/loop.py` | `MarkChat` for any OpenAI-compatible endpoint. |
 | Backend protocol | `adapters/backend.py` | `MarkBackend` protocol; `LocalMarkBackend` runs blocking work off the event loop. |
 | Command line | `cli.py`, `_cli/` | See below. |
@@ -560,9 +580,16 @@ stored as a document. MARK never decodes audio itself.
 - `server.py`: `mark serve`, a loopback-only HTTP server that keeps an
   `_Engine` open. One server per database is enforced with an OS file lock;
   the server warms its index in the background on start and accepts an
-  authenticated stop request (`mark serve stop`).
+  authenticated stop request (`mark serve stop`), after which it saves fresh
+  vector snapshots when many memories changed (`server_snapshots.py`).
+  `daemon.py` implements `--detach` (start in the background, return once
+  the server answers, log to `<db>.server.log`); `mark serve status` reports
+  a running server.
 - `client.py`: finds a live server, authenticates it, and forwards the
-  command; otherwise runs the command in-process.
+  command; otherwise, or when the server dies mid-call, runs the command
+  in-process without storing anything twice (ingest chunks carry
+  idempotency keys; other writes first look for what the server already
+  committed).
 
 When a server answers, the client never imports MARK, so a command costs one
 small Python start-up plus the search. The security model is described in
@@ -578,7 +605,9 @@ small Python start-up plus the search. The security model is described in
 | `prune(agent_id)` | Decay, fragment pruning, edge dissolution |
 | `run_cycle(agent_id)` | Consolidate, deduplicate, and prune |
 | `integrity_check()` | SQLite health check |
-| `warm_up()` | Load the vector index ahead of the first recall (used by `mark serve`) |
+| `warm_up(sketches=False)` | Load the vector index ahead of the first recall (used by `mark serve`); `sketches=True` also builds an encrypted store's token sketches |
+| `save_vector_snapshots()` | Save fresh snapshots for large agents (called by `mark serve` on stop) |
+| `register_closer(fn)` | Run `fn` before `shutdown()` closes the store (background readers such as `ContextWatch`); returns an unregister function |
 | `shutdown(timeout=5.0)` | Stop the fact worker and worker pools within `timeout`, return unfinished jobs to the queue, and close the store; later calls raise `StoreClosedError` |
 
 ```python
