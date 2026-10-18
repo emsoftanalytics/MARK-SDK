@@ -13,15 +13,11 @@ search, keeps a small working set of relevant facts and memories warm:
 3. **Brief.** :meth:`ContextWatch.briefing` returns a compact, LLM-friendly
    block grouped by subject — current facts first, then the most relevant
    records — within a character budget, or a hard token budget
-   (``budget_tokens``, priority-filled; see ``mark.context.budget``). It
-   never blocks on search unless the caller asks it to wait.
-4. **Correct.** When the agent states a value that memory knows was
-   superseded ("atlas-core listens on 9239" after it moved to 4444), the next
-   briefing leads with a correction. Only values found in a fact's history
-   trigger this, so the agent is never "corrected" on a guess.
-
-Unknown anchors are reported as "Not in memory", so the agent can say it
-doesn't know instead of improvising.
+   (``budget_tokens``, priority-filled; see ``mark.context.budget``). Only
+   the first call for a new request waits (``cold_wait``) for its prefetch.
+4. **Correct.** A value the agent states that a fact's history shows was
+   superseded ("9239" after atlas-core moved to 4444) gets a correction on
+   the next turn. Unknown anchors are reported as "Not in memory".
 
     watch = ContextWatch(mark.runtime.memory("__mark__"))
     watch.observe("Can you check why atlas-core is timing out?", role="user")
@@ -34,12 +30,10 @@ Plain agent loops with OpenAI-style message lists use
 ``ContextWatch.for_small_models(memory)`` and ``ContextWatch.for_tiny_models``
 are measured presets for small models (``mark.context.presets``).
 
-Provenance: the model's own replies stored in memory (``mark:assistant``)
-never confirm a subject, never become notes about the user and are shown, if
-at all, only as "unverified" (``mark.context.provenance``).
-
-The background machinery lives in ``watch_prefetch`` and the data types and
-text helpers in ``watch_support``; both are re-exported here.
+Provenance: the model's own replies (``mark:assistant``) never confirm a
+subject or become notes about the user (``mark.context.provenance``).
+Prefetch lives in ``watch_prefetch``, the worker and lifecycle in
+``watch_worker``, data types and text helpers in ``watch_support``.
 """
 from __future__ import annotations
 
@@ -101,6 +95,8 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin, _WatchLifecycleMixi
                     best one unless they share a word with the question
                     (0 = off; see ``mark.context.relevance``)
     fact_dates      show "(since date)" on fact lines
+    profile_facts   current facts about the user added to first-person
+                    requests (0 = off; small/tiny presets use a few)
     """
 
     def __init__(
@@ -122,6 +118,7 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin, _WatchLifecycleMixi
         outdated: str = "mark",
         relevance_floor: float = 0.0,
         fact_dates: bool = True,
+        profile_facts: int = 0,
     ) -> None:
         if outdated not in ("mark", "drop"):
             raise ValueError("outdated must be 'mark' or 'drop'")
@@ -129,6 +126,7 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin, _WatchLifecycleMixi
         self.outdated = outdated
         self.relevance_floor = max(0.0, float(relevance_floor))
         self.fact_dates = bool(fact_dates)
+        self.profile_facts = max(0, int(profile_facts))
         self._previous: dict[tuple[str, str], Any] = {}   # fact key -> value it replaced
         self._memory = memory
         self.budget_chars = budget_chars
@@ -268,6 +266,7 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin, _WatchLifecycleMixi
                 "assistant_lines": self.assistant_lines,
                 "changes": list(self._task_changes.get(self._task, ())),
                 "change_pool": list(getattr(self, "_task_pool", {}).get(self._task, ())),
+                "profile": list(getattr(self, "_task_profile", {}).get(self._task, ())),
                 "outdated": self.outdated,
                 "floor": self.relevance_floor,
                 "previous": dict(self._previous),

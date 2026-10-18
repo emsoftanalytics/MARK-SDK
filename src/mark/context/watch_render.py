@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any, Sequence
 
 from mark.context.budget import BudgetItem, ContextBudget, render_lines
@@ -135,7 +136,7 @@ def briefing_items(snapshot: dict[str, Any], *, per_anchor: int | None,
     stale = outdated_ids(pool, _timeline_key)
     keep_stale = snapshot.get("outdated", "mark") != "drop" or bool(_PAST.search(task))
     facts = _fact_items(task_result, active, results, snapshot.get("previous") or {},
-                        snapshot.get("fact_dates", True))
+                        snapshot.get("fact_dates", True), snapshot.get("profile") or ())
     # A fact read from a line that a later statement replaced is outdated too.
     items += [(replace(item, text=item.text.replace("- ", "- (outdated) ", 1)) if old else item)
               for item, old in ((item, item.ref in stale) for item in facts) if keep_stale or not old]
@@ -234,12 +235,15 @@ def _after_replacement(fragments: list[Any], stale: dict[str, str | None]) -> li
 
 
 def _fact_items(task_result: Any, active: list[Any], results: dict[str, Any],
-                previous: dict[tuple[str, str], Any], dates: bool = True) -> list[BudgetItem]:
+                previous: dict[tuple[str, str], Any], dates: bool = True,
+                profile: Any = ()) -> list[BudgetItem]:
     """One line per current fact: the request's facts rank as relevant, then subjects in play."""
     items: list[BudgetItem] = []
     shown: set[tuple[str, str]] = set()
     sources = [("relevant", task_result)] if task_result is not None else []
     sources += [("linked" if a.linked else "facts", results.get(a.key)) for a in active]
+    # The user's own facts for a first-person request, after the subjects in play.
+    sources += [("facts", SimpleNamespace(facts=list(profile)))] if profile else []
     for section, result in sources:
         if result is None:
             continue

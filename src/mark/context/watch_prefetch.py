@@ -22,7 +22,13 @@ from dataclasses import replace
 from typing import Any
 
 from mark.context.provenance import USER_TAG
-from mark.context.watch_changes import _CHANGE_STATEMENT, _STATE_QUESTION, _change_lane, _previous_values  # noqa: F401
+from mark.context.watch_changes import (  # noqa: F401 - some re-exported
+    _CHANGE_STATEMENT,
+    _STATE_QUESTION,
+    _change_lane,
+    _previous_values,
+    user_profile,
+)
 from mark.context.watch_lines import trusted
 from mark.context.watch_support import _TOKEN_RE, _Anchor, _label_for, _mentions_value
 
@@ -194,9 +200,11 @@ class _WatchPrefetchMixin:
         previous = _previous_values(self._memory, results)
         if task:
             changes, pool = _change_lane(self._memory, task, getattr(self, "change_lines", 0))
+            profile = user_profile(self._memory, task, getattr(self, "profile_facts", 0))
             with self._lock:
                 self._task_changes = {task: changes}
                 self._task_pool = {task: pool}
+                self._task_profile = {task: profile}
         if previous and hasattr(self, "_previous"):
             with self._lock:
                 self._previous.update(previous)

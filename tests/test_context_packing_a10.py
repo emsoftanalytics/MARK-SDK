@@ -146,3 +146,10 @@ def test_a_correction_is_shown_on_the_next_turn_only(memory) -> None:
         watch.observe("It was +351 912 345 678.", role="assistant")
         watch.observe("Ok.", role="user")
         assert "Corrections:" not in watch.briefing().text
+
+
+def test_first_person_requests_get_the_users_facts(memory) -> None:
+    memory.facts.set("user", "diet", "vegetarian", valid_from="2026-03-01")
+    text = _brief(memory, "Suggest one dinner dish for me tonight.")
+    assert "- user diet = vegetarian" in text
+    assert "user diet" not in _brief(memory, "Suggest a dinner dish for Ana.")

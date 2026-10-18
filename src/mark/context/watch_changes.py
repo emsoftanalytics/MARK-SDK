@@ -99,3 +99,27 @@ def _previous_values(memory: Any, results: list[Any]) -> dict[tuple[str, str], A
             older = [h.value for h in history[:-1] if h.value != fact.value]
             out[fact_key(fact)] = older[-1] if older else None
     return out
+
+
+
+#: First-person requests ("Suggest a dish for me", "my pets"): the user's own
+#: facts are the context ("user diet = vegetarian"), whatever the words.
+_FIRST_PERSON = re.compile(r"\b(i|me|my|mine|myself|i'm|i've)\b", re.IGNORECASE)
+
+
+def user_profile(memory: Any, task: str, limit: int) -> list[Any]:
+    """Current facts about the user for a first-person request (at most *limit*).
+
+    a10 small-model run: "Suggest a dinner dish for me" shares no word with
+    "I stopped eating meat", so llama3.2:1b suggested chicken; the fact
+    ``user diet = vegetarian`` is six tokens and answers it.
+    """
+    if limit <= 0 or not _FIRST_PERSON.search(task or ""):
+        return []
+    subject = getattr(getattr(memory, "_pipeline", None), "_user_subject", None) or "user"
+    try:
+        facts = [f for f in memory.facts.current(subject) if getattr(f, "is_current", True)]
+    except Exception:   # stores without facts
+        return []
+    facts.sort(key=lambda f: getattr(f, "valid_from", None) or 0, reverse=True)
+    return facts[:limit]
