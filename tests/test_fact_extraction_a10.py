@@ -138,3 +138,27 @@ def test_known_subject_keeps_the_rest_as_attribute() -> None:
     assert ("kestrel", "default database", "k.db") in _triples("kestrel uses SQLite. kestrel default database: k.db")
     # People are never split ("Mei Lin" is one name even when "Mei" is known).
     assert ("Mei Lin", "location", "Oslo") in _triples("Mei lives in Bergen. Mei Lin lives in Oslo.")
+
+
+def test_possessive_after_a_relation_names_the_person() -> None:
+    from mark.intelligence.fact_extraction import PatternFactExtractor
+
+    facts = {(c.subject, c.attribute, c.value)
+             for c in PatternFactExtractor().extract("My friend Joao's phone number is 912 345 678.")}
+    assert ("user", "friend", "Joao") in facts and ("Joao", "phone", "912 345 678") in facts
+    assert not any(value.endswith("'s") for _, _, value in facts)
+
+
+@pytest.mark.parametrize("sentence, expected", [
+    ("I changed jobs: I'm now a nurse manager at Hospital de Braga.",
+     {("user", "occupation", "nurse manager"), ("user", "employer", "Hospital de Braga")}),
+    ("I adopted a cat named Pixel.", {("user", "cat", "Pixel")}),
+    ("I got a dog named after my grandfather.", set()),
+    ("The film is called Dune.", set()),
+    ("She is now a director at the bank.", set()),
+])
+def test_new_pet_and_new_job_sentences(sentence: str, expected: set) -> None:
+    from mark.intelligence.fact_extraction import PatternFactExtractor
+
+    found = {(c.subject, c.attribute, c.value) for c in PatternFactExtractor().extract(sentence)}
+    assert found == expected

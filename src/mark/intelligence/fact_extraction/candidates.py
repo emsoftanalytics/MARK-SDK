@@ -84,6 +84,8 @@ def for_user(candidate: FactCandidate, user_subject: str) -> FactCandidate | Non
             return None  # "I love my job": which job is not in the text
     if personal.USER_TOKEN in value and value != personal.USER_TOKEN:
         return None
+    if candidate.rule == "personal_relation" and value[-2:] in ("'s", "’s"):
+        value = value[:-2]  # "my friend Joao's phone ...": the friend is Joao, not "Joao's"
     if personal.is_user(subject):
         subject = user_subject
     if value == personal.USER_TOKEN:
