@@ -86,19 +86,32 @@ class VectorSnapshotMixin:
             # One statement streamed part by part (no per-part query, no fetchall):
             # each 64 MB blob is copied once into Python and released after use.
             with self._reading() as conn:
+                # Memory-mapped reads: blobs are copied out of the page cache once,
+                # not read() into SQLite's cache and copied again (restored below).
+                previous = conn.execute("PRAGMA mmap_size").fetchone()[0]
+                conn.execute("PRAGMA mmap_size = 2147418112")
                 cursor = conn.cursor()
                 cursor.row_factory = None
                 rows = cursor.execute(
                     "SELECT ids, vectors FROM vector_snapshots WHERE agent_id = ? ORDER BY part", (agent_id,))
-                for ids_text, blob in rows:
-                    ids, data = str(ids_text).split("\n"), blob
-                    if dirty and not dirty.isdisjoint(ids):
-                        keep = [i for i, fid in enumerate(ids) if fid not in dirty]
-                        ids = [ids[i] for i in keep]
-                        data = b"".join(data[4 * dim * i:4 * dim * (i + 1)] for i in keep)
-                    yield ids, data
+                try:
+                    yield from self._snapshot_rows(rows, dirty, dim)
+                finally:
+                    rows.close()
+                    conn.execute(f"PRAGMA mmap_size = {int(previous)}")
 
         return dim, count, parts()
+
+    @staticmethod
+    def _snapshot_rows(rows: Iterable[tuple], dirty: set[str], dim: int) -> Iterator[tuple[list[str], bytes]]:
+        """(ids, float32 blob) per part, minus the dirty ids."""
+        for ids_text, blob in rows:
+            ids, data = str(ids_text).split("\n"), blob
+            if dirty and not dirty.isdisjoint(ids):
+                keep = [i for i, fid in enumerate(ids) if fid not in dirty]
+                ids = [ids[i] for i in keep]
+                data = b"".join(data[4 * dim * i:4 * dim * (i + 1)] for i in keep)
+            yield ids, data
 
     def save_vector_snapshot(
         self, agent_id: str, fingerprint: str, ids: list[str], vectors: Iterable[bytes], dim: int, write_version: int,
