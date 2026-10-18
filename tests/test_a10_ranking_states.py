@@ -220,3 +220,11 @@ def test_camel_case_error_names_match_their_words(mem) -> None:
     mem.remember("load_config raised a warning about the file type.")
     _fill(mem)
     assert mem.recall("What type error did load_config raise?").fragments[0].id == bug
+
+
+def test_unnamed_move_is_found_among_many_memories(mem) -> None:
+    for i in range(60):
+        mem.remember(f"Team note {i}: the live demo of the analytics dashboard went well.")
+    mem.remember("I live in Lagos.", occurred_at="2025-01-01")
+    mem.remember("I moved to Porto last month.", occurred_at="2026-09-20")
+    assert "Porto" in mem.recall("Where do I live?").fragments[0].content

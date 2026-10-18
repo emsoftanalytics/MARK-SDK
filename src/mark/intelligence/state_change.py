@@ -44,6 +44,8 @@ _GROUPS: tuple[tuple[str, str], ...] = (
     ("job jobs work works working employer employed occupation role position", r"\bnow\s+an?\s+\w+"),
     ("appointment appointments meeting booking reservation", r"\b(?:moved|rescheduled|postponed)\s+to\b"),
 )
+# Words that find unnamed updates of a group's attribute in the keyword index.
+_CHANGE_LOOKUPS = (("moved", "relocated"), ("number",), ("job", "jobs"), ("moved", "rescheduled"))
 # Words that say nothing about which attribute is asked ("What's my sister's name?").
 _WEAK = {"name", "call", "called", "much", "many", "old", "new", "former", "previous"}
 _FIRST_PERSON = r"\b(?:i|i'm|im|my|me|mine|myself)\b"
@@ -74,6 +76,50 @@ def _values(content: str, skip: set[str]) -> set[str]:
     return {token.lower() for token in _patterns()[2].findall(content)} - skip
 
 
+def _subject_and_terms(query: str) -> tuple[list[str], list[str]] | None:
+    """(names asked about, attribute terms), or None when the question has no subject.
+
+    No names means the user ("I/my") is the subject."""
+    first_person = _patterns()[0]
+    names = [n for n in gap_anchors(query) if not n.isdigit()]
+    if not names and not first_person.search(query):
+        return None
+    name_words = {word for name in names for word in name.split()}
+    terms = [t for t in _content_terms(query) if t not in name_words and t not in _WEAK
+             and not t.isdigit() and t.isascii()]
+    return (names, terms) if terms else None
+
+
+def _member(content: str, names: list[str], terms: list[str]) -> bool:
+    """Whether a memory is about the asked subject and states every asked attribute term."""
+    if names:
+        if not all(name_mentioned(content, n) for n in names):
+            return False
+    elif _patterns()[0].search(content) is None:
+        return False
+    stems = _content_stems(content)
+    return all(_satisfied(t, content, stems) for t in terms)
+
+
+def update_lookups(query: str) -> tuple[list[str], object] | None:
+    """Keyword lookups that find unnamed updates of what *query* asks, plus a membership test.
+
+    "Where do I live?" -> (["moved", "relocated"], test): "I moved to Porto
+    last month" shares no word with the question or with "I live in Lagos".
+    """
+    parsed = _subject_and_terms(query)
+    if parsed is None:
+        return None
+    names, terms = parsed
+    words: list[str] = []
+    for (stems, _), lookups in zip(_GROUPS, _CHANGE_LOOKUPS):
+        if set(_content_terms(stems)) & set(terms):
+            words += [w for w in lookups if w not in words]
+    if not words:
+        return None
+    return words, lambda content: _member(content, names, terms)
+
+
 class StateBand:
     """Result of the band stage: new order plus per-id flags (see module docstring)."""
 
@@ -87,24 +133,13 @@ def state_band(query: str, intent: TemporalIntent, fragments: list[MemoryFragmen
     """Reorder the asked subject+attribute band when it holds an update or a conflict."""
     if len(fragments) < 2:
         return None
-    first_person, change_re, _ = _patterns()
-    names = [n for n in gap_anchors(query) if not n.isdigit()]
-    if not names and not first_person.search(query):
+    parsed = _subject_and_terms(query)
+    if parsed is None:
         return None
+    names, terms = parsed
     name_words = {word for name in names for word in name.split()}
-    terms = [t for t in _content_terms(query) if t not in name_words and t not in _WEAK
-             and not t.isdigit() and t.isascii()]
-    if not terms:
-        return None
-    band: list[int] = []
-    for i, fragment in enumerate(fragments):
-        content = fragment.content
-        subject = (all(name_mentioned(content, n) for n in names) if names
-                   else first_person.search(content) is not None)
-        if subject:
-            stems = _content_stems(content)
-            if all(_satisfied(t, content, stems) for t in terms):
-                band.append(i)
+    change_re = _patterns()[1]
+    band = [i for i, f in enumerate(fragments) if _member(f.content, names, terms)]
     if len(band) < 2:
         return None
     newest_first = _order_band(fragments, band, newest_first=True)

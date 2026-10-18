@@ -34,7 +34,7 @@ from mark.intelligence.retrieval_finish import apply_floor, display_scores
 from mark.intelligence.state_change import apply_band, state_band
 from mark.intelligence.supersession import order_by_fact_agreement, order_by_supersession
 from mark.intelligence.temporal_order import temporal_order
-from mark.types import GapReport, MemoryFragment
+from mark.types import MemoryFragment
 
 
 class _OrderingMixin:
