@@ -69,12 +69,13 @@ def test_assistant_words_never_anchor_or_confirm_a_subject(memory) -> None:
 
 
 def test_assistant_lines_are_opt_in_and_labelled(memory) -> None:
-    _user(memory, "Suggest a dinner for Friday please.")
+    _user(memory, "I am hosting a dinner on Friday.")   # a statement (requests are not notes)
     _assistant(memory, "For Friday dinner I suggested mushroom risotto.")
     with ContextWatch(memory, background=False, budget_tokens=300, assistant_lines=1) as watch:
         watch.observe("What dinner did you suggest for Friday?", role="user")
         text = watch.briefing().text
-    assert "Earlier assistant replies (unverified):\n- Assistant replied: For Friday" in text
+    # The header says who wrote it; the "Assistant replied:" prefix is not repeated per line.
+    assert "Earlier assistant replies (unverified):\n- For Friday" in text
     assert text.index("Related notes:") < text.index("Earlier assistant replies")
 
 
@@ -107,7 +108,8 @@ def test_facts_are_dense_and_listed_once(memory) -> None:
     with ContextWatch(memory, background=False, budget_tokens=300) as watch:
         watch.observe("Which city does the user live in now?", role="user")
         text = watch.briefing().text
-    assert "Known facts (current):\n- user city = Braga (since 2026-03-02)" in text
+    # "was Porto": the fact alone answers "now" and "before" questions.
+    assert "Known facts (current):\n- user city = Braga (was Porto; since 2026-03-02)" in text
     assert text.count("user city =") == 1
 
 
@@ -155,7 +157,9 @@ def test_state_questions_get_the_users_change_statements(memory) -> None:
         text = watch.briefing().text
         watch.observe("What is my favourite colour?", role="user")   # not about a change
         plain = watch.briefing().text
-    assert "Recent changes (newest first):\n- User said: Big news: I moved from Porto to Braga" in text
+    assert "Recent changes:\n- Big news: I moved from Porto to Braga" in text
+    # The intro line names the old city; the move replaced it.
+    assert "- (outdated) Hi! I live in Porto" in text
     assert "Recent changes" not in plain
     with ContextWatch(memory, background=False, budget_tokens=300, change_lines=0) as off:
         off.observe("Which city do I live in now?", role="user")
