@@ -78,3 +78,11 @@ def test_memory_stating_an_earlier_fact_value_is_outdated(mem) -> None:
     assert old in result.outdated
     assert current not in result.outdated
     assert shown[old] < shown[current]
+
+
+def test_a_value_still_in_the_current_list_is_not_outdated(mem) -> None:
+    fix = mem.remember("FIX: spendlog export reports 'unknown exporter; available: csv' instead of a traceback.")
+    mem.facts.set("spendlog", "exporters", "csv", valid_from="2026-01-01")
+    mem.facts.set("spendlog", "exporters", "csv, json", valid_from="2026-09-01")
+    result = mem.recall("What happens on spendlog export with an unknown exporter?")
+    assert fix not in result.outdated

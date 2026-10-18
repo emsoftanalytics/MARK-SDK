@@ -274,7 +274,12 @@ def order_by_fact_agreement(
     agrees = [any(_contains_anchor(n, v) for v in current) for n in norms]
     is_stale = [not agrees[i] and any(_contains_anchor(n, v) for v in stale) for i, n in enumerate(norms)]
     if outdated is not None:
-        outdated.update(f.id for f, flag in zip(fragments, is_stale) if flag)
+        # Outdated only by a value the current one replaced, not one it still
+        # contains: "csv" -> "csv, json" grew a list, "csv" is still true.
+        items = {_anchor_norm(item) for value in current_values for item in re.split(r"[,;]|\band\b", value)}
+        replaced = [v for v in stale if v not in items]
+        outdated.update(f.id for f, n, flag in zip(fragments, norms, is_stale)
+                        if flag and any(_contains_anchor(n, v) for v in replaced))
     order = list(range(len(fragments)))
     first_stale = next((i for i in order if is_stale[i]), None)
     if first_stale is None:
