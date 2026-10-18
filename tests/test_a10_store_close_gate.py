@@ -112,6 +112,18 @@ def test_unreferenced_watches_do_not_pin_the_store_hooks(tmp_path) -> None:
             ContextWatch.for_preset(memory, "small", background=False)
         gc.collect()
         assert not mark.runtime.store.__dict__.get("_close_hooks")
+        assert not mark.runtime._closer_state()[1]          # runtime closers too
+
+
+def test_closing_a_watch_unregisters_it(tmp_path) -> None:
+    from mark import Mark
+    from mark.context.watch import ContextWatch
+
+    with Mark.local(tmp_path) as mark:
+        watch = ContextWatch.for_preset(mark.runtime.memory("x"), "small")
+        assert mark.runtime._closer_state()[1] and mark.runtime.store.__dict__.get("_close_hooks")
+        watch.close()
+        assert not mark.runtime._closer_state()[1] and not mark.runtime.store.__dict__.get("_close_hooks")
 
 
 _LOOP = """
