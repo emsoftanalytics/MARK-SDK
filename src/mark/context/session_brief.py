@@ -19,22 +19,27 @@ Rules: current facts first, then open TODOs (a TODO is closed by a status
 or tag, by a memory that ``resolves`` it, or by a later DONE/FIX note that
 names it), decisions, bugs/fixes and changes, newest first, deduped, each
 group capped and the whole block held to ``budget_tokens``. ``focus`` (a
-query) puts the records retrieved for it first. Kinds are read from
+query) puts the records retrieved for it first and filters every group to
+records and facts that share a word with it. Retired records (superseded,
+resolved) are never shown as current; a bug and its fix share one line; a
+resolved bug is marked "(resolved)" (``brief_lines``); untrusted memories
+are labelled. An empty store briefs as "(memory is empty)". Kinds are read from
 ``metadata["kind"]``, ``kind:<name>`` tags or a content prefix such as
 "TODO:" / "DECISION:" / "BUG:" (see ``watch_kinds``). The model's own
 replies (``mark:assistant``) are never part of a brief.
 """
 from __future__ import annotations
 
-import re
 import time
 from typing import Any
 
-from mark.context.budget import BudgetItem, ContextBudget, as_budget
-from mark.context.watch_kinds import closed_todos, kind_of, recent_first, when_of
+from mark.context.brief_lines import current_records, fix_pairs, record_line
+from mark.context.budget import BudgetItem, ContextBudget, as_budget, warn_if_empty
+from mark.context.relevance import content_words
+from mark.context.watch_kinds import closed_todos, kind_of, recent_first
 from mark.context.watch_lines import Deduper, current_facts, fact_key, fact_line, trusted
 from mark.context.watch_render import FACTS_HEADER, RELATED_HEADER, render_briefing
-from mark.context.watch_support import Briefing, _one_line
+from mark.context.watch_support import Briefing
 
 TODO_HEADER = "Open TODOs:"
 DECISION_HEADER = "Recent decisions:"
@@ -43,7 +48,8 @@ CHANGE_HEADER = "Recent changes:"
 #: Lines per group: the budget decides the rest, but no group may crowd out
 #: the others when it is long (a backlog of 200 TODOs).
 GROUP_CAPS = {"facts": 12, "todo": 6, "decision": 5, "bug": 5, "change": 5, "focus": 5}
-_LEADING_DATE = re.compile(r"^\s*\[?\d{4}-\d{2}-\d{2}")
+#: What an empty store briefs as (an empty string looked like a failure).
+EMPTY = "(memory is empty)"
 _GROUPS = (("todo", TODO_HEADER), ("decision", DECISION_HEADER), ("bug", BUG_HEADER),
            ("change", CHANGE_HEADER))
 
@@ -56,10 +62,22 @@ def brief(memory: Any, *, budget_tokens: int | ContextBudget = 400, focus: str |
     decisions, bugs and changes (most important, then newest, first).
     """
     started = time.perf_counter()
+    warn_if_empty(budget_tokens, "brief")
     budget = as_budget(budget_tokens, token_counter)
-    fragments = [f for f in _scan(memory, scan) if trusted(f)]
+    scanned = _scan(memory, scan)
     facts = _facts(memory)
+    if not scanned and not facts:   # say so: an empty answer looked like a failure (agent N8)
+        return Briefing(text=EMPTY if budget.max_tokens else "",
+                        latency_ms=round((time.perf_counter() - started) * 1000, 2))
+    fragments = current_records([f for f in scanned if trusted(f)])
     focus_result = _retrieve(memory, focus) if focus else None
+    # focus= is a filter: only facts and records that share a word with it.
+    focus_words = content_words(focus or "")
+
+    def on_focus(text: str, ref: str | None = None) -> bool:
+        del ref   # retrieval ranks everything; only shared words make a record "about" the focus
+        return not focus_words or bool(content_words(text) & focus_words)
+
     dedupe = Deduper()
     items: list[BudgetItem] = []
     shown: set[str] = set()
@@ -77,21 +95,29 @@ def brief(memory: Any, *, budget_tokens: int | ContextBudget = 400, focus: str |
     focus_keys = {fact_key(f) for f in focus_facts}
     for fact in focus_facts:
         add("relevant", fact_line(fact), FACTS_HEADER)
-    for fact in [f for f in facts if fact_key(f) not in focus_keys][:GROUP_CAPS["facts"]]:
+    for fact in [f for f in facts if fact_key(f) not in focus_keys
+                 and on_focus(f"{f.subject} {f.attribute} {f.value}")][:GROUP_CAPS["facts"]]:
         add("facts", fact_line(fact), FACTS_HEADER)
     if focus_result is not None:
         _add_lines(add, "relevant", RELATED_HEADER, GROUP_CAPS["focus"],
-                   [f for f in focus_result.fragments if trusted(f)], line_chars)
+                   [f for f in current_records([f for f in focus_result.fragments if trusted(f)])
+                    if on_focus(f.content)], line_chars)
     closed = closed_todos(fragments)
     by_kind: dict[str, list[Any]] = {name: [] for name, _ in _GROUPS}
     for fragment in recent_first(fragments):
         kind = "bug" if kind_of(fragment) == "fix" else kind_of(fragment)   # bugs and fixes together
-        if kind in by_kind and not (kind == "todo" and fragment.id in closed):
+        if kind in by_kind and not (kind == "todo" and fragment.id in closed) \
+                and on_focus(fragment.content, fragment.id):
             by_kind[kind].append(fragment)
+    # A bug and the fix that closed it share one line; the fix is not repeated.
+    bugs = [f for f in by_kind["bug"] if kind_of(f) == "bug"]
+    pairs = fix_pairs(bugs, [f for f in by_kind["bug"] if kind_of(f) == "fix"])
+    paired = {fix.id for fix in pairs.values()}
+    by_kind["bug"] = [f for f in by_kind["bug"] if f.id not in paired]
     for name, header in _GROUPS:
-        extra = _fact_changes(memory, facts) if name == "change" else []
+        extra = [line for line in _fact_changes(memory, facts) if on_focus(line)] if name == "change" else []
         _add_lines(add, "records", header, GROUP_CAPS[name], by_kind[name], line_chars,
-                   with_id=name == "todo", first=extra)
+                   with_id=name == "todo", first=extra, pairs=pairs)
     fit = budget.fit(items, render_briefing)
     return Briefing(
         text=fit.text,
@@ -128,7 +154,8 @@ def _facts(memory: Any) -> list[Any]:
 
 
 def _add_lines(add: Any, section: str, header: str, cap: int, fragments: list[Any],
-               line_chars: int, *, with_id: bool = False, first: list[str] | None = None) -> None:
+               line_chars: int, *, with_id: bool = False, first: list[str] | None = None,
+               pairs: dict[str, Any] | None = None) -> None:
     """Up to *cap* new lines under *header*: the *first* text lines, then the records."""
     count = 0
     for line in first or []:
@@ -137,7 +164,8 @@ def _add_lines(add: Any, section: str, header: str, cap: int, fragments: list[An
     for fragment in fragments:
         if count >= cap:
             return
-        if add(section, _record_line(fragment, line_chars, with_id=with_id), header, fragment.id):
+        line = record_line(fragment, line_chars, with_id=with_id, fix=(pairs or {}).get(fragment.id))
+        if add(section, line, header, fragment.id):
             count += 1
 
 
@@ -154,13 +182,3 @@ def _fact_changes(memory: Any, facts: list[Any]) -> list[str]:
             lines.append((fact.valid_from.timestamp(),
                           f"- {fact.subject} {fact.attribute}: {history[-2].value} -> {fact.value} (since {since})"))
     return [line for _, line in sorted(lines, reverse=True)]
-
-
-def _record_line(fragment: Any, line_chars: int, *, with_id: bool = False) -> str:
-    """``- 2026-10-03 content`` (plus a short id for TODOs, so they can be resolved)."""
-    when = when_of(fragment)
-    content = getattr(fragment, "content", "") or ""
-    dated = _LEADING_DATE.match(content) is not None      # the text already starts with its date
-    date = f"{when.date().isoformat()} " if when is not None and not dated else ""
-    suffix = f" (id {fragment.id[:8]})" if with_id and fragment.id else ""
-    return f"- {date}{_one_line(fragment.content, line_chars)}{suffix}"

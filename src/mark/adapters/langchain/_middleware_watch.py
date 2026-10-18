@@ -66,7 +66,9 @@ class _AnticipationMixin:
                     watch.observe(text, role="assistant")
                 for call in getattr(message, "tool_calls", None) or []:
                     watch.observe_tool_call(call.get("name", ""), call.get("args"))
-            elif kind == "tool":
+            elif kind == "tool" and getattr(message, "status", None) != "error":
+                # A failed call's error text is not evidence about any subject:
+                # never let it introduce an anchor (a10 finding N3).
                 watch.observe(text[:4000], role="tool")
         run.watch_seen = len(messages)
 

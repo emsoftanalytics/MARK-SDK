@@ -29,6 +29,7 @@ class _Anchor:
     known: bool | None = None   # None until a prefetch has answered
     linked: bool = False        # anticipated via a link, not mentioned by anyone yet
     assistant_only: bool = False  # only the model has named it (may be its own wording)
+    introduced: bool = False    # first named in a user statement: new, so never "Not in memory"
 
 
 @dataclass(frozen=True)

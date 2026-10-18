@@ -23,6 +23,7 @@ from time import perf_counter
 from typing import Any
 
 from mark.adapters.backend import BackendResult, call_backend_off_loop
+from mark.adapters.langchain._middleware_tools import KEY_OPTION as _KEY_OPTION
 from mark.adapters.langchain._middleware_support import (
     _BG_DRAIN_TIMEOUT_S,
     _DEFAULT_RUN_ID,
@@ -220,10 +221,17 @@ class _RunsMixin:
         run.pending_observations, run.pending_options = [], {}
         count = 0
         for content in pending:
-            result = await self._backend_call("observe", content, agent_id=self._agent_id,
-                                              **options.get(content, {}))
+            kwargs = dict(options.get(content, {}))
+            # A message key (tool results) links this write to history archival:
+            # skip what archival already stored, and register what is written here.
+            key = kwargs.pop(_KEY_OPTION, None)
+            if key is not None and self._is_archived(key):
+                continue
+            result = await self._backend_call("observe", content, agent_id=self._agent_id, **kwargs)
             if result.ok:
                 count += 1
+                if key is not None:
+                    self._mark_archived(key)
         if count:
             self._record("observe_flush", count=count)
         return count

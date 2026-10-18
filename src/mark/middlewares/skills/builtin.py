@@ -44,13 +44,15 @@ class MarkMemorySkill(Skill):
             query  = str(input.get("query", ""))
             top_k  = int(input.get("top_k", 5))
             blocks = input.get("blocks")
-            bundle = self._memory.retrieve(query, blocks=blocks, top_k=top_k)
+            # recall() is the one read verb (SimpleMemory.retrieve is deprecated in 0.2.0a10).
+            result = self._memory.recall(query, blocks=blocks, k=top_k)
             return SkillResult(
-                content  = bundle.as_text(),
+                content  = result.as_context(),
                 metadata = {
                     "action":  "retrieve",
-                    "records": [r.to_dict() for r in bundle.memories],
-                    "scores":  bundle.scores,
+                    "records": [{"id": f.id, "content": f.content, "tags": list(f.tags or [])}
+                                for f in result.fragments],
+                    "scores":  list(result.scores),
                 },
             )
 

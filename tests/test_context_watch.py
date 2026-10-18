@@ -49,8 +49,12 @@ def test_links_are_anticipated(memory) -> None:
     assert brief.text.count("atlas-core port = 4444") == 1   # one fact line, no linked repeat
 
 
-def test_briefing_never_blocks_by_default(memory) -> None:
+def test_briefing_waits_only_briefly_for_a_cold_request(memory) -> None:
+    # a10 (agent N5): the first briefing for a new request waits up to cold_wait
+    # for its prefetch, so a cold call is not "Nothing relevant"; cold_wait=0
+    # restores the never-blocking behaviour.
     with ContextWatch(memory) as watch:
+        watch.cold_wait = 0.0
         watch.observe("What is the port of atlas-core?", role="user")
         brief = watch.briefing()  # no wait: returns whatever is ready
         assert brief.latency_ms < 50

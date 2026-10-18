@@ -232,6 +232,20 @@ class ContextBudget:
         return BudgetUsage(self.max_tokens, self.count(text), ordered, truncated)
 
 
+def warn_if_empty(value: Any, where: str) -> None:
+    """Warn when a caller asks for a 0-token budget.
+
+    ``budget_tokens=0`` used to return "" silently (MCP test m2: a client
+    passing 0 for "no limit" got no memory and no hint why). It still means
+    "inject nothing", but now says so; negative values raise in ContextBudget.
+    """
+    if isinstance(value, int) and not isinstance(value, bool) and value == 0:
+        import warnings
+
+        warnings.warn(f"{where}: budget_tokens=0 injects no memory at all; pass None for the "
+                      "default budget", UserWarning, stacklevel=3)
+
+
 def as_budget(value: Any, token_counter: TokenCounter | None = None,
               fill: bool = False) -> ContextBudget | None:
     """Coerce ``None`` / an int / a :class:`ContextBudget` into a budget (or None)."""

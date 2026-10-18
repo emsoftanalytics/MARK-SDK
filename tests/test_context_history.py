@@ -91,7 +91,13 @@ def test_langchain_messages() -> None:
     assert [m.type for m in split.kept] == ["system", "human", "ai", "tool"]
     assert [m.content for m in split.dropped] == ["old", "old answer"]
     assert message_role(messages[1]) == "user" and message_role(messages[4]) == "assistant"
-    assert turn_text(messages[4]) == "Assistant replied:  [called lookup]"
+    assert turn_text(messages[4]) == ""      # tool-call-only: nothing of its own to store
+    assert turn_text(AIMessage("Checking.", tool_calls=[{"name": "lookup", "args": {}, "id": "t2"}])) \
+        == "Assistant replied: Checking."
+    failed = ToolMessage("bad args", tool_call_id="t1", name="lookup", status="error")
+    assert turn_text(failed) == "Tool [lookup] failed: bad args"
+    # A tool result keeps its key when LangGraph assigns an id on entering the state.
+    assert message_key(ToolMessage("r", tool_call_id="t1")) == message_key(ToolMessage("r", tool_call_id="t1", id="x"))
 
 
 def test_turn_text_and_keys() -> None:

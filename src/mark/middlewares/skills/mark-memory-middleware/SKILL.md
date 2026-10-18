@@ -5,7 +5,7 @@ description: Use when a LangChain agent is wrapped with MARK middleware and shou
 
 # MARK Memory Middleware
 
-Use this skill when MARK middleware adds a `[MARK project memory]` block to
+Use this skill when MARK middleware adds a `[MARK memory]` block to
 your system message. The block holds memory relevant to the task and, when
 anticipation is on, a `<mark_briefing>` prepared from the conversation.
 
@@ -18,9 +18,9 @@ anticipation is on, a `<mark_briefing>` prepared from the conversation.
   older free-text records.
 - **Corrections** ("X is V now; W is outdated") mean a value you stated is
   superseded. Use the current value from now on.
-- **Related notes** and **User said** lines are what the user told you
-  before. A newer statement ("moved", "now", "no longer", "Correction:")
-  replaces an older one.
+- **Related notes** are what the user told you before, best match first.
+  Lines marked **(outdated)** were replaced by a newer statement; use them
+  only for questions about earlier values.
 - **Open TODOs**, **Recent decisions**, **Recent bugs and fixes** and
   **Recent changes** summarise the project's state.
 - **Not in memory** lists subjects MARK has no record of. Say you do not know

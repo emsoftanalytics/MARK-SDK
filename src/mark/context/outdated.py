@@ -1,0 +1,108 @@
+"""Which briefing lines are outdated: retired by a revision, or replaced by a later statement.
+
+Small models read two lines about the same thing as two truths ("vet on 14
+October" next to "vet moved to 21 October"; a10 small-model run, root cause
+2), so a briefing must say which one is current. Two signals are used:
+
+1. **Retired.** ``memory.supersede()`` / ``resolve()`` tag the old memory
+   ``mark:superseded`` / ``mark:resolved`` and set ``metadata["lifecycle"]``.
+2. **Replaced by a later statement.** A newer trusted line that
+
+   * names the old value as old: "moved *from Porto*", "Ines, *not Ana*",
+     "*no longer at* Sao Joao", "Postgres *instead of SQLite*", and the older
+     line contains that value; or
+   * is a change statement ("changed", "moved", "the new one", "now") that
+     shares at least two content words with the older line ("Joao changed
+     his number" vs "Joao's phone number is ...").
+
+Only lines that are both in the candidate pool are compared, and only an
+older line is ever marked. Callers drop outdated lines for small models and
+label them "(outdated)" otherwise (``mark.context.watch_render``).
+"""
+from __future__ import annotations
+
+import re
+from typing import Any, Callable, Iterable
+
+from mark.context.relevance import content_words
+
+RETIRED_TAGS = frozenset({"mark:superseded", "mark:resolved"})
+_RETIRED_LIFECYCLE = frozenset({"superseded", "resolved"})
+_CHANGE = re.compile(
+    r"\b(moved|changed|changes|switched|no longer|actually|now|new|instead|stopped|replaced|renamed|"
+    r"correction|updated|rescheduled|postponed|any ?more)\b", re.IGNORECASE)
+#: "from Porto", "not Ana", "no longer at Sao Joao", "instead of SQLite": the old value.
+_OLD_VALUE = re.compile(
+    r"\b(moved from|switched from|changed from|not|no longer(?: at| in| with| a| an| the)?|"
+    r"instead of|rather than|replac\w+)\s+((?:[A-Z0-9][\w'.:+-]*)(?:\s+(?:de |da |do )?[A-Z0-9][\w'.:+-]*){0,3})")
+#: Words that signal a change but say nothing about the subject.
+_CHANGE_WORDS = frozenset(content_words(
+    "moved changed switched longer actually now new instead stopped replaced renamed correction "
+    "updated rescheduled postponed anymore same time big news one"))
+
+
+def _meta(fragment: Any) -> dict[str, Any]:
+    meta = getattr(fragment, "metadata", None)
+    return meta if isinstance(meta, dict) else {}
+
+
+def retired(fragment: Any) -> bool:
+    """True when a revision retired the memory (superseded or resolved)."""
+    tags = set(getattr(fragment, "tags", None) or ())
+    meta = _meta(fragment)
+    return bool(tags & RETIRED_TAGS or str(meta.get("lifecycle") or "").lower() in _RETIRED_LIFECYCLE
+                or meta.get("superseded_by"))
+
+
+def resolved(fragment: Any) -> bool:
+    """True when ``resolve()`` closed the memory (a fixed bug, a done TODO)."""
+    tags = set(getattr(fragment, "tags", None) or ())
+    return "mark:resolved" in tags or str(_meta(fragment).get("lifecycle") or "").lower() == "resolved"
+
+
+def _old_values(text: str) -> list[tuple[str, str]]:
+    """(negating phrase, old value) pairs: ("moved from", "Porto"), ("not", "Ana")."""
+    return [(m.group(1).lower(), m.group(2).rstrip(".,;:'")) for m in _OLD_VALUE.finditer(text or "")]
+
+
+def _contains_value(text: str, value: str) -> bool:
+    return bool(value) and re.search(r"(?<!\w)" + re.escape(value) + r"(?!\w)", text or "", re.IGNORECASE) is not None
+
+
+def replaces(newer: Any, older: Any) -> bool:
+    """Does the *newer* statement replace what the *older* one said?"""
+    new_text = getattr(newer, "content", "") or ""
+    old_text = getattr(older, "content", "") or ""
+    shared = (content_words(new_text) & content_words(old_text)) - _CHANGE_WORDS
+    for negator, value in _old_values(new_text):
+        # A bare "not X" also needs a shared topic word ("sister"): "not Monday" alone is too weak.
+        if len(value) > 1 and _contains_value(old_text, value) \
+                and (negator != "not" or shared - content_words(value)):
+            return True
+    if not _CHANGE.search(new_text):
+        return False
+    return len({w for w in shared if not w.isdigit()}) >= 2
+
+
+def replaced_by(fragments: Iterable[Any], key: Callable[[Any], Any]) -> dict[str, str]:
+    """``{old id: newer id}`` for every line of *fragments* a later line replaces.
+
+    *key* orders fragments in time (oldest lowest); an equal key never replaces.
+    """
+    pool = {getattr(f, "id", None): f for f in fragments if getattr(f, "id", None)}
+    timed = sorted(pool.values(), key=key)
+    out: dict[str, str] = {}
+    for index, older in enumerate(timed):
+        for newer in reversed(timed[index + 1:]):   # the newest replacement wins
+            if key(newer) != key(older) and replaces(newer, older):
+                out[older.id] = newer.id
+                break
+    return out
+
+
+def outdated_ids(fragments: Iterable[Any], key: Callable[[Any], Any]) -> dict[str, str | None]:
+    """``{id: replacing id or None}`` for retired lines and lines replaced in the pool."""
+    fragments = list(fragments)
+    out: dict[str, str | None] = {f.id: None for f in fragments if getattr(f, "id", None) and retired(f)}
+    out.update(replaced_by(fragments, key))
+    return out

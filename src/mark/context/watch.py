@@ -13,15 +13,11 @@ search, keeps a small working set of relevant facts and memories warm:
 3. **Brief.** :meth:`ContextWatch.briefing` returns a compact, LLM-friendly
    block grouped by subject — current facts first, then the most relevant
    records — within a character budget, or a hard token budget
-   (``budget_tokens``, priority-filled; see ``mark.context.budget``). It
-   never blocks on search unless the caller asks it to wait.
-4. **Correct.** When the agent states a value that memory knows was
-   superseded ("atlas-core listens on 9239" after it moved to 4444), the next
-   briefing leads with a correction. Only values found in a fact's history
-   trigger this, so the agent is never "corrected" on a guess.
-
-Unknown anchors are reported as "Not in memory", so the agent can say it
-doesn't know instead of improvising.
+   (``budget_tokens``, priority-filled; see ``mark.context.budget``). Only
+   the first call for a new request waits (``cold_wait``) for its prefetch.
+4. **Correct.** A value the agent states that a fact's history shows was
+   superseded ("9239" after atlas-core moved to 4444) gets a correction on
+   the next turn. Unknown anchors are reported as "Not in memory".
 
     watch = ContextWatch(mark.runtime.memory("__mark__"))
     watch.observe("Can you check why atlas-core is timing out?", role="user")
@@ -34,25 +30,26 @@ Plain agent loops with OpenAI-style message lists use
 ``ContextWatch.for_small_models(memory)`` and ``ContextWatch.for_tiny_models``
 are measured presets for small models (``mark.context.presets``).
 
-Provenance: the model's own replies stored in memory (``mark:assistant``)
-never confirm a subject, never become notes about the user and are shown, if
-at all, only as "unverified" (``mark.context.provenance``).
-
-The background machinery lives in ``watch_prefetch`` and the data types and
-text helpers in ``watch_support``; both are re-exported here.
+Provenance: the model's own replies (``mark:assistant``) never confirm a
+subject or become notes about the user (``mark.context.provenance``).
+Prefetch lives in ``watch_prefetch``, the worker and lifecycle in
+``watch_worker``, data types and text helpers in ``watch_support``.
 """
 from __future__ import annotations
 
 import logging
 import threading
 import time
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future
 from typing import Any
 
-from mark.context.budget import BudgetItem, ContextBudget, as_budget
+from mark.context.budget import BudgetItem, ContextBudget, as_budget, warn_if_empty
+from mark.context.provenance import is_question
+from mark.context.relevance import introduces
 from mark.context.watch_messages import _WatchMessagesMixin, inject
 from mark.context.watch_render import briefing_items, render_briefing, render_chars
 from mark.context.watch_prefetch import _WatchPrefetchMixin
+from mark.context.watch_worker import WatchWorker, _WatchLifecycleMixin
 # Some of these are not used here; they stay importable from this module.
 from mark.context.watch_support import (
     _ROLES,
@@ -71,7 +68,7 @@ from mark.context.watch_support import (
 logger = logging.getLogger("mark.context.watch")
 
 
-class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
+class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin, _WatchLifecycleMixin):
     """Follows an agent's stream and keeps anticipated context ready.
 
     memory          a ``MarkMemory`` (``runtime.memory(agent_id)``)
@@ -91,6 +88,15 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
                     a value ("moved to Braga") shown as "Recent changes"
     assistant_lines earlier assistant replies (low trust, labelled
                     "unverified") the briefing may show (default 0: none)
+    outdated        "mark": lines a later statement replaced are labelled
+                    "(outdated)"; "drop": left out unless the question asks
+                    about earlier values (small models read both as true)
+    relevance_floor drop request records scoring below this share of the
+                    best one unless they share a word with the question
+                    (0 = off; see ``mark.context.relevance``)
+    fact_dates      show "(since date)" on fact lines
+    profile_facts   current facts about the user added to first-person
+                    requests (0 = off; small/tiny presets use a few)
     """
 
     def __init__(
@@ -109,7 +115,19 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
         relevant_lines: int = 4,
         assistant_lines: int = 0,
         change_lines: int = 4,
+        outdated: str = "mark",
+        relevance_floor: float = 0.0,
+        fact_dates: bool = True,
+        profile_facts: int = 0,
     ) -> None:
+        if outdated not in ("mark", "drop"):
+            raise ValueError("outdated must be 'mark' or 'drop'")
+        warn_if_empty(budget_tokens, "ContextWatch")
+        self.outdated = outdated
+        self.relevance_floor = max(0.0, float(relevance_floor))
+        self.fact_dates = bool(fact_dates)
+        self.profile_facts = max(0, int(profile_facts))
+        self._previous: dict[tuple[str, str], Any] = {}   # fact key -> value it replaced
         self._memory = memory
         self.budget_chars = budget_chars
         self.max_anchors = max_anchors
@@ -127,12 +145,17 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
         self._task_results: dict[str, Any] = {}     # task text -> RetrievalResult
         self._task: str = ""
         self._corrections: dict[str, str] = {}      # correction key -> text
+        self._correction_turn: dict[str, int] = {}  # correction key -> user turn it was raised in
         self._turn = 0
         self._seq = 0
         self.follow_links = 3   # linked subjects prefetched per new anchor (0 disables)
         self._pending: set[Future] = set()
         # One worker: prefetches run in order and never compete with each other.
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mark-watch") if background else None
+        self._executor = WatchWorker() if background else None
+        self._closed = False
+        #: First briefing for a new request waits this long for its prefetch, so
+        #: a cold call returns memory, not "Nothing relevant" (agent test N5).
+        self.cold_wait = 1.5
         self._subjects_cache: tuple[float, set[str]] = (0.0, set())
 
     # ── stream input ──────────────────────────────────────────────────────────
@@ -145,6 +168,9 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
         if not text:
             return []
         found = self._extract_anchors(text)
+        # A user *statement* introduces its subjects ("My brother Tom is
+        # visiting"): reporting them as "Not in memory" would contradict the user.
+        statement = role == "user" and not is_question(text)
         with self._lock:
             if role == "user":
                 self._turn += 1
@@ -156,7 +182,8 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
                 anchor = self._anchors.get(key)
                 if anchor is None:
                     self._anchors[key] = _Anchor(key, label, turn, turn, last_seq=self._seq,
-                                                 assistant_only=role == "assistant")
+                                                 assistant_only=role == "assistant",
+                                                 introduced=statement and introduces(text, label))
                     new.append(key)
                 else:
                     if role != "assistant":
@@ -205,6 +232,9 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
         started = time.perf_counter()
         if wait > 0:
             self.flush(timeout=wait)
+        elif self._cold():
+            self.flush(timeout=self.cold_wait)
+        warn_if_empty(budget_tokens, "ContextWatch.briefing")
         budget = as_budget(budget_tokens) if budget_tokens is not None else self.budget
         lifted = budget is not None and budget.fill   # fill: the budget, not the counts, limits
         # Snapshot shared state under the lock, then render without holding it,
@@ -222,14 +252,25 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
                 "active": active,
                 "unknown": [a.label for a in self._anchors.values()
                             if a.known is False and not a.linked and not a.assistant_only
+                            and not a.introduced
                             and self._turn - a.last_turn <= 1],
                 "results": {a.key: self._results.get(a.key) for a in active},
                 "task_result": self._task_results.get(self._task),
-                "corrections": list(self._corrections.values()),
+                # A correction answers the reply that made the claim: shown on the next
+                # turn, then dropped (a10: one stale-number correction rode along for
+                # ten unrelated questions and a 1B model repeated it in its answers).
+                "corrections": [text for key, text in self._corrections.items()
+                                if self._correction_turn.get(key, self._turn) >= self._turn - 1],
                 "task": self._task,
                 "relevant_lines": self.relevant_lines,
                 "assistant_lines": self.assistant_lines,
                 "changes": list(self._task_changes.get(self._task, ())),
+                "change_pool": list(getattr(self, "_task_pool", {}).get(self._task, ())),
+                "profile": list(getattr(self, "_task_profile", {}).get(self._task, ())),
+                "outdated": self.outdated,
+                "floor": self.relevance_floor,
+                "previous": dict(self._previous),
+                "fact_dates": self.fact_dates,
             }
             pending = len(self._pending)
 
@@ -255,40 +296,3 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin):
             usage=usage,
             items=items,
         )
-
-    def flush(self, timeout: float | None = None) -> bool:
-        """Wait for running prefetches. Returns True when none are left."""
-        deadline = None if timeout is None else time.monotonic() + timeout
-        while True:
-            with self._lock:
-                pending = list(self._pending)
-            if not pending:
-                return True
-            remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
-            if remaining == 0.0:
-                return False
-            _wait(pending[0], remaining)
-
-    def reset(self) -> None:
-        """Forget the conversation (keep memory)."""
-        self.flush(timeout=5)
-        with self._lock:
-            self._anchors.clear()
-            self._results.clear()
-            self._task_results.clear()
-            self._task_changes.clear()
-            self._corrections.clear()
-            self._task = ""
-            self._turn = 0
-
-    def close(self) -> None:
-        """Stop the background worker."""
-        if self._executor is not None:
-            self._executor.shutdown(wait=True)
-            self._executor = None
-
-    def __enter__(self) -> "ContextWatch":
-        return self
-
-    def __exit__(self, *_: Any) -> None:
-        self.close()
