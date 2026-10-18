@@ -39,7 +39,7 @@ from mark.types import MemoryFragment
 # Change wording: a memory using one of these reads as an update of an earlier state.
 _UPDATE_RE = re.compile(
     r"\b(?:moved|switched|migrated|changed|replaced|relocated|transferred|renamed|upgraded|downgraded"
-    r"|updated|correction|corrected|actually|no\s+longer|anymore|any\s+more|used\s+to|now|instead"
+    r"|updated|correction|corrected|actually|no\s+longer|anymore|any\s+more|used\s+to|now|nowadays|these\s+days|instead"
     r"|resolved|removed|deprecated|superseded|retired|reverted)\b"
     # Status labels count only as labels: "done" / "fixed" inside prose or
     # code ("(title, done, priority)") are not updates.
@@ -89,6 +89,17 @@ def is_retired(fragment: MemoryFragment) -> bool:
         return True
     metadata = fragment.metadata or {}
     return any(metadata.get(key) for key in _RETIRED_META)
+
+
+def is_superseded(fragment: MemoryFragment) -> bool:
+    """True when a newer statement replaced this one; a resolved bug or TODO is not "replaced".
+
+    (Resolving through the CLI tags both ``mark:resolved`` and ``mark:superseded``.)
+    """
+    tags, metadata = fragment.tags or (), fragment.metadata or {}
+    if "mark:resolved" in tags or metadata.get("resolved_by") or metadata.get("lifecycle") == "resolved":
+        return False
+    return "mark:superseded" in tags or bool(metadata.get("superseded_by"))
 
 
 def _topic(content: str) -> set[str]:
@@ -247,19 +258,28 @@ def order_by_fact_agreement(
     relevances: list[float],
     current_values: list[str],
     stale_values: list[str],
+    outdated: set[str] | None = None,
 ) -> tuple[list[MemoryFragment], list[float], list[float]]:
     """Move memories stating a current fact value ahead of ones stating only an old value.
 
     ``current_values`` / ``stale_values`` are the current and earlier values
-    of the facts the query asks about ("Porto" / "Lisbon").
+    of the facts the query asks about ("Porto" / "Lisbon"). Memories that
+    state only an earlier value are added to ``outdated`` when given.
     """
     current = [_anchor_norm(v) for v in current_values if _anchor_norm(v)]
     stale = [_anchor_norm(v) for v in stale_values if _anchor_norm(v) and _anchor_norm(v) not in current]
-    if not current or not stale or len(fragments) < 2:
+    if not current or not stale:
         return fragments, scores, relevances
     norms = [_anchor_norm(f.content) for f in fragments]
     agrees = [any(_contains_anchor(n, v) for v in current) for n in norms]
     is_stale = [not agrees[i] and any(_contains_anchor(n, v) for v in stale) for i, n in enumerate(norms)]
+    if outdated is not None:
+        # Outdated only by a value the current one replaced, not one it still
+        # contains: "csv" -> "csv, json" grew a list, "csv" is still true.
+        items = {_anchor_norm(item) for value in current_values for item in re.split(r"[,;]|\band\b", value)}
+        replaced = [v for v in stale if v not in items]
+        outdated.update(f.id for f, n, flag in zip(fragments, norms, is_stale)
+                        if flag and any(_contains_anchor(n, v) for v in replaced))
     order = list(range(len(fragments)))
     first_stale = next((i for i in order if is_stale[i]), None)
     if first_stale is None:

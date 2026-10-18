@@ -24,7 +24,7 @@ from functools import lru_cache
 
 from mark.intelligence.date_parsing import DateSpan, as_date as as_day, find_dates, parse_when
 from mark.intelligence.temporal_order import declared_event_time, event_time
-from mark.types import MemoryFragment
+from mark.types import GapReport, GapSeverity, MemoryFragment
 
 _ISO_DAY_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 # Scanning event times costs one decode per memory; above this many memories
@@ -79,6 +79,20 @@ def matches_dates(fragment: MemoryFragment, ranges: list[DateRange]) -> bool:
     if any(start <= when <= end for start, end in ranges):
         return True
     return any(span.overlaps(start, end) for span in content_dates(fragment) for start, end in ranges)
+
+
+def window_gap(query: str, ranges: list[DateRange] | None, fragments: list[MemoryFragment], gap: GapReport):
+    """A high gap naming the asked period when no result falls in it ("What did I sign in June?").
+
+    Results stay (they may still help), but the report says plainly that
+    they are from other dates instead of presenting them as the answer.
+    """
+    if not ranges or not fragments or any(matches_dates(f, ranges) for f in fragments):
+        return gap
+    named = ", ".join(span.text.strip() for span in find_dates(query)) or "the asked period"
+    return GapReport(severity=GapSeverity.HIGH, suggested_action="none", missing_coverage=1.0,
+                     confidence=min(gap.confidence, 0.25),
+                     reason=f"Nothing in memory is dated {named}; the results are from other dates.")
 
 
 def time_bounds(since: object, until: object) -> tuple[datetime | None, datetime | None]:

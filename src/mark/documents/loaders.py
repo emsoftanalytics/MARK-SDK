@@ -78,12 +78,17 @@ def load_file(path: str | Path) -> LoadedFile:
 
 
 def decode_text(data: bytes) -> str:
-    """UTF-8 (with or without BOM), else Windows-1252, else Latin-1 (never fails).
+    """UTF-16/32 or UTF-8 by byte-order mark, UTF-8, else Windows-1252, else Latin-1 (never fails).
 
     Windows-1252 before Latin-1: it is what "Latin-1" files from Windows tools
     really are, and it maps 0x80-0x9F to quotes, dashes and the euro sign
     instead of invisible control characters.
     """
+    from mark.media.files import bom_encoding
+
+    found = bom_encoding(data)
+    if found is not None and found[0] != "utf-8":
+        return data[found[1]:].decode(found[0], errors="replace")
     try:
         return data.decode("utf-8-sig")
     except UnicodeDecodeError:

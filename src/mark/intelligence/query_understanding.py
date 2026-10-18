@@ -16,11 +16,21 @@ from __future__ import annotations
 
 import re
 from enum import Enum
-from functools import lru_cache
 
-from mark.intelligence._lazy_re import lazy
-from mark.intelligence.classifier import _STOP_WORDS
 from mark.intelligence.date_parsing import find_dates
+from mark.intelligence.term_evidence import (  # noqa: F401  (historical import location)
+    _IRREGULAR,
+    _TEMPORAL_WORDS,
+    _camel_parts,
+    _content_stems,
+    _content_terms,
+    _coverage,
+    _literal_share,
+    _long_numbers,
+    _relevance,
+    _stem,
+    _stem_once,
+)
 from mark.intelligence.query_anchors import (  # noqa: F401  (historical import location)
     _BARE_NUMBER_RE,
     _COMPOUND_RE,
@@ -62,9 +72,6 @@ _FALSE_TEMPORAL_RE = re.compile(
     r"|\bmax(?:imum)?\s+current\b",
     re.I,
 )
-_TEMPORAL_WORDS = {"now", "current", "currently", "latest", "newest", "recent", "recently", "today",
-                   "nowadays", "original", "originally", "initial", "initially", "first", "earliest",
-                   "oldest", "last", "previous", "previously", "formerly", "still"}
 
 
 class TemporalIntent(str, Enum):
@@ -105,141 +112,3 @@ def is_blank_query(query: str) -> bool:
     from mark.embeddings.segments import is_symbol
 
     return not any(is_symbol(char) for char in text)
-
-
-_CAMEL_WORD_RE = lazy(r"\b[A-Za-z]*[a-z][A-Z][A-Za-z]*\b")
-_CAMEL_PART_RE = lazy(r"[A-Z]?[a-z]{2,}")
-# Everyday irregular past forms, so "How much rent do I pay?" matches "paid on the 1st".
-_IRREGULAR = {"paid": "pay", "bought": "buy", "sold": "sell", "met": "meet", "went": "go", "gone": "go",
-              "ran": "run", "taught": "teach", "brought": "bring", "kept": "keep",
-              "lost": "lose", "spent": "spend", "sent": "send", "built": "build", "wrote": "write",
-              "written": "write", "chose": "choose", "chosen": "choose", "began": "begin", "begun": "begin"}
-
-
-@lru_cache(maxsize=65536)
-def _stem(token: str) -> str:
-    """Tiny suffix stemmer applied to a fixpoint, then final-e removal.
-
-    owns/owned/owner → own, filter/filtered → filt, rate/rating → rat,
-    database/databases → databas, boxes → box, policies → policy.
-    Deliberately conservative (no prefix matching): "titan" never matches
-    "titanium". Query and content are stemmed identically, so an occasional
-    over-merge only widens a match.
-    """
-    if token in _IRREGULAR:
-        return _stem(_IRREGULAR[token])
-    if len(token) < 4 or not token.isalpha():
-        return token
-    previous = None
-    for _ in range(3):
-        if token == previous:
-            break
-        previous, token = token, _stem_once(token)
-    if len(token) >= 4 and token.endswith("e"):
-        token = token[:-1]
-    return token
-
-
-def _stem_once(token: str) -> str:
-    """Strip one suffix (plural, -ies/-ied, -ment(s), -ing, -er(s), -ed); see _stem."""
-    if len(token) < 4:
-        return token
-    if token.endswith(("ies", "ied")) and len(token) > 4:
-        return token[:-3] + "y"
-    if token.endswith("es") and token[:-2].endswith(("ss", "x", "z", "ch", "sh")):
-        return token[:-2]
-    if token.endswith("s") and not token.endswith(("ss", "us", "is")):
-        return token[:-1]
-    for suffix in ("ments", "ment", "ing", "ers", "er", "ed"):
-        if token.endswith(suffix) and len(token) - len(suffix) >= 3:
-            stem = token[: -len(suffix)]
-            if len(stem) >= 4 and stem[-1] == stem[-2] and stem[-1] not in "lsz":
-                stem = stem[:-1]  # running → runn → run
-            return stem
-    return token
-
-
-def _content_terms(text: str) -> list[str]:
-    """Salient query terms: lowercase stems without stopwords or temporal words."""
-    terms: dict[str, None] = {}  # ordered set: linear even for long memories
-    for token in _TOKEN_RE.findall(text.lower()):
-        if token.endswith("'s"):
-            token = token[:-2]
-        if token in _STOP_WORDS or token in _TEMPORAL_WORDS or (len(token) < 2 and not token.isdigit()):
-            continue
-        terms.setdefault(_stem(token), None)
-    if not text.isascii():
-        # Emoji and other symbols are searchable terms ("🦉"), matched literally.
-        from mark.embeddings.segments import is_symbol
-
-        for char in text:
-            if is_symbol(char):
-                terms.setdefault(char, None)
-    return list(terms)
-
-
-@lru_cache(maxsize=1024)
-def _content_stems(content: str) -> frozenset[str]:
-    """Every stemmed token of a memory (stopwords kept: they cannot match query terms).
-
-    Cached by content: one retrieval scores the same candidates in several
-    stages (fusion, hops, ordering, facts).
-    """
-    tokens = set(_TOKEN_RE.findall(content.lower()))
-    # snake_case identifiers also count as their words: "code_length" answers "code length".
-    tokens |= {part for token in tokens if "_" in token for part in token.split("_") if len(part) > 1}
-    # So do CamelCase ones: "TypeError" answers "what error ...".
-    tokens |= {part.lower() for part in _camel_parts(content)}
-    return frozenset(_stem(token) for token in tokens)
-
-
-def _camel_parts(content: str) -> list[str]:
-    """Words inside CamelCase identifiers ("OperationalError" -> Operational, Error)."""
-    if content.islower():
-        return []
-    return [part for word in _CAMEL_WORD_RE.findall(content) for part in _CAMEL_PART_RE.findall(word)]
-
-
-def _coverage(query_terms: list[str], content: str) -> float:
-    """Fraction of the query's content terms that occur (stemmed) in the memory.
-
-    Terms an English stemmer cannot split are matched literally: a symbol
-    ("🦉") as a substring, and a CJK run ("我的中文老师是谁") by the share of its
-    character bigrams found in the memory, since CJK text has no spaces and
-    the run is rarely written out whole.
-    """
-    if not query_terms:
-        return 0.0
-    stems = _content_stems(content)
-    lowered: str | None = None
-    found = 0.0
-    for term in query_terms:
-        if term in stems:
-            found += 1
-        elif not term.isascii():
-            lowered = content.lower() if lowered is None else lowered
-            found += _literal_share(term, lowered)
-    return found / len(query_terms)
-
-
-def _literal_share(term: str, content: str) -> float:
-    """1 when *term* occurs in *content*; for a CJK run, the share of its bigrams that do."""
-    if term in content:
-        return 1.0
-    from mark.embeddings.segments import CJK_RUN, cjk_bigrams
-
-    if len(term) < 3 or CJK_RUN.search(term) is None:
-        return 0.0
-    grams = cjk_bigrams(term)
-    return sum(1 for gram in grams if gram in content) / len(grams)
-
-
-def _relevance(query_terms: list[str], content: str, cosine: float) -> float:
-    """Calibrated query evidence in [0, 1]: max of vector similarity and term coverage.
-
-    Either signal alone can be decisive: a paraphrase scores on cosine, an
-    exact identifier on coverage. Taking the max (not a blend) keeps the
-    value comparable to ``RetrievalPolicySpec.min_confidence`` regardless of
-    which channel found the memory.
-    """
-    return max(0.0, min(1.0, max(cosine, _coverage(query_terms, content))))

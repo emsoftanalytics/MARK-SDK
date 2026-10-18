@@ -51,7 +51,7 @@ PERSONAL_ALT = _FAVOURITE + "|" + "|".join(re.escape(w).replace(r"\ ", r"\s+") f
 DEV_ATTRIBUTES: tuple[str, ...] = (
     "test command", "build command", "lint command", "start command", "run command", "install command",
     "deploy command", "dev command", "config file", "configuration file", "config path", "configuration path",
-    "config file path", "entry point", "entrypoint",
+    "config file path", "entry point", "entrypoint", "database path", "db path", "database file",
     "package manager", "build tool", "bundler", "test runner", "linter", "formatter", "type checker",
     "storage backend", "python version", "node version", "default branch", "log level", "timeout",
     "base url", "homepage", "docs url", "repo url", "ci", "orm", "web server", "message broker",
@@ -85,6 +85,7 @@ _TYPES: tuple[tuple[str, str], ...] = (
     ("browser", r"chrome|google\s+chrome|chromium|firefox|safari|microsoft\s+edge|brave|opera|vivaldi|arc"),
     ("os", r"windows(?:\s+1[01])?|macos|mac\s+os|os\s+x|linux|ubuntu|debian|fedora|arch(?:\s+linux)?|mint"
            r"|linux\s+mint|pop!?_os|nixos|freebsd|chromeos|chrome\s+os"),
+    ("shell", r"bash|zsh|fish|powershell|pwsh|nushell|nu|tcsh|ksh|dash|xonsh"),
     ("editor", r"vs\s?code|visual\s+studio\s+code|vim|neovim|nvim|emacs|sublime(?:\s+text)?|intellij(?:\s+idea)?"
                r"|pycharm|webstorm|goland|cursor|zed|helix|nano|atom|xcode|android\s+studio"),
 )

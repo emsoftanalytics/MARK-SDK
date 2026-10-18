@@ -22,7 +22,6 @@ from mark.intelligence.fact_relevance import DEFAULT_FACT_CAP, attribute_named, 
 from mark.intelligence.query_understanding import (
     TemporalIntent,
     _anchor_norm,
-    _contains_anchor,
     anchor_present,
     detect_temporal_intent,
     gap_anchors,
@@ -31,6 +30,7 @@ from mark.intelligence.query_understanding import (
 from mark.intelligence.query_anchors import surface_form
 from mark.intelligence.retrieval_policy import RetrievalPolicy, RetrievalPolicySpec
 from mark.intelligence.retrieval_result import RetrievalResult
+from mark.intelligence.subject_index import subject_index
 from mark.types import GapReport, GapSeverity, MemoryFragment
 
 _FIRST_PERSON_RE = re.compile(r"\b(?:i|me|my|mine|myself)\b", re.I)
@@ -101,19 +101,19 @@ class _ReportingMixin:
         from mark.memory.facts import _fact
 
         subjects_of = getattr(self._store, "fact_subjects", None)
-        known = [s for s in (subjects_of(agent_id) if subjects_of is not None else [])
-                 if _anchor_norm(s) not in _PRONOUNS]
+        # Indexed once per subject list: no per-subject regex on every recall.
+        index = subject_index(tuple(subjects_of(agent_id) if subjects_of is not None else ()))
         named = list(query_anchors(query))
-        normalised = _anchor_norm(query)
-        named += [s for s in known if s not in named and _contains_anchor(normalised, _anchor_norm(s))]
+        named += [s for s in index.named_in(_anchor_norm(query))
+                  if s not in named and _anchor_norm(s) not in _PRONOUNS]
         user = getattr(self, "_user_subject", "user")
         inferred: list[str] = []
         if user and _FIRST_PERSON_RE.search(query) and user not in named:
             inferred.append(user)
         if not named and not inferred:
             for fragment in list(fragments)[:_SUBJECT_SOURCES]:
-                content = _anchor_norm(fragment.content)
-                inferred += [s for s in known if s not in inferred and _contains_anchor(content, _anchor_norm(s))]
+                inferred += [s for s in index.named_in(_anchor_norm(fragment.content))
+                             if s not in inferred and _anchor_norm(s) not in _PRONOUNS]
         rows: list = []
         for subject in named:
             rows += select_facts(query, subject, current(agent_id, subject))
@@ -168,8 +168,13 @@ class _ReportingMixin:
         for anchor in anchors:
             if any(anchor_present(content, anchor) for content in retrieved):
                 continue
-            # Present elsewhere in memory (just not in this top-k) is not a gap.
-            if phrase_exists is not None and phrase_exists(agent_id, anchor):
+            # Present elsewhere in memory (just not in this top-k) is not a gap;
+            # nor are adjacent identifiers ("EntryPoints AttributeError", each an
+            # anchor of its own) that each are. A name ("John Smith") stays whole.
+            parts = anchor.split()
+            split_ok = len(parts) > 1 and all(part in anchors for part in parts)
+            if phrase_exists is not None and (phrase_exists(agent_id, anchor) or (
+                    split_ok and all(phrase_exists(agent_id, part) for part in parts))):
                 continue
             missing.append(anchor)
         return missing
@@ -182,6 +187,7 @@ class _ReportingMixin:
         query: str,
         missing_anchors: list[str] | None = None,
         top_covers_anchors: bool = False,
+        answered: bool = False,
     ) -> GapReport:
         # Gap detection uses calibrated query evidence, never blended priors:
         # importance or graph weight can't make an irrelevant hit look like coverage.
@@ -195,6 +201,9 @@ class _ReportingMixin:
         if top_covers_anchors and not missing_anchors and report.severity != GapSeverity.CRITICAL:
             # The best result names everything the question is about (an
             # exact identifier or name match): coverage, whatever the wording.
+            report = GapReport()
+        if answered and not missing_anchors and report.severity in (GapSeverity.MEDIUM, GapSeverity.HIGH):
+            # A fact names what was asked, or one memory clearly wins (gap_calibration).
             report = GapReport()
         if missing_anchors and report.severity != GapSeverity.CRITICAL:
             # Matching common words ("port", "billing") must not hide that the

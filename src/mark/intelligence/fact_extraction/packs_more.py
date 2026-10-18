@@ -117,5 +117,17 @@ APPOINTMENT = RulePack(
     trigger_words=('moved', 'rescheduled', 'postponed', 'pushed', 'brought', 'changed', 'delayed', 'shifted', 'set'),
 )
 
+# "My editor is Vim", "Kemi's shell is fish": the value must be a product of that
+# kind (checked in ``attributes.refine``), so "My editor is Joan" is not a tool.
+TOOLS = RulePack(
+    name="tools",
+    patterns=(rf"^{_PERSON}['’]s\s+(?P<attribute_free>(?:text\s+|code\s+|web\s+)?(?:editor|browser)|shell|ide|os"
+              r"|operating\s+system)\s+(?:is|=|:)\s+(?:now\s+)?(?P<value>[A-Za-z][\w.+#!-]*(?:\s+[A-Za-z0-9][\w.+#-]*){0,2}?)"
+              r"\s*$",),
+    attribute_from_value=False,
+    confidence=0.7,
+    trigger_words=('editor', 'browser', 'shell', 'ide', 'os', 'operating'),
+)
+
 #: Tried after the people packs and before the generic ``key: value`` pack.
-MORE_PACKS: tuple[RulePack, ...] = (STATUS_OF, PROJECT, DRINKS, COUNT, USES, APPOINTMENT)
+MORE_PACKS: tuple[RulePack, ...] = (STATUS_OF, PROJECT, DRINKS, COUNT, USES, APPOINTMENT, TOOLS)

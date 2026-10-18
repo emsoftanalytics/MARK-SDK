@@ -28,6 +28,8 @@ from mark.intelligence.classifier import QueryAnalysis, QueryClassifier
 from mark.intelligence.compressor import ContextualCompressor, NoopCompressor
 from mark.intelligence.graph_expansion import GraphExpander
 from mark.intelligence.query_expander import NoopQueryExpander, QueryExpander
+from mark.intelligence.fusion_scoring import uses_score_fusion
+from mark.intelligence.kind_intent import asked_kind, kind_candidates
 from mark.intelligence.multi_hop import _MultiHopMixin
 from mark.intelligence.query_understanding import _content_terms, is_blank_query
 from mark.intelligence.reranker import MemoryReranker
@@ -225,9 +227,12 @@ class RetrievalPipeline(
         # against event and written dates, not as words.
         date_ranges, undated_query = query_date_ranges(query)
         query_terms = _content_terms(undated_query)
+        kind_ask = asked_kind(query)  # "What TODOs are still open?": a listing of one kind
         fragments_by_id, relevance, seed_scores = self._score_seeds(
             query, query_terms, len(query_texts), fused, cosine, vector_norm, depth,
-            date_ranges=date_ranges, extra=self._date_candidates(allowed_ids, date_ranges),
+            date_ranges=date_ranges, kind_ask=kind_ask,
+            extra={**self._date_candidates(allowed_ids, date_ranges),
+                   **kind_candidates(self._store, agent_id, allowed_ids, kind_ask)},
         )
         expanded_scores, contradiction_ids = self._expand_seeds(
             spec, seed_scores, effective_top_k, agent_id, allowed_ids,
@@ -255,7 +260,8 @@ class RetrievalPipeline(
             )
         fragments, scores, relevances, intent, facts, missing, gap_report, outdated, conflicts = (
             self._order_and_report(query, agent_id, spec, analysis, fragments, scores, relevances,
-                                   names_date=bool(date_ranges), time_scoped=time_scoped or bool(date_ranges)))
+                                   date_ranges=date_ranges, time_scoped=time_scoped or bool(date_ranges),
+                                   cosine=cosine if uses_score_fusion(self._fusion, self._embedder) else None))
         self._reinforce_results(fragments, relevances, spec, reinforce_mode)
 
         fragments, scores, relevances, gap_report, was_compressed = self._maybe_compress(

@@ -54,8 +54,16 @@ def positive_form(clause: str) -> str | None:
     return re.sub(r"\s+", " ", rewritten).strip()
 
 
-_STOPPED = lazy_compile(r"\b(?:has\s+|have\s+|had\s+)?(?:stopped|quit|gave\s+up)\s+(?P<verb>drinking|using)\b",
-                      re.IGNORECASE)
+_STOPPED = lazy_compile(r"\b(?:has\s+|have\s+|had\s+)?(?:stopped|stops|quit|quits|gave\s+up|gaves\s+up|gives\s+up"
+                        r"|given\s+up)\s+(?P<verb>drinking|using)\b", re.IGNORECASE)
+# "<who> gave up coffee": giving up a drink (no verb) is no longer drinking it.
+_GAVE_UP_DRINK = lazy_compile(
+    r"\b(?:has\s+|have\s+|had\s+)?(?:quit|quits|gave\s+up|gaves\s+up|gives\s+up|given\s+up)\s+"
+    r"(?P<drink>coffee|tea|green\s+tea|black\s+tea|alcohol|soda|fizzy\s+drinks|energy\s+drinks|beer|wine|caffeine"
+    r"|cola|coke|milk|juice)\b(?=\s*$|\s*[,;.])", re.IGNORECASE)
+# "... ; I switched to green tea": the new value of the slot the previous clause retracted.
+_SWITCHED = lazy_compile(r"^(?:\S+\s+)?(?:has\s+|have\s+)?(?:switched|changed|moved\s+over)\s+(?:over\s+)?to\s+"
+                         r"(?:drinking\s+|using\s+)?(?P<value>[^,;]+?)\s*(?:instead)?\s*$", re.IGNORECASE)
 
 
 _CANT_STAND = lazy_compile(r"\b(?:can['’]t|cannot|can\s+not)\s+stand\b", re.IGNORECASE)
@@ -64,15 +72,23 @@ _CANT_STAND = lazy_compile(r"\b(?:can['’]t|cannot|can\s+not)\s+stand\b", re.IG
 def rewrite_stopped(clause: str) -> str:
     """Idioms whose negation is not a retraction.
 
-    "<who> stopped drinking beer" -> "<who> no longer drinks beer" (then read as
-    a negation); "<who> can't stand X" -> "<who> hates X" (a preference, not a denial).
+    "<who> stopped drinking beer" / "<who> gave up coffee" -> "<who> no longer
+    drinks beer / coffee" (then read as a negation); "<who> can't stand X" ->
+    "<who> hates X" (a preference, not a denial).
     """
     low = clause.lower()
-    if "stand" not in low and "stopped" not in low and "quit" not in low and "gave" not in low:
+    if "stand" not in low and "stop" not in low and "quit" not in low and "gave" not in low and "give" not in low:
         return clause  # the common case: no idiom, no regex work
     clause = _CANT_STAND.sub("hates", clause)
+    clause = _GAVE_UP_DRINK.sub(lambda m: "no longer drinks " + m.group("drink"), clause)
     return _STOPPED.sub(lambda m: "no longer " + ("drinks" if m.group("verb").lower() == "drinking" else "uses"),
                         clause)
+
+
+def switched_value(clause: str) -> str | None:
+    """The Y of "<who> switched to Y" (only meaningful right after a retraction), or None."""
+    match = _SWITCHED.match(clause.strip().rstrip(".!"))
+    return match.group("value").strip() if match else None
 
 
 def is_cessation(clause: str) -> bool:
