@@ -19,7 +19,8 @@ def _memory_line(memory: dict[str, Any], prefix: str) -> str:
     # The text already starts with "[<date>]": don't print the date twice.
     if date and content.startswith(f"[{date}"):
         date = ""
-    flag = f" ({memory['lifecycle']})" if memory.get("lifecycle") else ""
+    state = memory.get("lifecycle") or memory.get("state")  # outdated: replaced by a later statement
+    flag = f" ({state})" if state else ""
     kind = f"[{memory['kind']}] " if memory.get("kind") else ""
     head = " ".join(part for part in (prefix, memory.get("short_id") or memory["id"][:8], date) if part)
     return f"{head} {kind}{content}{flag}"
@@ -66,7 +67,7 @@ def print_result(args: Any, cmd: str, result: dict[str, Any]) -> None:
         fact = result["fact"]
         print(f"{fact['text']}  (not current until then)")
     elif cmd == "fact-retract":
-        print(f"retracted {result['retracted']} fact(s)")
+        print(f"retracted {_count(result['retracted'], 'fact')}")
     elif cmd.startswith("fact-"):
         facts = [result["fact"]] if "fact" in result else result["facts"]
         for fact in facts:
@@ -76,15 +77,19 @@ def print_result(args: Any, cmd: str, result: dict[str, Any]) -> None:
     elif cmd == "ingest":
         print(_ingest_line(result))
     elif cmd in {"store", "remember"}:
-        extracted = f" ({result['extracted']} facts extracted)" if "extracted" in result else ""
+        extracted = f" ({_count(result['extracted'], 'fact')} extracted)" if "extracted" in result else ""
         print(f"stored {result['id'][:8]}{extracted}")  # the short id every command accepts
     elif cmd == "forget":
         secure = " and erased from disk" if result["secure"] and result["forgotten"] else ""
-        print(f"forgot {result['forgotten']} memor{'y' if result['forgotten'] == 1 else 'ies'}{secure}")
+        print(f"forgot {_count(result['forgotten'], 'memory')}{secure}")
     elif cmd == "resolve":
-        print(f"resolved {result['id'][:8]}")
+        print(_resolve_line(result))
     elif cmd == "supersede":
-        print(f"superseded {result['superseded'][:8]} with {result['id'][:8]}")
+        line = f"superseded {result['superseded'][:8]} with {result['id'][:8]}"
+        if result.get("followed_from"):
+            line += (f" ({result['followed_from'][:8]} was already superseded; "
+                     f"its current version {result['superseded'][:8]} was replaced)")
+        print(line)
     elif cmd in {"export", "import"}:
         skipped = f", {result['skipped']} skipped" if result.get("skipped") else ""
         invalid = f", {result['invalid']} invalid line(s)" if result.get("invalid") else ""
@@ -100,25 +105,43 @@ def print_result(args: Any, cmd: str, result: dict[str, Any]) -> None:
         print(f"user subject: {result['user_subject']} (stored with the store)")
     elif cmd == "agents":
         for item in result["agents"]:
-            print(f"{item['agent']}  ({item['memories']} memories)")
+            print(f"{item['agent']}  ({_count(item['memories'], 'memory')})")
         if not result["agents"]:
             print("(no agents)")
     else:
         embedder = result.get("embedder")
-        line = f"{result['memories']} memories, {result['facts']} current facts"
+        line = f"{_count(result['memories'], 'memory')}, {_count(result['facts'], 'current fact')}"
         if embedder:
             line += f"; embedder {_embedder(embedder)}"
         print(line)
 
 
+def _count(n: int, noun: str) -> str:
+    """``1 fact`` / ``2 facts``, ``1 memory`` / ``2 memories`` (last word pluralised)."""
+    if n == 1:
+        return f"1 {noun}"
+    plural = noun[:-1] + "ies" if noun.endswith("y") else noun + "s"
+    return f"{n} {plural}"
+
+
+def _resolve_line(result: dict[str, Any]) -> str:
+    if result.get("already"):
+        when = str(result.get("resolved_at") or "")[:10]
+        return f"already resolved: {result['id'][:8]}{f' (on {when})' if when else ''}; nothing changed"
+    line = f"resolved {result['id'][:8]}"
+    if result.get("followed_from"):
+        line += f" (the current version of {result['followed_from'][:8]}, which was superseded)"
+    return line
+
+
 def _ingest_line(result: dict[str, Any]) -> str:
     stored, existing = result["stored"], result.get("existing", 0)
-    line = f"stored {stored} new memor{'y' if stored == 1 else 'ies'}"
+    line = f"stored {_count(stored, 'new memory')}"
     details = [f"{existing} already present"] if existing else []
     if result.get("skipped"):
         details.append(f"{result['skipped']} skipped")
     if "extracted" in result:
-        details.append(f"{result['extracted']} facts extracted")
+        details.append(f"{_count(result['extracted'], 'fact')} extracted")
     return line + (f" ({', '.join(details)})" if details else "")
 
 

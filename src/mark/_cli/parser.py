@@ -55,8 +55,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("forget", help="forget a memory (and the facts extracted from it)")
     p.add_argument("id", nargs="?", help="memory id (the 8-character short id is enough)")
-    p.add_argument("--match", help="forget every memory containing this text instead")
+    p.add_argument("--match", help="forget every memory containing these whole words instead "
+                                   "(lists them and asks first)")
     p.add_argument("--secure", action="store_true", help="also erase the text from the database file")
+    p.add_argument("--yes", "-y", action="store_true", help="with --match: do not ask for confirmation")
+    p.add_argument("--dry-run", action="store_true", help="with --match: only list what would be forgotten")
+    p.add_argument("--all", action="store_true", help="with --match: allow more than 50 matches")
     p = sub.add_parser("resolve", help="mark a TODO/bug memory as done")
     p.add_argument("id")
     p.add_argument("--note")
@@ -98,12 +102,30 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("agents", help="list agent namespaces in the store")
     sub.add_parser("stats", help="count memories and facts; show the embedder")
     p = sub.add_parser("serve", help="keep MARK warm for fast calls (`mark serve stop` stops it)")
-    p.add_argument("action", nargs="?", choices=("start", "stop"), default="start")
+    p.add_argument("action", nargs="?", choices=("start", "stop", "status"), default="start")
+    p.add_argument("--detach", action="store_true",
+                   help="start in the background and return (pid in X.db.server.json, log in X.db.server.log)")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=0)
     _config_parser(sub)
     _mcp_parser(sub)
+    _accept_after_command(sub)
     return parser
+
+
+def _accept_after_command(sub: Any) -> None:
+    """Accept ``--no-server`` after the sub-command too (``mark recall Q --no-server``).
+
+    ``default=SUPPRESS`` keeps a sub-parser from resetting the global flag
+    when the option is given before the command.
+    """
+    for command in set(sub.choices.values()):
+        nested = [a for a in command._actions if isinstance(a, argparse._SubParsersAction)]
+        if nested:
+            _accept_after_command(nested[0])
+        elif command.prog != "mark mcp":
+            command.add_argument("--no-server", action="store_true", default=argparse.SUPPRESS,
+                                 help="always run in-process")
 
 
 def _fact_parser(sub: Any) -> None:
@@ -157,3 +179,5 @@ def _mcp_parser(sub: Any) -> None:
     p.add_argument("--allow-agent", action="append", dest="allowed", metavar="ID",
                    help="restrict clients to these namespaces (repeatable)")
     p.add_argument("--user-subject", help="who 'I'/'my' is (stored with the store)")
+    p.add_argument("--extract-facts", action="store_true",
+                   help="record facts stated in every MCP write (built-in patterns, stored user subject)")

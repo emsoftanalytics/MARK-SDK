@@ -130,7 +130,7 @@ def _date(fragment: Any) -> str:
 
 
 def render_retrieval(result: Any, *, max_results: int, budget_tokens: int = 0,
-                     max_item_chars: int = ITEM_CHARS) -> str:
+                     max_item_chars: int = ITEM_CHARS, states: dict[str, str] | None = None) -> str:
     """A retrieval result as bounded plain text: facts, then memories with date and short id.
 
     Each memory is cut to its best passage (``passage_window``, as
@@ -139,7 +139,12 @@ def render_retrieval(result: Any, *, max_results: int, budget_tokens: int = 0,
     that does not fit is cut to the remaining room, later ones are counted
     in a final line. When the gap report is high/critical, memories below
     :data:`RELEVANCE_FLOOR` are left out (they are not the answer).
+    Each memory shows its relevance ("[abcd1234 score 0.82]") and, when it is not
+    current, "(superseded)", "(resolved)" or "(outdated)" (*states*, see
+    :mod:`mark.memory.result_states`; lifecycle tags are read when omitted).
     """
+    from mark.memory.result_states import states as states_of
+
     from mark.intelligence.passage_window import window
 
     query_text = str(getattr(result, "query", ""))
@@ -153,11 +158,16 @@ def render_retrieval(result: Any, *, max_results: int, budget_tokens: int = 0,
     gap = getattr(result, "gap_report", None)
     severity = getattr(getattr(gap, "severity", None), "value", "none")
     fragments = _relevant(result, severity)[:max_results]
+    labels = states if states is not None else states_of(result)
+    relevance = dict(zip((f.id for f in getattr(result, "fragments", None) or []),
+                         getattr(result, "relevance", None) or getattr(result, "scores", None) or []))
     if fragments:
         lines.append("Memories (most relevant first):")
         for fragment in fragments:
             text, _ = window(" ".join(guard(fragment.content).split()), query_text, max_item_chars)
-            lines.append(f"- {_date(fragment)}[{short(fragment.id)}] {_label(fragment)}{text}")
+            score = f" score {relevance[fragment.id]:.2f}" if fragment.id in relevance else ""
+            state = f"({labels[fragment.id]}) " if fragment.id in labels else ""
+            lines.append(f"- {_date(fragment)}[{short(fragment.id)}{score}] {state}{_label(fragment)}{text}")
     if not lines:
         lines.append("Nothing in memory matches this query.")
     if severity in ("high", "critical"):
@@ -211,16 +221,24 @@ def validation_sentence(tool: str, exc: BaseException) -> str | None:
 
 
 def install_error_cleaner(server: Any) -> None:
-    """Report argument-validation failures as one sentence, not a pydantic dump with a URL.
+    """Report argument problems as one sentence: unknown names, and schema failures.
 
     The SDK validates arguments against the schema before a tool runs and
     returns ``str(ValidationError)``; wrapping ``call_tool`` (which the
-    protocol handler calls) rewrites only those errors.
+    protocol handler calls) rewrites only those errors. Arguments the tool
+    does not have are rejected by name instead of silently ignored (a
+    misspelt ``extract_fact`` used to store the memory without facts).
     """
     original = server.call_tool
     error_class = tool_error_class()
+    known: dict[str, set[str]] = {}
 
     async def call_tool(name: str, arguments: dict[str, Any], *args: Any, **kwargs: Any) -> Any:
+        unknown = await _unknown_arguments(server, known, name, arguments)
+        if unknown:
+            valid = ", ".join(sorted(known[name])) or "none"
+            raise error_class(f"{name} got unknown argument(s) {', '.join(map(repr, unknown))}; "
+                              f"valid arguments: {valid}.")
         try:
             return await original(name, arguments, *args, **kwargs)
         except error_class as exc:
@@ -230,6 +248,19 @@ def install_error_cleaner(server: Any) -> None:
             raise error_class(sentence) from None
 
     server.call_tool = call_tool
+
+
+async def _unknown_arguments(server: Any, known: dict[str, set[str]], name: str, arguments: Any) -> list[str]:
+    """Names in *arguments* that tool *name* does not declare ([] when the tool is unknown)."""
+    if not isinstance(arguments, dict) or not arguments:
+        return []
+    if name not in known:
+        for tool in await server.list_tools():
+            schema = getattr(tool, "inputSchema", None) or getattr(tool, "input_schema", None) or {}
+            known[tool.name] = set((schema.get("properties") or {}) if isinstance(schema, dict) else ())
+    if name not in known:
+        return []  # the SDK reports unknown tools itself
+    return sorted(set(arguments) - known[name])
 
 
 #: Parameter annotations shared by several tools.

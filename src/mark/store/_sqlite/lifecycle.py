@@ -11,8 +11,9 @@ A forgotten memory must not live on through what was derived from it:
   ``secure_delete`` pragma zeroes the freed pages. ``vacuum()`` then rewrites
   the file and truncates the WAL so no copy of the text survives on disk.
 
-Also here: listing agent namespaces, counting/paging fragments and the raw
-row access used by JSONL export/import. Registered on
+Also here: listing agent namespaces and the raw row access used by JSONL
+export/import; counting/paging fragments lives in
+:mod:`mark.store._sqlite.paging` (inherited). Registered on
 :class:`mark.store.sqlite.LocalMemoryStore` as ``LifecycleStoreMixin``.
 """
 from __future__ import annotations
@@ -23,10 +24,11 @@ import json
 from typing import Any, Iterable
 
 from mark.store._sqlite.codec import _FTS_TABLE, _chunks, _fact_key, _SQL_CHUNK
+from mark.store._sqlite.paging import PagingStoreMixin
 
 
-class LifecycleStoreMixin:
-    """Cascading deletes, secure erase and namespace listing."""
+class LifecycleStoreMixin(PagingStoreMixin):
+    """Cascading deletes, secure erase and namespace listing (paging from :class:`PagingStoreMixin`)."""
 
     # ── forget ────────────────────────────────────────────────────────────────
 
@@ -138,17 +140,29 @@ class LifecycleStoreMixin:
                 self._rechain_facts(conn, agent_id, _fact_key(subject), attribute_key)
         return len(rows)
 
-    def facts_from_fragments(self, agent_id: str, fragment_ids: Iterable[str]) -> int:
-        """How many live facts were extracted from *fragment_ids* (the CLI's "extracted N")."""
+    def facts_from_fragments(self, agent_id: str, fragment_ids: Iterable[str], *,
+                             after: int | None = None) -> int:
+        """How many live facts were extracted from *fragment_ids* (the CLI's "extracted N").
+
+        ``after`` (a :meth:`fact_watermark` taken before a write) counts only
+        facts created since, so a re-ingest reports 0 new facts.
+        """
         total = 0
+        newer = " AND rowid > ?" if after is not None else ""
         for chunk in _chunks(list(fragment_ids), _SQL_CHUNK):
             marks = ",".join("?" for _ in chunk)
             row = self._fetchone(
                 f"SELECT COUNT(*) FROM facts WHERE agent_id = ? AND retracted_at IS NULL"
-                f" AND source_fragment_id IN ({marks})", [agent_id, *chunk],
+                f" AND source_fragment_id IN ({marks}){newer}",
+                [agent_id, *chunk, *([int(after)] if after is not None else [])],
             )
             total += int(row[0]) if row else 0
         return total
+
+    def fact_watermark(self) -> int:
+        """The newest fact row id (0 for none): pass to ``facts_from_fragments(after=...)``."""
+        row = self._fetchone("SELECT COALESCE(MAX(rowid), 0) FROM facts", ())
+        return int(row[0]) if row else 0
 
     # ── disk hygiene ──────────────────────────────────────────────────────────
 
@@ -169,86 +183,6 @@ class LifecycleStoreMixin:
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             conn.execute("VACUUM")
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-
-    # ── paging and counting (no silent caps) ──────────────────────────────────
-
-    def _page_where(
-        self, agent_id: str, *, states: Any = None, tags: list[str] | None = None,
-        exclude_tags: list[str] | None = None, session_id: str | None = None,
-    ) -> tuple[str, list[object]]:
-        where, params = self._fragment_filters(
-            agent_id, scope=None, states=states, tier=None, session_id=session_id,
-            session_prefix=None, tags=tags, block_id=None, block_ids=None,
-        )
-        for tag in exclude_tags or ():
-            where += " AND NOT EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)"
-            params.append(tag)
-        return where, params
-
-    def page_fragments(
-        self, agent_id: str, *, limit: int | None, offset: int = 0, include_unreadable: bool = False,
-        **filters: Any,
-    ) -> list[Any]:
-        """One page of an agent's fragments in ``list_by_agent`` order (rowid breaks ties).
-
-        Memories an encrypted store could not decrypt (``mark:unreadable``,
-        see ``unreadable.py``) are left out unless ``include_unreadable``; then
-        their stored text is returned as it is and a warning is logged.
-        """
-        from mark.store._sqlite.unreadable import UNREADABLE_TAG
-
-        if not include_unreadable:
-            filters["exclude_tags"] = [*(filters.get("exclude_tags") or ()), UNREADABLE_TAG]
-        where, params = self._page_where(agent_id, **filters)
-        sql = f"SELECT * FROM fragments WHERE {where} ORDER BY importance DESC, created_at DESC, rowid DESC"
-        if limit is not None or offset:
-            sql += " LIMIT ? OFFSET ?"
-            params += [-1 if limit is None else int(limit), max(0, int(offset))]
-        out = [self._row_to_fragment(dict(row)) for row in self._fetchall(sql, params)]
-        return self._raw_unreadable(out) if include_unreadable else out
-
-    def _raw_unreadable(self, fragments: list[Any]) -> list[Any]:
-        """Show unreadable memories as stored (they were never encrypted), with a warning."""
-        import logging
-
-        from mark.store._sqlite.codec import _as_bytes
-        from mark.store._sqlite.unreadable import UNREADABLE_TAG
-
-        bad = {f.id for f in fragments if UNREADABLE_TAG in f.tags}
-        if not bad:
-            return fragments
-        logging.getLogger("mark.store.sqlite").warning(
-            "including %d unreadable memories as stored (not encrypted with this store's key)", len(bad))
-        raw = {str(r[0]): _as_bytes(r[1]).decode("utf-8", "replace") for chunk in _chunks(list(bad), _SQL_CHUNK)
-               for r in self._fetchall(f"SELECT id, content FROM fragments WHERE id IN ({','.join('?' * len(chunk))})", chunk)}
-        return [f.model_copy(update={"content": raw[f.id]}) if f.id in raw else f for f in fragments]
-
-    def count_fragments(self, agent_id: str, **filters: Any) -> int:
-        """How many fragments ``page_fragments`` would return without a limit."""
-        from mark.store._sqlite.unreadable import UNREADABLE_TAG
-
-        if not filters.pop("include_unreadable", False):
-            filters["exclude_tags"] = [*(filters.get("exclude_tags") or ()), UNREADABLE_TAG]
-        where, params = self._page_where(agent_id, **filters)
-        row = self._fetchone(f"SELECT COUNT(*) FROM fragments WHERE {where}", params)
-        return int(row[0]) if row else 0
-
-    def ids_with_prefix(self, agent_id: str, prefix: str, limit: int = 2) -> list[str]:
-        """Fragment ids of an agent starting with *prefix* (CLI short ids); at most *limit*."""
-        rows = self._fetchall(
-            "SELECT id FROM fragments WHERE agent_id = ? AND substr(id, 1, ?) = ? LIMIT ?",
-            (agent_id, len(prefix), prefix, int(limit)),
-        )
-        return [str(row[0]) for row in rows]
-
-    def tag_values(self, agent_id: str, prefix: str) -> list[str]:
-        """Distinct tags of an agent starting with *prefix* (e.g. every ``block:`` label)."""
-        rows = self._fetchall(
-            "SELECT DISTINCT j.value FROM fragments AS f, json_each(f.tags) AS j"
-            " WHERE f.agent_id = ? AND j.value LIKE ? ESCAPE '\\'",
-            (agent_id, prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"),
-        )
-        return sorted(str(row[0]) for row in rows)
 
     # ── namespaces and raw rows (export / import) ─────────────────────────────
 

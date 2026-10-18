@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 from mark import Mark
 
 with TemporaryDirectory() as folder, Mark.local(folder) as mark:
-    repo = mark.runtime.memory("repo-agent")
+    repo = mark.memory  # the namespace the `mark` CLI and MCP use too ("__mark__")
 
     # Session 1: record what was decided, found and left to do, each with a kind.
     repo.remember("DECISION: the job queue uses SQLite in WAL mode.", kind="decision")

@@ -44,8 +44,9 @@ def register_memory_tools(server: Any, backend: Any, resolve: Callable[[str], st
         async def mark_fact(
             action: Annotated[Literal["get", "set", "history", "list"],
                               bounded("get: current value(s); set: record a new value; "
-                                      "history: every value over time; list: subjects with facts.")],
-            subject: Annotated[str, bounded("What the fact is about (not needed for list).", maxLength=200)] = "",
+                                      "history: every value over time; list: subjects with facts "
+                                      "(with subject: that subject's current facts).")],
+            subject: Annotated[str, bounded("What the fact is about (optional for list).", maxLength=200)] = "",
             attribute: Attribute = "",
             value: Annotated[str, bounded("New value (set only).", maxLength=2000)] = "",
             valid_from: Annotated[str, bounded("When the value became true (set only; default now): "
@@ -67,6 +68,11 @@ def register_memory_tools(server: Any, backend: Any, resolve: Callable[[str], st
 
             def work(memory: Any) -> str:
                 facts = memory.facts
+                if action == "list" and subject.strip():
+                    rows = facts.current(subject.strip())   # one subject: its current facts
+                    if not rows:
+                        return f"No current facts for {guard(subject.strip())}."
+                    return "\n".join(guard(f.as_text()) for f in rows)
                 if action == "list":
                     # Subjects as written (not the normalised lookup keys).
                     subjects = sorted({f.subject for f in facts.current()}, key=str.casefold)

@@ -122,7 +122,9 @@ def test_lru_eviction_closes_watches(mark) -> None:
     assert len(sessions) == 2 and (AGENT, "a") not in sessions.keys()
     assert first._executor is None                       # evicted watch was closed
     # A re-created session starts empty: nothing leaks from the evicted state.
-    _call(server, {"session_id": "a"})
+    with pytest.raises(Exception, match="needs the latest message"):
+        _call(server, {"session_id": "a"})           # a new session needs input (a10 re-test m3)
+    _call(server, {"text": "hello", "session_id": "a"})
     assert _anchors(server, "a") == []
     sessions.close_all()
     assert len(sessions) == 0
@@ -150,7 +152,8 @@ def test_bad_input_and_unsupported_backends_are_tool_errors(mark) -> None:
     server = _server(mark)
     with pytest.raises(Exception, match="role must be"):
         _call(server, {"text": "x", "role": "system"})
-    assert _call(server, {"text": "", "session_id": "empty"}).startswith("<mark_briefing>")
+    with pytest.raises(Exception, match="needs the latest message"):
+        _call(server, {"text": "", "session_id": "empty"})   # no input for a new session: isError
 
     class RemoteOnly:  # a backend without memory_for cannot anticipate
         async def retrieve(self, *a, **k): ...

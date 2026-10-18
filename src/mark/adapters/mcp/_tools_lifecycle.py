@@ -91,12 +91,25 @@ def register_lifecycle_tools(server: Any, run: Callable[..., Any], *, enabled: s
             note: Annotated[str, bounded("Optional note on how it was resolved.", maxLength=2000)] = "",
             agent_id: AgentId = "",
         ) -> str:
-            """Mark a TODO or bug as done; it leaves open lists and briefs but keeps its history."""
+            """Mark a TODO or bug as done; it leaves open lists and briefs but keeps its history.
+
+            Only TODOs and bugs can be resolved; replace other memories with
+            mark_supersede or delete them with mark_forget.
+            """
 
             def work(memory: Any) -> str:
                 full = own_id(memory, memory_id)
-                memory.resolve(full, note=note.strip() or None)
-                return f"Resolved memory {short(full)}."
+                if TAG_RESOLVED in memory.get(full).tags:
+                    return f"Memory {short(full)} was already resolved; nothing changed."
+                current = memory.current_version(full)
+                try:
+                    done = memory.resolve(current, note=note.strip() or None)
+                except ValueError as exc:  # not a TODO/bug: say what to use instead
+                    fail(str(exc).replace("supersede()", "mark_supersede").replace("forget()", "mark_forget"))
+                if current != full:
+                    return (f"Resolved memory {short(done)} (the current version of {short(full)}, "
+                            "which was already superseded).")
+                return f"Resolved memory {short(done)}."
 
             return await run("mark_resolve", agent_id, work)
 
@@ -112,7 +125,11 @@ def register_lifecycle_tools(server: Any, run: Callable[..., Any], *, enabled: s
 
             def work(memory: Any) -> str:
                 full = own_id(memory, memory_id)
-                new_id = memory.supersede(full, text)
+                current = memory.current_version(full)  # never fork: revise the newest version
+                new_id = memory.supersede(current, text)
+                if current != full:
+                    return (f"Memory {short(full)} was already superseded by {short(current)}; "
+                            f"superseded {short(current)} with {short(new_id)}.")
                 return f"Superseded memory {short(full)} with {short(new_id)}."
 
             return await run("mark_supersede", agent_id, work)
@@ -122,15 +139,20 @@ def register_lifecycle_tools(server: Any, run: Callable[..., Any], *, enabled: s
         async def mark_forget(
             memory_id: Annotated[str, bounded("Id of the memory to delete (short id is enough); "
                                               "or use match.", maxLength=100)] = "",
-            match: Annotated[str, bounded("Forget every memory containing this exact text "
-                                          "(case-insensitive) instead of one id.", maxLength=500)] = "",
+            match: Annotated[str, bounded("Forget every memory containing these whole words "
+                                          "(case-insensitive, at least 3 characters) instead of one id.",
+                                          maxLength=500)] = "",
+            confirm: Annotated[bool, bounded("With match: really delete when more than one memory "
+                                             "matches (without it you get the count and previews).")] = False,
+            all: Annotated[bool, bounded("With match: allow more than 50 matches.")] = False,  # noqa: A002
             secure: Annotated[bool, bounded("Also erase the text from the database file.")] = False,
             agent_id: AgentId = "",
         ) -> str:
-            """Delete memories for good (stale, wrong or sensitive): one by id, or all containing a text.
+            """Delete memories for good (stale, wrong or sensitive): one by id, or all containing some words.
 
-            Facts taken from them are retracted. Cannot be undone; prefer
-            mark_supersede when a memory is merely outdated.
+            A match that hits several memories only lists them until you call
+            again with confirm=true. Facts taken from them are retracted.
+            Cannot be undone; prefer mark_supersede when a memory is merely outdated.
             """
             if bool(memory_id.strip()) == bool(match.strip()):
                 fail("give exactly one of memory_id or match")
@@ -139,10 +161,22 @@ def register_lifecycle_tools(server: Any, run: Callable[..., Any], *, enabled: s
                 if memory_id.strip():
                     forgotten = memory.forget(own_id(memory, memory_id), secure=secure)
                 else:
-                    forgotten = memory.forget(match=match.strip(), secure=secure)
+                    found = memory.forget(match=match, dry_run=True)
+                    if not found.count:
+                        return f"No memory matches {found.match!r} (whole words); nothing forgotten."
+                    if found.over_cap and not all:
+                        fail(f"{found.count} memories match {found.match!r}, more than the safety cap "
+                             "of 50; narrow the match, or pass all=true with confirm=true")
+                    if found.count > 1 and not confirm:
+                        shown = [f"- {guard(line)}" for line in found.previews[:10]]
+                        more = [f"- ... and {found.count - 10} more"] if found.count > 10 else []
+                        return "\n".join([f"{found.count} memories match {found.match!r}; nothing deleted yet:",
+                                          *shown, *more, "Call mark_forget again with the same match "
+                                          "and confirm=true to delete them."])
+                    forgotten = memory.forget(match=match, secure=secure, all=all)
                 if secure and forgotten:
                     memory.vacuum()  # the promise: the text is gone from disk when this returns
-                erased = " and erased them from disk" if secure and forgotten else ""
+                erased = " and erased the text from disk" if secure and forgotten else ""
                 return f"Forgot {forgotten} memor{'y' if forgotten == 1 else 'ies'}{erased}."
 
             return await run("mark_forget", agent_id, work)

@@ -29,7 +29,7 @@ def test_remember_flags_and_store_alias(tmp_path: Path, capsys) -> None:
     db = str(tmp_path / "m.db")
     out = _run(capsys, db, "remember", "[2026-03-01] atlas-core runs on port 6430.", "--kind", "api",
                "--tag", "infra", "--importance", "0.9", "--extract-facts", "--session", "s1")
-    assert out.startswith("stored ") and out.rstrip().endswith("(1 facts extracted)")
+    assert out.startswith("stored ") and out.rstrip().endswith("(1 fact extracted)")
     _run(capsys, db, "store", "Legacy alias still works.", "--occurred-at", "2026-02-01")
     second, first = sorted(_ids(capsys, db), key=lambda m: m["content"])  # "L" < "["
     assert first["kind"] == "api" and first["tags"] == ["infra"] and first["date"] == "2026-03-01"
@@ -44,7 +44,9 @@ def test_recall_output_shows_ids_and_dates_without_same_day_noise(tmp_path: Path
     _run(capsys, db, "remember", "Tomasz Nowak prefers async standups.", "--occurred-at", "2026-03-08")
     lines = _run(capsys, db, "recall", "Tomasz Nowak team", "-k", "3").splitlines()
     assert "same day" not in "\n".join(lines)
-    by_text = {line.split("Tomasz Nowak ")[-1]: line for line in lines}
+    # a10: a statement a later one replaces is labelled "(outdated)".
+    by_text = {line.split("Tomasz Nowak ")[-1].removesuffix(" (outdated)"): line for line in lines}
+    assert by_text["moved to the Messaging team."].endswith("(outdated)")
     # a10: no "#k" rank marker (order is kept; "order" stays in --json).
     assert "#1" not in "\n".join(lines) and "#2" not in "\n".join(lines)
     assert " [2026-04-07] HR" in by_text["moved to the Messaging team."]
@@ -85,7 +87,7 @@ def test_lifecycle_commands_by_short_id(tmp_path: Path, capsys) -> None:
     assert [m["content"] for m in current] == ["Storage backend is SQLite."]
 
     assert "forgot 1 memory" in _run(capsys, db, "forget", current[0]["short_id"])
-    assert "forgot 2 memories" in _run(capsys, db, "forget", "--match", "TODO:")
+    assert "forgot 2 memories" in _run(capsys, db, "forget", "--match", "TODO:", "--yes")
     assert cli.main(["--db", db, "--no-server", "forget", "deadbeef"]) == 1
     assert "no memory with id 'deadbeef'" in capsys.readouterr().err
 
@@ -95,7 +97,7 @@ def test_secure_forget_erases_text_from_disk(tmp_path: Path, capsys) -> None:
     # Not a credential (credentials are redacted before they reach disk; see below).
     _run(capsys, str(db), "remember", "The launch codename is qzx-hidden-77.")
     _run(capsys, str(db), "remember", "Something to keep.")
-    assert "erased from disk" in _run(capsys, str(db), "forget", "--match", "qzx-hidden-77", "--secure")
+    assert "erased from disk" in _run(capsys, str(db), "forget", "--match", "qzx-hidden-77", "--secure", "--yes")
     data = b"".join(p.read_bytes() for p in tmp_path.glob("s.db*") if p.is_file())
     assert b"qzx-hidden-77" not in data and b"Something to keep" in data
 
@@ -125,8 +127,8 @@ def test_export_import_agents_and_stats(tmp_path: Path, capsys) -> None:
     assert "exported 2 memories, 1 facts" in _run(capsys, db, "export", backup)
     assert "imported 2 memories, 1 facts" in _run(capsys, copy, "import", backup)
     assert "0 memories" in _run(capsys, copy, "import", backup)
-    assert _run(capsys, copy, "agents").splitlines() == ["__mark__  (1 memories)", "coder  (1 memories)"]
-    assert "embedder hash (lexical, default)" in _run(capsys, copy, "stats")
+    assert _run(capsys, copy, "agents").splitlines() == ["__mark__  (1 memory)", "coder  (1 memory)"]
+    assert "embedder hash (lexical, store)" in _run(capsys, copy, "stats")
 
 
 def test_brief(tmp_path: Path, capsys) -> None:

@@ -96,4 +96,6 @@ def _launcher_flags(options: Any, briefing: bool) -> list[str]:
         flags += ["--allow-agent", agent_id]
     if getattr(options, "user_subject", None):
         flags += ["--user-subject", options.user_subject]
+    if getattr(options, "extract_facts", False):
+        flags.append("--extract-facts")
     return flags

@@ -78,7 +78,9 @@ def test_forget_by_match_and_secure(mark) -> None:
     for text in ("token abc in the log", "another token abc line", "unrelated"):
         _call(server, "mark_write", {"content": text})
     error, text = _call(server, "mark_forget", {"match": "token abc", "secure": True})
-    assert not error and text == "Forgot 2 memories and erased them from disk."
+    assert not error and text.startswith("2 memories match 'token abc'; nothing deleted yet")
+    error, text = _call(server, "mark_forget", {"match": "token abc", "secure": True, "confirm": True})
+    assert not error and text == "Forgot 2 memories and erased the text from disk."
     assert _call(server, "mark_forget", {})[0]                                  # needs id or match
     assert "at least 4" in _call(server, "mark_forget", {"memory_id": "ab"})[1]
 
