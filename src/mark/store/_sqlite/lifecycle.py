@@ -17,6 +17,8 @@ row access used by JSONL export/import. Registered on
 """
 from __future__ import annotations
 
+import sqlite3
+
 import json
 from typing import Any, Iterable
 
@@ -59,6 +61,12 @@ class LifecycleStoreMixin:
                 conn.execute(f"DELETE FROM {_FTS_TABLE} WHERE rowid = ?", (rowid,))
             conn.execute("DELETE FROM fragments WHERE id = ?", (fragment_id,))
             self._cascade_facts(conn, agent_id, [fragment_id], secure=secure, now=now)
+            if secure:  # a saved vector snapshot still holds this memory's vector: drop it
+                for table in ("vector_snapshots", "vector_snapshot_meta", "vector_dirty"):
+                    try:
+                        conn.execute(f"DELETE FROM {table} WHERE agent_id = ?", (agent_id,))
+                    except sqlite3.OperationalError:  # no snapshot tables in this store
+                        pass
         self._emit("delete", [fragment_id])
         return True
 
