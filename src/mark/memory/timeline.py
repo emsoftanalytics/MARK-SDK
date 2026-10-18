@@ -117,7 +117,7 @@ class Timeline:
         """
         scope = f" · {self.attribute}" if self.attribute else ""
         dropped = f" (+{self.truncated} earlier)" if self.truncated else ""
-        lines = [f"Timeline of {self.subject}{scope}: {len(self.events)} events{dropped}"]
+        lines = [f"Timeline of {self.subject}{scope}: {len(self.events)} event{'' if len(self.events) == 1 else 's'}{dropped}"]
         for event in self.events:
             text = _LEADING_STAMP_RE.sub("", event.text) if event.kind == "memory" else f"fact: {event.text}"
             text = " ".join(text.split())
