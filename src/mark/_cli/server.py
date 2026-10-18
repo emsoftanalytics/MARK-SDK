@@ -133,6 +133,7 @@ def serve(db: Path, host: str = "127.0.0.1", port: int = 0, *, stop_event: Any =
         server.serve_forever(poll_interval=0.2)
     finally:
         server.server_close()
+        _save_snapshots(engine)  # the next process starts from a snapshot covering every write
         engine.close()
         # Remove the state file only if it is still ours (never another server's).
         try:
@@ -223,6 +224,17 @@ def _warm(engine: Any) -> None:
         logger.debug("mark serve: index warm-up skipped", exc_info=True)
         return
     print(f"MARK index warm: {count} memories in {time.monotonic() - started:.1f}s", flush=True)
+
+
+def _save_snapshots(engine: Any) -> None:
+    """Refresh stale vector snapshots on a graceful stop; failures only cost the next cold start."""
+    save = getattr(engine.runtime, "save_vector_snapshots", None)
+    if save is None:
+        return
+    try:
+        save()
+    except Exception:  # noqa: BLE001 - e.g. disk full: never block the shutdown
+        logger.warning("mark serve: could not save the vector snapshot", exc_info=True)
 
 
 def _pid_alive(pid: int) -> bool:

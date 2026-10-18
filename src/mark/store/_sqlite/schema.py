@@ -110,6 +110,10 @@ class SchemaMixin(SchemaDDL):
             # Pre-versioned databases (no stamp) are treated as version 0. Which
             # columns to add is decided from the actual table shape, not data.
             stored = 0 if row is None else int(row[0])
+            if row is not None and stored == self.CURRENT_SCHEMA_VERSION:
+                # A plain reopen changes no fragment: log an empty change set, so
+                # id caches (and snapshot scopes) in any process stay valid.
+                self._note_changed(())
             self._run_migrations(conn, stored)
             if row is None:
                 conn.execute(

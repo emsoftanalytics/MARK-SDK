@@ -119,13 +119,15 @@ class VectorIndex:
         *,
         agent_id: str | None = None,
         expected: int = 0,
+        normalised: bool = False,
     ) -> None:
         """Index many embeddings (vectors or a 2-D array) of one agent, without contents.
 
         Same as :meth:`add` per id; with numpy one block append. ``expected``
-        (total rows a load will add) pre-sizes the matrix once.
+        (total rows a load will add) pre-sizes the matrix once; ``normalised``
+        promises unit-length rows (e.g. a vector snapshot), skipping a copy.
         """
-        _bulk_add(self, list(fragment_ids), embeddings, agent_id, expected)
+        _bulk_add(self, list(fragment_ids), embeddings, agent_id, expected, normalised)
 
     def remove(self, fragment_id: str) -> None:
         """Drop a fragment from the index (no-op when absent)."""

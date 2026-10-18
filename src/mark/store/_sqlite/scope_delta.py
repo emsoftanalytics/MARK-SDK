@@ -40,6 +40,9 @@ WRITE_LOG_DDL = "CREATE TABLE IF NOT EXISTS write_log (version INTEGER PRIMARY K
 # Above this many changed ids (summed over the versions to catch up on) a
 # rescan is cheaper than per-id lookups.
 MAX_DELTA_IDS = 5_000
+# Catching up from a vector snapshot replaces a full scan (seconds at 1M
+# rows), so a much larger delta is still worth applying id by id.
+SNAPSHOT_MAX_DELTA_IDS = 50_000
 # A single write logging more ids is logged as unknown: bulk imports would
 # otherwise make the log large (~40 bytes per id), and they are rare and
 # already cost far more than one rescan.
@@ -141,6 +144,10 @@ class ScopeCacheMixin:
                 entry = self._expire(entry, agent_id, now)
         else:
             entry = None
+        if entry is None and key not in self._ids_cache:
+            # First use in this process: the snapshot + log replaces the O(N) scan.
+            # (The periodic refresh below keeps rescanning, as a safety net.)
+            entry = self._snapshot_scope(version, where, params, agent_id, now)
         if entry is None:
             entry = self._full_scope(version, where, params, agent_id, now)
         with self._lock:
@@ -159,6 +166,24 @@ class ScopeCacheMixin:
             ids = ScopeIds(map(itemgetter(0), rows))
         return _Entry(ids, version, now + self._next_expiry(agent_id), now + _IDS_CACHE_MAX_AGE)
 
+    def _snapshot_scope(self, version: int, where: str, params: list, agent_id: str, now: float) -> _Entry | None:
+        """The scope rebuilt from the agent's vector snapshot plus the logged delta; None when unsure.
+
+        The snapshot records the exact scope at its ``write_version`` (see
+        ``vector_snapshot``); every change since is in ``write_log``, so this
+        is the same set a full scan returns, at O(delta) SQL cost.
+        """
+        load = getattr(self, "snapshot_scope_ids", None)
+        found = load(agent_id, where, params) if load is not None else None
+        if found is None or found[0] > version:
+            return None
+        snap_version, ids = found
+        entry: _Entry | None = _Entry(ScopeIds(ids), snap_version, math.inf, now + _IDS_CACHE_MAX_AGE)
+        if snap_version != version:
+            entry = self._apply_log(entry, version, where, params, now, SNAPSHOT_MAX_DELTA_IDS)
+        # Members whose TTL ran out since the snapshot leave now (read through the TTL index).
+        return None if entry is None else self._expire(entry, agent_id, now)
+
     def _next_expiry(self, agent_id: str) -> float:
         """Seconds until the soonest live TTL fragment of the agent expires (inf: none)."""
         left = self._fetchone(
@@ -169,9 +194,11 @@ class ScopeCacheMixin:
         )[0]
         return math.inf if left is None else max(0.0, float(left))
 
-    def _apply_log(self, entry: _Entry, version: int, where: str, params: list, now: float) -> _Entry | None:
+    def _apply_log(
+        self, entry: _Entry, version: int, where: str, params: list, now: float, max_ids: int | None = None,
+    ) -> _Entry | None:
         """Apply the logged changes since ``entry.version``; None when they are unknown or too many."""
-        touched = self._changed_since(entry.version, version)
+        touched = self._changed_since(entry.version, version, max_ids)
         if touched is None:
             return None
         present: set[str] = set()
@@ -194,7 +221,7 @@ class ScopeCacheMixin:
             ids = ScopeIds.derive(ids, present, touched.difference(present))
         return _Entry(ids, version, min(entry.expiry, now + soonest), entry.refresh)
 
-    def _changed_since(self, old: int, new: int) -> set[str] | None:
+    def _changed_since(self, old: int, new: int, max_ids: int | None = None) -> set[str] | None:
         """Fragment ids changed by versions (old, new], or None when not known exactly."""
         if new < old or new - old > _LOG_KEEP:
             return None
@@ -211,7 +238,7 @@ class ScopeCacheMixin:
             if ids is None:
                 return None
             touched.update(json.loads(ids))
-            if len(touched) > MAX_DELTA_IDS:
+            if len(touched) > (MAX_DELTA_IDS if max_ids is None else max_ids):  # read at call time
                 return None
         return touched
 
