@@ -14,19 +14,27 @@ encryption at rest), plus:
 - **One memory API.** `remember`, `recall`, `brief`, `supersede`, `resolve`,
   `forget` and friends on every memory object, with `a`-prefixed async twins,
   memory kinds, and one rendering family (`as_context`, `as_text`,
-  `to_dict`) on every result.
+  `to_dict`) on every result; the same verbs in the CLI and as MCP tools.
 - **Memory lifecycle and data management.** Cascading and secure forget,
-  vacuum, open-TODO listing, paginated listing, JSONL backup and restore.
+  whole-word `forget(match=)` with a preview, vacuum, open-TODO listing,
+  paginated listing, JSONL backup and restore.
 - **Remember anything.** Documents and files (`store_document`,
-  `remember_file`), first-person and structured facts, typed, scheduled and
+  `remember_file`, including PDF and Office files), first-person and
+  structured facts with a stored user subject, typed, scheduled and
   multi-valued facts, natural dates, multi-hop recall, and current-over-stale
   ranking for free text.
 - **Context that fits small models.** Provenance-aware briefings, presets by
   model size, and a one-call session brief for CLI, MCP and Python.
-- **Speed at scale.** Recall p50 35 ms at 100k memories and 182 ms at 1M;
-  1.7 s cold start at 100k; multilingual keyword search.
-- **Safe by default.** Secret redaction and prompt-injection screening on
-  every write; bounded shutdown and crash-safe fact jobs.
+  llama3.2:3b answers 24 of 25 personal-assistant probes with about 233
+  prompt tokens per turn.
+- **Speed at scale.** Recall p50 35 ms at 100k memories and about 180-270 ms
+  at 1M; 1.7 s cold start at 100k and about 8 s of CPU at 1M; multilingual
+  keyword search; `mark serve --detach` for warm command-line calls.
+- **Safe by default.** Structure-based secret redaction and multilingual
+  prompt-injection screening on every write; a store that remembers its
+  embedder; no migration under a running older server; a close gate for
+  stores shared with background threads; bounded shutdown and crash-safe
+  fact jobs.
 
 ## Next: 1.0.0
 
@@ -43,15 +51,18 @@ encryption at rest), plus:
 
 Known gaps to close before or soon after 1.0:
 
-- **Paraphrase recall with the default embedder.** llama3.2:3b answers 20 of
-  25 probes with MARK; reaching 22 needs either a semantic embedder by
-  default or better lexical bridging (synonyms, related words) in the hash
-  embedder.
-- **First recall after a write at 1M memories.** It recomputes the
-  retrievable-id scope (about 0.15 s at 100k, 2-3 s at 1M); the scope should
-  update incrementally.
-- **Tool names the user mentions** can be reported as "not in memory"; they
-  should be recognised as part of the request.
+- **Cross-lingual recall.** A question in one language does not yet find a
+  memory written in another (for example English to Spanish or Russian),
+  with any built-in embedder.
+- **Indirect questions** that share no words with the answer remain the
+  weakest recall category with the default hash embedder.
+- **Cold start at a million memories** takes about 8 s of CPU, but 14-16 s
+  of wall time on a loaded machine; the goal is under 10 s wall anywhere.
+- **Multi-hop questions for small models.** Chains that combine two facts
+  about the user (a visitor coming to "my" city after a move) still fail
+  with 1-3B models.
+- **Facts from developer notes.** `TODO:` and `DECISION:` notes set a
+  memory's kind but do not yet become facts.
 - **Encryption support in the command line**, and alias resolution in
   timelines (one subject under several names).
 
