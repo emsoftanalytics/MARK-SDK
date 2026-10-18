@@ -22,7 +22,7 @@ from mark.context.budget import estimate_tokens
 
 from _helpers_langchain_async import KeywordBackend, ToolCallingFakeModel, _agent, _invoke
 
-MEMORY_TAG = "[MARK project memory]"
+MEMORY_TAG = "[MARK memory]"
 
 
 class RecordingModel(ToolCallingFakeModel):
@@ -37,7 +37,7 @@ class RecordingModel(ToolCallingFakeModel):
 
 def _mark_block(system: str) -> str:
     start = system.index(MEMORY_TAG)
-    end = system.index("[/MARK project memory]") + len("[/MARK project memory]")
+    end = system.index("[/MARK memory]") + len("[/MARK memory]")
     return system[start:end]
 
 
@@ -190,8 +190,9 @@ def test_wrap_model_call_archives_before_dropping(mode: str) -> None:
     kept = seen[0].messages
     assert kept == messages[4:]                      # q2 + its tool call + result, never split
     assert _tool_pairs_valid(kept)
-    assert backend.observed == ["User said: q1", "Assistant replied:  [called lookup]",
-                                "Tool [tool] returned: tool output", "Assistant replied: a1"]
+    # The tool-call-only message has no words of its own: nothing stored for it (a10 N3).
+    assert backend.observed == ["User said: q1", "Tool [tool] returned: tool output",
+                                "Assistant replied: a1"]
 
 
 def test_invalid_options() -> None:

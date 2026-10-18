@@ -1,9 +1,8 @@
 """Agent/model lifecycle hooks mixin for :class:`MarkAgentMiddleware`.
 
 Implements ``(a)before_agent`` (run start + retrieval prewarm),
-``(a)before_model`` (triggered retrieval, written to ``mark_context``),
-``(a)after_model`` (queue reasoning) and ``(a)after_agent`` (flush, feedback,
-release), plus the optional thinking-model helper. Each sync hook runs its
+``(a)before_model`` (triggered retrieval, written to ``mark_context``)
+and ``(a)after_agent`` (store the reply once, flush, feedback, release), plus the optional thinking-model helper. Each sync hook runs its
 async twin through :func:`_run_sync`; every hook degrades to "no MARK" on
 failure instead of breaking the agent.
 """
@@ -15,6 +14,7 @@ import uuid
 from typing import Any
 
 from mark.adapters.backend import run_off_loop
+from mark.context.history import message_key, turn_text
 from mark.context.provenance import observe_options
 from mark.adapters.langchain._middleware_support import (
     _IN_SYNC_BRIDGE,
@@ -206,43 +206,6 @@ class _LifecycleHooksMixin:
             self._hook_failed("before_model", exc)
             return {"mark_context": "", "mark_context_meta": {"chars": 0, "source": "error"}}
 
-    # ── aafter_model: queue AI reasoning step ─────────────────────────────
-
-    def _queue_latest_reasoning(self, state: Any) -> None:
-        for msg in reversed(_state_messages(state)):
-            if _message_role(msg) in ("ai", "assistant"):
-                content = self._message_text(msg).strip()
-                has_tool_calls = bool(getattr(msg, "tool_calls", None))
-                if content and len(content) > 100 and not has_tool_calls:
-                    # The model's own words: stored as low-trust assistant output.
-                    self._queue_observation(self._run(state), f"Agent reasoning: {content[:600]}",
-                                            **observe_options("assistant"))
-                break
-
-    async def aafter_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
-        """Async: queue each substantive AI reasoning step for archival.
-
-        Only substantive turns (>100 chars, no tool-dispatch payloads) are
-        queued, to avoid noise.  Returns ``None`` (no state update needed).
-        """
-        if not self._write_outcomes:
-            return None
-        try:
-            self._queue_latest_reasoning(state)
-        except Exception as exc:
-            self._hook_failed("after_model", exc)
-        return None
-
-    def after_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
-        """Sync: queue substantive AI reasoning for run-end archival."""
-        if not self._write_outcomes:
-            return None
-        try:
-            self._queue_latest_reasoning(state)
-        except Exception as exc:
-            self._hook_failed("after_model", exc)
-        return None
-
     # ── aafter_agent: run end — flush, feedback, cleanup ──────────────────
 
     async def aafter_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
@@ -258,19 +221,16 @@ class _LifecycleHooksMixin:
         run = self._pop_run(run_id) or _RunState()
         try:
             if self._write_outcomes:
-                for msg in reversed(_state_messages(state)):
-                    if _message_role(msg) in ("ai", "assistant"):
-                        content = self._message_text(msg)[:200]
-                        self._queue_observation(run, f"Agent completed task. Response: {content}",
-                                                **observe_options("assistant"))
-                        await self._spawn(run, self._backend_call(
-                            "feedback",
-                            agent_id=self._agent_id,
-                            outcome="completed",
-                            summary=content,
-                            fragment_ids=list(run.fragment_ids),
-                        ))
-                        break
+                reply = self._final_reply(state)
+                if reply is not None:
+                    await self._store_reply(reply)
+                    await self._spawn(run, self._backend_call(
+                        "feedback",
+                        agent_id=self._agent_id,
+                        outcome="completed",
+                        summary=self._message_text(reply)[:200],
+                        fragment_ids=list(run.fragment_ids),
+                    ))
                 await self._flush_observations_async(run)
         except Exception as exc:
             self._hook_failed("after_agent", exc)
@@ -280,6 +240,33 @@ class _LifecycleHooksMixin:
             except Exception as exc:
                 self._hook_failed("after_agent", exc)
         return {"mark_context": "", "mark_context_meta": {}}
+
+    @staticmethod
+    def _final_reply(state: Any) -> Any:
+        """This run's last assistant message (after the latest user turn), or None."""
+        for msg in reversed(_state_messages(state)):
+            role = _message_role(msg)
+            if role in ("human", "user"):
+                return None
+            if role in ("ai", "assistant"):
+                return msg
+        return None
+
+    async def _store_reply(self, message: Any) -> None:
+        """Store the run's reply ONCE, low trust, under the same key history archival uses.
+
+        This is the only place a reply is stored at run end (0.2.0a9 also wrote
+        "Agent reasoning: ..." and "Agent completed task. Response: ..." copies,
+        and archival a third). Tool-call-only messages render as "" and store nothing.
+        """
+        text = turn_text(message)
+        key = message_key(message)
+        if not text or not getattr(self, "_store_assistant", True) or self._is_archived(key):
+            return
+        result = await self._backend_call("observe", text, agent_id=self._agent_id,
+                                          **observe_options("assistant"))
+        if result.ok:
+            self._mark_archived(key)
 
     def after_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         """Sync: flush queued observations and release the run."""

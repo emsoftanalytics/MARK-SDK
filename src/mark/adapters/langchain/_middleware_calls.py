@@ -1,30 +1,26 @@
-"""Model/tool call wrappers mixin for :class:`MarkAgentMiddleware`.
+"""Model call wrapper mixin for :class:`MarkAgentMiddleware`.
 
 ``(a)wrap_model_call`` is a pure transform: it appends the packaged
-middleware skill (once) and the ``[MARK project memory]`` block to the system
-message, with no backend I/O. ``(a)wrap_tool_call`` passes tool results
-through unchanged and queues (or, opt-in, immediately writes) an observation.
-Both release the run's state when the wrapped call raises.
+middleware skill (once) and the ``[MARK memory]`` block to the system
+message, with no backend I/O, and releases the run's state when the model
+call raises. The tool wrapper lives in ``_middleware_tools`` (mixed in here).
 """
 
 from __future__ import annotations
 
 from typing import Any, Callable
 
-from mark.context.provenance import observe_options
-from mark.adapters.langchain._middleware_support import (
-    _run_sync,
-    _SystemMessage,
-    content_text,
-)
+from mark.adapters.langchain._middleware_provenance import memory_block, wrapper_chars
+from mark.adapters.langchain._middleware_support import _SystemMessage, content_text
+from mark.adapters.langchain._middleware_tools import _ToolWrapperMixin
 
 
 _LONG_SKILL = "mark-memory-middleware"
 _COMPACT_SKILL = "mark-memory-compact"
 
 
-class _CallWrappersMixin:
-    """System-message injection and tool-result observation."""
+class _CallWrappersMixin(_ToolWrapperMixin):
+    """System-message injection (and, via the base, tool-result observation)."""
 
     def _system_text(self, system_message: Any) -> str:
         if system_message is None:
@@ -54,13 +50,8 @@ class _CallWrappersMixin:
     # ── (a)wrap_model_call: inject MARK context into system message ───────
 
     def _memory_block(self, context: str) -> str:
-        return (
-            "[MARK project memory]\n"
-            "Use this as durable project memory. Prefer live tool results for "
-            "current-session file contents.\n"
-            f"{context}\n"
-            "[/MARK project memory]"
-        )
+        """The injected block (wrapper included); the budget measures this text."""
+        return memory_block(context)
 
     def _context_for_request(self, request: Any) -> str:
         state = getattr(request, "state", None) or {}
@@ -107,7 +98,7 @@ class _CallWrappersMixin:
                     self._record("skill", skill_hash=skill_hash, **skill)
                     self._last_skill_hash = skill_hash
                 if self._budget is None:   # a budgeted context is already capped
-                    context = self._truncate_context(context)
+                    context = self._truncate_context(context, reserve=wrapper_chars())
                 context_hash = self._hash(context)
                 block = self._memory_block(context)
                 # Inject on every model request; skip only if this exact block
@@ -133,7 +124,7 @@ class _CallWrappersMixin:
     ) -> Any:
         """Sync: inject MARK context into the system message, then call the model.
 
-        Appends a ``[MARK project memory]`` block to ``request.system_message``
+        Appends a ``[MARK memory]`` block to ``request.system_message``
         via ``request.override()``.  No backend calls, except that with
         ``history="mark"`` messages not yet stored are written before being dropped.
         """
@@ -224,64 +215,3 @@ class _CallWrappersMixin:
             # Without frontmatter: small models read "name: ..." as a tool to call (M7).
             cache[name] = prompt_text(load_skill_text(name))
         return cache[name]
-
-    # ── (a)wrap_tool_call: absorb tool results into MARK ──────────────────
-
-    def _observe_tool_result(self, request: Any, result: Any) -> Any:
-        """Queue (or schedule) observation of a tool result.
-
-        Returns a coroutine for immediate observation, else ``None``.
-        """
-        if not (self._write_outcomes and self._observe_tool_results):
-            return None
-        tool_call = getattr(request, "tool_call", None) or {}
-        tool_name = str(tool_call.get("name", "unknown_tool"))
-        lowered = tool_name.lower()
-        content = content_text(getattr(result, "content", "") or "")[:900]
-        if not content or len(content) < 20:
-            return None
-        observation = f"Tool [{tool_name}] returned: {content}"
-        run = self._run(getattr(request, "state", None))
-        if self._immediate_tool_observe and not any(
-            skip in lowered for skip in ("write", "delete", "remove")
-        ):
-            self._record("observe_immediate", tool=tool_name, chars=len(content))
-            return self._backend_call("observe", observation, agent_id=self._agent_id,
-                                      **observe_options("tool"))
-        self._queue_observation(run, observation, **observe_options("tool"))
-        return None
-
-    def wrap_tool_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
-        """Sync: execute the tool and queue its result for run-end archival."""
-        try:
-            result = handler(request)
-        except BaseException as exc:
-            self._on_run_error(getattr(request, "state", None), exc)
-            raise
-        try:
-            pending = self._observe_tool_result(request, result)
-            if pending is not None:
-                _run_sync(pending)
-        except Exception as exc:
-            self._hook_failed("wrap_tool_call", exc)
-        return result
-
-    async def awrap_tool_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
-        """Async: execute the tool and archive its result into MARK.
-
-        The result is returned unchanged — MARK is completely transparent.
-        With ``immediate_tool_observe=True`` the observation runs as a tracked
-        background task; otherwise it is queued until the run ends.
-        """
-        try:
-            result = await handler(request)
-        except BaseException as exc:
-            self._on_run_error(getattr(request, "state", None), exc)
-            raise
-        try:
-            pending = self._observe_tool_result(request, result)
-            if pending is not None:
-                await self._spawn(self._run(getattr(request, "state", None)), pending)
-        except Exception as exc:
-            self._hook_failed("wrap_tool_call", exc)
-        return result

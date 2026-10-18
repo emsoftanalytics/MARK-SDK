@@ -4,7 +4,9 @@
 the ContextWatch briefing, retrieved memories and an optional thinking-model
 plan — becomes one list of :class:`~mark.context.budget.BudgetItem` lines,
 fitted under ONE hard cap (``ContextBudget.fit``) and rendered, wrapper
-included, as the ``[MARK project memory]`` block. The packaged skill the
+and block separator included, as the ``[MARK memory]`` block (so the text MARK
+adds to the system prompt never exceeds the cap; a budget too small for the
+wrapper plus one line injects nothing). The packaged skill the
 middleware injects is charged to the same budget (``split_budget``): with
 ``budget_tokens=300`` and a 170-token skill, memory gets 130 tokens, so the
 budget is the whole MARK footprint of the system prompt (usage test M7: a
@@ -20,14 +22,18 @@ and near-duplicates of briefing lines are shown once.
 request's messages are cut to the last ``keep_last`` (see
 :func:`mark.context.history.split_history` for the tool-call and current-turn
 guarantees). Dropped messages are written to MARK first, with provenance
-(user statements ``source="user"``; assistant replies low-trust
-``source="assistant"`` + ``mark:assistant``, or not stored at all with
-``store_assistant=False``; tool results ``source="tool"``) — in
+(:func:`~mark.adapters.langchain._middleware_provenance.store_options`:
+user statements ``mark:user``, questions/requests ``mark:question`` /
+``mark:request``; assistant replies low-trust ``mark:assistant``, or not
+stored at all with ``store_assistant=False``; tool results ``mark:tool``,
+failures also ``mark:error``; tool-call-only assistant messages store nothing) — in
 ``before_agent``/``before_model`` so retrieval and the briefing can already
 see them, and again (if anything is missing) in ``wrap_model_call``. A
 message is only dropped once its write succeeded; if writing fails, the full
 history is sent for that call instead. Graph state is never modified: the
 checkpointer keeps the full transcript, only the model's view is windowed.
+Every message is stored at most once across all paths: the run-end reply and
+the tool wrapper register the same :func:`message_key` as archival does.
 """
 from __future__ import annotations
 
@@ -37,9 +43,10 @@ from typing import Any
 
 from mark.adapters.langchain._middleware_support import _RunState, _run_sync, _state_messages
 from mark.context.budget import BudgetItem, ContextBudget, as_budget, render_lines
-from mark.context.history import message_key, message_role, message_text, split_history, turn_text
+from mark.adapters.langchain._middleware_provenance import BLOCK_JOINT, store_options
+from mark.context.history import message_key, message_role, split_history, turn_text
 from mark.context.presets import split_budget
-from mark.context.provenance import is_assistant, observe_options
+from mark.context.provenance import is_assistant
 from mark.context.watch_lines import Deduper, is_echo, note_text, small_talk, trusted, words
 from mark.context.watch_render import ASSISTANT_HEADER, render_briefing
 from mark.context.watch_support import _one_line
@@ -120,8 +127,8 @@ class _ContextControlMixin:
         if run.thoughts:
             items.append(BudgetItem("related", _one_line(run.thoughts, 4000), REASONING_HEADER))
 
-        def render(selected: Any) -> str:   # measured exactly as it will be injected
-            return self._memory_block(self._render_budgeted(selected)) if selected else ""
+        def render(selected: Any) -> str:   # measured exactly as it will be added
+            return BLOCK_JOINT + self._memory_block(self._render_budgeted(selected)) if selected else ""
 
         fit = self._memory_budget().fit(items, render)
         run.last_usage = fit.usage
@@ -135,10 +142,22 @@ class _ContextControlMixin:
         skill = self._skill_block() if getattr(self, "_include_skill", False) else ""
         if not skill:
             return self._budget
-        left = split_budget(self._budget.max_tokens, skill, self._budget.token_counter)
+        left = split_budget(self._budget.max_tokens, BLOCK_JOINT + skill, self._budget.token_counter)
         return ContextBudget(left, fill=self._budget.fill, token_counter=self._budget.token_counter)
 
     # ── history replacement ───────────────────────────────────────────────
+
+    def _is_archived(self, key: str) -> bool:
+        with self._archived_lock:
+            return key in self._archived
+
+    def _mark_archived(self, key: str) -> None:
+        """Record *key* as stored (bounded LRU), so no other path stores it again."""
+        with self._archived_lock:
+            self._archived[key] = None
+            self._archived.move_to_end(key)
+            while len(self._archived) > _MAX_ARCHIVED:
+                self._archived.popitem(last=False)
 
     def _unarchived(self, messages: Any) -> list[Any]:
         """Messages the window would drop that MARK does not hold yet."""
@@ -158,14 +177,11 @@ class _ContextControlMixin:
                 text = ""             # opted out: dropped without being stored
             if text:
                 result = await self._backend_call("observe", text, agent_id=self._agent_id,
-                                                  **observe_options(role, message_text(message)))
+                                                  **store_options(message))
                 if not result.ok:
                     continue          # stays unarchived: it will not be dropped
                 written += 1
-            with self._archived_lock:
-                self._archived[message_key(message)] = None
-                while len(self._archived) > _MAX_ARCHIVED:
-                    self._archived.popitem(last=False)
+            self._mark_archived(message_key(message))
         if written:
             self._record("history_archive", count=written)
         return written

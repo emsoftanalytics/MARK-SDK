@@ -18,7 +18,9 @@ older is stored in memory and comes back through the briefing when relevant.
   them (orphans) are dropped. Providers reject both broken shapes.
 * Order is preserved; nothing is mutated.
 
-:func:`turn_text` renders one message as a line for storage in memory.
+:func:`turn_text` renders one message as a line for storage in memory
+(tool-call-only assistant messages render as nothing);
+:func:`message_key` identifies a message across store paths.
 """
 from __future__ import annotations
 
@@ -69,34 +71,44 @@ def has_tool_calls(message: Any) -> bool:
     return bool(_get(message, "tool_calls") or _get(message, "function_call"))
 
 
-def _call_names(message: Any) -> list[str]:
-    names = []
-    for call in _get(message, "tool_calls") or []:
-        function = _get(call, "function") or call
-        names.append(str(_get(function, "name", "") or "tool"))
-    return names
+def _status(message: Any) -> str:
+    return str(_get(message, "status") or "")
 
 
 def turn_text(message: Any, limit: int = 2000) -> str:
-    """One stored line per message, e.g. ``"User: ..."`` or ``"Tool [lookup] returned: ..."``."""
+    """One stored line per message, e.g. ``"User said: ..."`` or ``"Tool [lookup] returned: ..."``.
+
+    An assistant message that only dispatches tool calls has no words of its
+    own and renders as ``""`` (nothing is stored; the calls' results are). A
+    failed tool call (``status="error"``) renders as ``"Tool [x] failed: ..."``.
+    """
     role = message_role(message)
     text = " ".join(message_text(message).split())[:limit]
+    if not text:
+        return ""
     if role == "user":
-        return f"User said: {text}" if text else ""
+        return f"User said: {text}"
     if role == "assistant":
-        calls = _call_names(message)
-        suffix = f" [called {', '.join(calls)}]" if calls else ""
-        return f"Assistant replied: {text}{suffix}" if (text or calls) else ""
+        return f"Assistant replied: {text}"
     if role == "tool":
         name = _get(message, "name") or "tool"
-        return f"Tool [{name}] returned: {text}" if text else ""
+        verb = "failed" if _status(message) == "error" else "returned"
+        return f"Tool [{name}] {verb}: {text}"
     return text
 
 
 def message_key(message: Any) -> str:
-    """Stable identity for de-duplicating storage: id when present, plus content."""
-    payload = json.dumps([message_role(message), message_text(message), _get(message, "id"),
-                          _get(message, "tool_call_id")], default=str, sort_keys=True)
+    """Stable identity for de-duplicating storage.
+
+    Tool results are keyed by their ``tool_call_id`` (plus content), not by
+    ``id``: LangGraph assigns the id only when the message enters the state,
+    so the result a tool wrapper sees and the one later read from history
+    must map to the same key. Other messages use id plus content.
+    """
+    call_id = _get(message, "tool_call_id")
+    ident = None if (call_id and message_role(message) == "tool") else _get(message, "id")
+    payload = json.dumps([message_role(message), message_text(message), ident, call_id],
+                         default=str, sort_keys=True)
     return hashlib.blake2b(payload.encode("utf-8", "replace"), digest_size=12).hexdigest()
 
 

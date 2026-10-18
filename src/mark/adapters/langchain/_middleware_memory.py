@@ -2,7 +2,9 @@
 
 For code that calls chat models directly rather than through a LangChain
 agent graph: recall MARK memory for a query and inject it into a plain
-message list, or remember an outcome.
+message list, or remember an outcome. Recalled questions, requests, assistant
+replies and tool errors are not shown as notes; ``max_context_chars`` covers
+the ``[MARK memory]`` wrapper too; ``remember`` stores with provenance.
 """
 
 from __future__ import annotations
@@ -11,7 +13,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from mark.adapters.backend import MarkBackend, call_backend_off_loop
+from mark.adapters.langchain._middleware_provenance import (
+    memory_block,
+    notes_only,
+    store_options,
+    wrapper_chars,
+)
 from mark.adapters.langchain._middleware_support import _run_sync
+from mark.context.provenance import user_options
 
 
 @dataclass
@@ -51,15 +60,24 @@ class MarkMemoryMiddleware:
         # Resolved at call time: the facade module imports this one.
         from mark.adapters.langchain.middleware import MarkAgentMiddleware
 
-        text, _ = MarkAgentMiddleware._render(result.value)
-        return text[: self.max_context_chars]
+        text, _ = MarkAgentMiddleware._render(notes_only(result.value))
+        return text[: max(self.max_context_chars - wrapper_chars(), 0)]
 
-    async def remember(self, content: str, **meta: Any) -> None:
-        """Store content into MARK memory."""
+    async def remember(self, content: str, *, role: str | None = None, **meta: Any) -> None:
+        """Store content into MARK memory.
+
+        *role* ("user" / "assistant" / "tool") applies that role's provenance.
+        Without it, text that only asks something is still tagged
+        ``mark:question`` / ``mark:request`` so it never becomes a note.
+        """
         if not self.write_outcomes:
             return
+        options = store_options({"role": role, "content": content}) if role else user_options(content)
+        if not role and "mark:user" in options["tags"]:
+            options = {}                    # an outcome/statement: stored as before
         await call_backend_off_loop(
-            self.backend, "observe", content, agent_id=self.agent_id, metadata=meta
+            self.backend, "observe", content, agent_id=self.agent_id,
+            **{**options, "metadata": {**options.get("metadata", {}), **meta}},
         )
 
     # ── sync ─────────────────────────────────────────────────────────────
@@ -68,9 +86,9 @@ class MarkMemoryMiddleware:
         """Synchronous variant of recall()."""
         return _run_sync(self.recall(query))
 
-    def remember_sync(self, content: str, **meta: Any) -> None:
+    def remember_sync(self, content: str, *, role: str | None = None, **meta: Any) -> None:
         """Synchronous variant of remember()."""
-        _run_sync(self.remember(content, **meta))
+        _run_sync(self.remember(content, role=role, **meta))
 
     # ── message augmentation ─────────────────────────────────────────────
 
@@ -91,7 +109,7 @@ class MarkMemoryMiddleware:
         if not context:
             return list(messages)
 
-        block = f"[MARK project memory]\n{context}\n[/MARK project memory]"
+        block = memory_block(context)
         out: list[Any] = []
         injected = False
 

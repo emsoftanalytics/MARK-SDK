@@ -14,14 +14,14 @@ Two surfaces are provided:
 
    * ``abefore_agent``   — captures the user query and warms retrieval.
    * ``abefore_model``   — per-step retrieval (user goal + reasoning/tool triggers).
-   * ``(a)wrap_model_call`` — injects the ``[MARK project memory]`` block (no I/O).
+   * ``(a)wrap_model_call`` — injects the ``[MARK memory]`` block (no I/O).
 
    **OBSERVE (archive context — background, non-blocking):**
 
-   * ``aafter_model`` / ``(a)wrap_tool_call`` — queue reasoning (low trust)
-     and tool results for archival, with provenance.
-   * ``aafter_agent``    — flushes queued observations, emits feedback and
-     releases the per-run state.
+   * ``(a)wrap_tool_call`` — queue tool results (``mark:tool``; failures
+     also ``mark:error``, low trust) for archival.
+   * ``aafter_agent``    — stores the reply once (low trust), flushes queued
+     observations, emits feedback and releases the per-run state.
 
 2. :class:`MarkMemoryMiddleware` — a lightweight dataclass helper for
    augmenting plain message lists (without a full LangChain agent graph).
@@ -49,7 +49,7 @@ This module defines :class:`MarkAgentMiddleware` (constructor and
 configuration) and re-exports the public helpers. Behaviour is composed from
 private mixins: ``_middleware_runs`` (per-run state, background tasks,
 diagnostics), ``_middleware_retrieval`` (queries and recall),
-``_middleware_calls`` (model/tool call wrappers), ``_middleware_hooks``
+``_middleware_calls`` + ``_middleware_tools`` (model/tool call wrappers), ``_middleware_hooks``
 (agent/model lifecycle hooks); shared plumbing is in ``_middleware_support``
 and :class:`MarkMemoryMiddleware` in ``_middleware_memory``.
 """
@@ -121,7 +121,7 @@ class MarkAgentMiddleware(  # type: ignore[misc]
 
     MARK intercepts every lifecycle event — capturing the user query the instant
     it enters, injecting relevant archived knowledge before each model call, and
-    archiving AI reasoning and tool results — so the agent's context window
+    archiving replies and tool results — so the agent's context window
     always contains what it needs, and nothing is ever lost.
 
     Pass it to ``create_agent(model, tools, middleware=[MarkAgentMiddleware(...)])``.
@@ -137,15 +137,14 @@ class MarkAgentMiddleware(  # type: ignore[misc]
     * ``abefore_model``   — triggered retrieval per model call: user goal query
       (cached per run) + planning/tool triggers.  Always writes the
       ``mark_context`` state field (empty when nothing relevant was found).
-    * ``(a)wrap_model_call`` — appends ``[MARK project memory]`` to the system
+    * ``(a)wrap_model_call`` — appends ``[MARK memory]`` to the system
       message of every model request via ``request.override()``.  No I/O.
 
     **Observe (archive context):**
 
-    * ``aafter_model``    — queues each substantive AI reasoning step.
     * ``(a)wrap_tool_call`` — absorbs tool results into MARK.
-    * ``aafter_agent``    — flushes queued observations, emits a feedback
-      signal for the retrieved fragments, clears ``mark_context``.
+    * ``aafter_agent``    — stores the reply once, flushes queued observations,
+      emits a feedback signal for the retrieved fragments, clears ``mark_context``.
 
     Args:
         backend:         A :class:`~mark.adapters.backend.MarkBackend`.

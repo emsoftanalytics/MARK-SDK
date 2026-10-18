@@ -192,7 +192,7 @@ def test_wrap_model_call_handles_missing_system_message() -> None:
 
     assert result.system_message is not None
     assert any(
-        "MARK project memory" in str(block.get("text", ""))
+        "[MARK memory]" in str(block.get("text", ""))
         for block in result.system_message.content
     )
 

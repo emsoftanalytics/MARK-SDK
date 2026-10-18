@@ -71,21 +71,25 @@ def test_run_observations_are_low_trust_assistant_output(mode: str) -> None:
     mw = MarkAgentMiddleware(backend, include_skill=False)
     _, agent = _agent(mw)
     _invoke(agent, "please lookup the inventory status for widgets", mode)
-    completed = [c for c in backend.options if c.startswith("Agent completed task.")]
+    completed = [c for c in backend.options if c.startswith("Assistant replied:")]
     tools = [c for c in backend.options if c.startswith("Tool [")]
-    assert completed and all(backend.options[c]["source"] == "assistant" for c in completed)
+    assert len(completed) == 1 and backend.options[completed[0]]["source"] == "assistant"
+    assert "mark:assistant" in backend.options[completed[0]]["tags"]
+    assert not [c for c in backend.options if c.startswith(("Agent completed", "Agent reasoning"))]
     assert tools and all(backend.options[c]["source"] == "tool" for c in tools)
+    assert all("mark:tool" in backend.options[c]["tags"] for c in tools)
 
 
 def test_skill_is_charged_to_the_budget_and_left_out_when_small() -> None:
     mw = MarkAgentMiddleware(KeywordBackend(), budget_tokens=300, include_skill="mark-memory-compact")
     skill = mw._skill_block()
     assert skill.startswith("# Your memory")                   # frontmatter-free
-    assert mw._memory_budget().max_tokens == 300 - estimate_tokens(skill)
+    # The skill and the newline joining it to the prompt are charged (a10 N4).
+    assert mw._memory_budget().max_tokens == 300 - estimate_tokens("\n" + skill)
     large = MarkAgentMiddleware(KeywordBackend(), budget_tokens=4000)
     assert large._skill_name() == "mark-memory-middleware"     # long skill unchanged
     assert large._skill_block().startswith("---")
-    assert large._memory_budget().max_tokens == 4000 - estimate_tokens(large._skill_block())
+    assert large._memory_budget().max_tokens == 4000 - estimate_tokens("\n" + large._skill_block())
     # Small budgets and presets: no skill (it lowered small-model accuracy).
     assert MarkAgentMiddleware(KeywordBackend(), budget_tokens=300)._skill_name() is None
     assert MarkAgentMiddleware(KeywordBackend(), preset="tiny")._skill_name() is None
