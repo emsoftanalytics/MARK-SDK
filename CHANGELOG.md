@@ -104,9 +104,9 @@ a million memories.
   languages, numbered steps, ticket status and values stated in developer
   notes ("the CLI entry point is ..."). "No longer", "quit", "gave up",
   "used to" and "Correction:" retract or replace a value, "from A to B"
-  keeps A in history, and "Starting <date>" schedules a value.
-  Only the user's words in a chat are extracted, never assistant or tool
-  text. Writes and documents report how many facts they produced.
+  keeps A in history, and "Starting <date>" schedules a value. Only the
+  user's words in a chat are extracted, never assistant or tool text.
+  Writes and documents report how many facts they produced.
 - **A user subject stored with the store**: `Mark.local(user_subject=...)`,
   `configure_user_subject()`, `mark config user-subject NAME` and
   `mark mcp --user-subject` name who "I" is; Python, the CLI and MCP use it
@@ -144,8 +144,9 @@ a million memories.
   `import`, `brief`, `agents`, `config`, `mcp`, and `serve --detach`,
   `serve status` and `serve stop`; `recall` gains `--open`, `--kind` (open
   memories unless `--all`), `--session`, `--since`, `--until` and `--tag`.
-- **`embedder_info()`** shows the active embedder and how it was chosen
-  (`source="store"` when the store's own embedder is reused).
+- **The store remembers its embedder**: `Mark.local(path)`, the CLI and MCP
+  reuse it when no embedder is given, and `embedder_info()` shows the active
+  embedder and how it was chosen (`source="store"`).
 - **Prompt-injection screening** on every write: instruction overrides,
   role reassignment and messages addressed to an AI reader in about 25
   languages, smuggled tool calls and chat-template markers, instructions
@@ -204,8 +205,8 @@ a million memories.
   memories keep a vector snapshot and a scope snapshot, and snapshots load
   memory-mapped. Cold start is 1.7 s at 100,000 memories (was 11 s) and
   about 8 s of CPU at a million (about 9 s wall on a quiet machine; 0.2.0a9
-  took 48 s). `mark serve stop` rewrites
-  a snapshot only when many memories changed.
+  took 48 s). `mark serve stop` rewrites a snapshot only when many memories
+  changed.
 - **Multilingual keyword search**: CJK text is segmented, other languages
   are no longer run through the English stemmer, accented words match their
   unaccented spelling, and emoji and symbols are searchable, in keyword
