@@ -47,6 +47,8 @@ SNAPSHOT_MAX_DELTA_IDS = 50_000
 # otherwise make the log large (~40 bytes per id), and they are rare and
 # already cost far more than one rescan.
 MAX_LOGGED_IDS = 512
+# The implicit index of ``fragments.id TEXT PRIMARY KEY``.
+_ID_INDEX = "sqlite_autoindex_fragments_1"
 _LOG_KEEP = 1_024  # versions kept in write_log (at most ~20 MB); older caches simply rescan
 _PRUNE_EVERY = 64
 
@@ -219,12 +221,7 @@ class ScopeCacheMixin:
         ordered = sorted(touched)
         for start in range(0, len(ordered), _SQL_CHUNK):
             chunk = ordered[start:start + _SQL_CHUNK]
-            marks = ",".join("?" for _ in chunk)
-            # The id IN (...) primary-key lookup leads; the filter checks each row.
-            for fragment_id, left in self._fetchall(
-                f"SELECT id, {_TTL_LEFT_SQL} FROM fragments WHERE id IN ({marks})"
-                f" AND {where}{_TTL_LIVE_SQL}", [*chunk, *params],
-            ):
+            for fragment_id, left in self._rows_by_id(chunk, where, params):
                 present.add(str(fragment_id))
                 if left is not None:
                     soonest = min(soonest, max(0.0, float(left)))
@@ -233,6 +230,21 @@ class ScopeCacheMixin:
         if not all(map(ids.__contains__, present)) or not ids.isdisjoint(touched.difference(present)):
             ids = ScopeIds.derive(ids, present, touched.difference(present))
         return _Entry(ids, version, min(entry.expiry, now + soonest), entry.refresh)
+
+    def _rows_by_id(self, chunk: list[str], where: str, params: list) -> list:
+        """(id, seconds of TTL left) of the given ids that match the filter.
+
+        The primary-key lookup must lead: left to itself, SQLite picks the
+        (agent_id, state) index for the filter and walks every row of the
+        agent (1.6 s at a million memories, on every recall after a write).
+        """
+        marks = ",".join("?" for _ in chunk)
+        tail = f" WHERE id IN ({marks}) AND {where}{_TTL_LIVE_SQL}"
+        try:
+            return self._fetchall(f"SELECT id, {_TTL_LEFT_SQL} FROM fragments INDEXED BY {_ID_INDEX}" + tail,
+                                  [*chunk, *params])
+        except sqlite3.OperationalError:  # a table rebuilt without that implicit index name
+            return self._fetchall(f"SELECT id, {_TTL_LEFT_SQL} FROM fragments" + tail, [*chunk, *params])
 
     def _changed_since(self, old: int, new: int, max_ids: int | None = None) -> set[str] | None:
         """Fragment ids changed by versions (old, new], or None when not known exactly."""

@@ -184,3 +184,15 @@ def test_recall_after_remember_syncs_the_index_by_delta(tmp_path) -> None:
         hits = {f.id for f in memory.retrieve_sync("svc-000 patched").fragments}
         assert ids[0] not in hits and runtime.index.count(AGENT) == 60
         assert sizes and max(sizes) <= 1  # only the delta was checked, never the whole scope
+
+
+def test_delta_lookups_lead_with_the_primary_key(tmp_path) -> None:
+    store = LocalMemoryStore(tmp_path / "plan.db")
+    fid = store.store(_frag("planned"))
+    where, params = store._default_scope_key(AGENT)
+    plan = " ".join(str(row[3]) for row in store._fetchall(
+        "EXPLAIN QUERY PLAN SELECT id FROM fragments INDEXED BY sqlite_autoindex_fragments_1"
+        f" WHERE id IN (?) AND {where}", [fid, *params]))
+    assert "sqlite_autoindex_fragments_1 (id=?)" in plan  # never a walk over the agent's rows
+    assert [row[0] for row in store._rows_by_id([fid], where, params)] == [fid]
+    store.close()
