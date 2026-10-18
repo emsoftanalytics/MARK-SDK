@@ -104,11 +104,12 @@ class FlakyEmbedder(HashEmbeddingProvider):
         return super().embed_batch(texts)
 
 
-def test_embedder_failure_leaves_no_half_written_batch(tmp_path: Path) -> None:
+def test_embedder_timeout_mid_batch_stores_the_whole_batch(tmp_path: Path) -> None:
+    # A transient embedder failure on one batch must neither lose writes nor
+    # half-write the batch: every row is stored, the unembedded ones pending.
     rt = MarkRuntime.local(store_path=tmp_path / "e.db", embedder=FlakyEmbedder(fail_on=2))
-    with pytest.raises(TimeoutError):
-        rt.memory("a").store_many_sync([f"memory {i}" for i in range(200)])  # 4 embed batches
-    assert rt.store.count("a") == 0
+    report = rt.memory("a").store_many_sync([f"memory {i}" for i in range(200)])  # 4 embed batches
+    assert report.stored == 200 and rt.store.count("a") == 200
     rt.shutdown()
 
 

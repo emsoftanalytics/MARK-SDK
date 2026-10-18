@@ -52,7 +52,7 @@ def export_jsonl(store: Any, path: str | Path, agent_ids: Iterable[str], *, decr
                   "agents": agents, "exported_at": datetime.now().astimezone().isoformat()}
         out.write(json.dumps(header) + "\n")
         for agent in agents:
-            for fragment in store.page_fragments(agent, limit=None):
+            for fragment in store.page_fragments(agent, limit=None, include_unreadable=decrypt):
                 row = fragment.model_dump(mode="json", exclude={"embedding"})
                 out.write(json.dumps({"type": "memory", **row}, ensure_ascii=False) + "\n")
                 counts["memories"] += 1
@@ -158,6 +158,10 @@ def _import_fact(memory: Any, agent: str, record: dict[str, Any],
     from mark.store._sqlite.codec import _fact_key
 
     store = memory._store
+    import_row = getattr(store, "import_fact_row", None)
+    if import_row is not None:  # exact, idempotent restore (keeps recorded_at)
+        counts["facts" if import_row(agent, record) else "skipped"] += 1
+        return
     valid_from = datetime.fromisoformat(str(record["valid_from"]).replace("Z", "+00:00"))
     if agent not in known:
         known[agent] = {_fact_identity(_fact_key, row["subject"], row["attribute"], row["value"],

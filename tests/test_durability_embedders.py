@@ -71,14 +71,16 @@ def test_exhausted_retries_raise_a_mark_error_naming_the_endpoint() -> None:
         server.close()
 
 
-def test_failed_embedding_writes_nothing(tmp_path: Path) -> None:
+def test_embedder_outage_stores_the_batch_unembedded(tmp_path: Path) -> None:
+    # A transient outage (timeout) must not lose writes: rows are stored with
+    # no vector, found by keyword meanwhile, and embedded when the server is back.
     server = _SlowThenOk(slow=99)
     try:
         embedder = OpenAICompatibleEmbeddingProvider(base_url=server.url, timeout=0.2, max_attempts=1)
         runtime = MarkRuntime.local(store_path=tmp_path / "n.db", embedder=embedder)
-        with pytest.raises(EmbeddingHTTPError):
-            runtime.memory("a").store_many_sync(["one", "two", "three"])
-        assert runtime.store.count("a") == 0
+        report = runtime.memory("a").store_many_sync(["one alpha", "two beta", "three gamma"])
+        assert report.stored == 3 and runtime.store.count("a") == 3
+        assert runtime.memory("a").recall("beta").fragments
         runtime.shutdown()
     finally:
         server.close()

@@ -19,25 +19,13 @@ from __future__ import annotations
 import os
 import sys
 
-from mark.errors import MarkError
+from mark.errors import StoreInUseError  # noqa: F401 - re-exported for callers
 
 # Lock files this process holds as a server (``mark serve`` registers its own):
 # its engine opens the store after taking the lock and must not refuse itself.
 OWN_LOCKS: set[str] = set()
 
 
-class StoreInUseError(MarkError, RuntimeError):
-    """The store needs a migration but a ``mark serve`` process (another build) has it open."""
-
-    def __init__(self, path: str, pid: int | None) -> None:
-        owner = f" (pid {pid})" if pid else ""
-        super().__init__(
-            f"{path} is being served by a MARK server{owner} from another MARK version, and this "
-            f"version needs to upgrade the store first. Stop that server (`mark serve stop`, or end "
-            f"the process), then run this command again; restart `mark serve` with this version."
-        )
-        self.path = path
-        self.pid = pid
 
 
 def foreign_server(db_path: str) -> tuple[bool, int | None]:

@@ -169,3 +169,20 @@ class MemoryTooLargeError(InvalidMemoryError):
         )
         self.size = size
         self.limit = limit
+
+
+__all__ += ["StoreInUseError"]
+
+
+class StoreInUseError(MarkError, RuntimeError):
+    """The store needs a migration but a ``mark serve`` process (another build) has it open."""
+
+    def __init__(self, path: str, pid: int | None) -> None:
+        owner = f" (pid {pid})" if pid else ""
+        super().__init__(
+            f"{path} is being served by a MARK server{owner} from another MARK version, and this "
+            f"version needs to upgrade the store first. Stop that server (`mark serve stop`, or end "
+            f"the process), then run this command again; restart `mark serve` with this version."
+        )
+        self.path = path
+        self.pid = pid

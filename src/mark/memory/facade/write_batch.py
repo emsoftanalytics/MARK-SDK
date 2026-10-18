@@ -179,7 +179,10 @@ class BatchWriteMixin:
             written[index] = fragment.id
             (accepted if ok else rejected).append(fragment)
         # Rejected/quarantined fragments are kept for audit but never indexed.
-        embedded = self._embed_all(accepted)
+        # Pipelines that support it store unembedded rows during an embedder
+        # outage (embedded later); otherwise embed everything before writing.
+        embed_for_write = getattr(self._pipeline, "embed_for_write", None)
+        embedded = embed_for_write(accepted) if embed_for_write else self._embed_all(accepted)
         rows = rejected + embedded
         if not rows:
             return written
