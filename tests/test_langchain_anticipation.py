@@ -73,7 +73,12 @@ def restart(service: str) -> str:
 
 
 @pytest.fixture
-def mark(tmp_path: Path):
+def mark(tmp_path: Path, monkeypatch):
+    # Deterministic under load: the first briefing waits for the watch's own
+    # prefetch (cold_wait), not for whatever a wall-clock bound allows.
+    from mark.context.watch import ContextWatch
+
+    monkeypatch.setattr(ContextWatch, "cold_wait", 60.0)
     with Mark.local(tmp_path) as instance:
         memory = instance.runtime.memory("__mark__")
         memory.store_many_sync(LOG)
