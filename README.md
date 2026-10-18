@@ -29,7 +29,7 @@ with Mark.local("./.mark") as mark:              # one SQLite file: ./.mark/memo
 
     mem.resolve(todo)                     # done: it leaves the open-TODO list
     print(mem.brief().as_text())          # session-start brief: facts, TODOs, decisions
-    mem.forget(match="rate limiting")     # gone, with any facts extracted from it
+    mem.forget(match="rate limiting")     # whole words; gone, with any facts extracted from it
 ```
 
 The same from a shell (the store defaults to `./.mark/memory.db`):
@@ -134,7 +134,7 @@ supersede notes instead of piling up versions. Refer to code as
 from mark import Mark
 
 with Mark.local("./.mark") as mark:
-    repo = mark.runtime.memory("repo-agent")
+    repo = mark.memory          # the namespace the `mark` CLI and MCP use too ("__mark__")
     repo.remember("DECISION: the job queue uses SQLite in WAL mode.", kind="decision")
     bug = repo.remember("BUG: uploader.py::Uploader.send drops the last chunk on retry.", kind="bug")
     old = repo.remember("Run the tests with `pytest -q`.", kind="snippet")
@@ -158,7 +158,8 @@ mark list --kind todo --open       # nothing left open
 mark recall "Uploader.send" -k 3
 mark fact set billing-api port 9191 --valid-from "last monday"
 mark fact list billing-api
-mark forget --match "exponential backoff" --secure
+mark forget --match "exponential backoff" --dry-run    # lists what would go
+mark forget --match "exponential backoff" --secure --yes
 ```
 
 Output shows 8-character ids (`--json` for full ones), which every command
@@ -166,9 +167,18 @@ accepts. `recall` also takes `--kind` (open memories only, unless `--all`),
 `--open`, `--tag`, `--session`, `--since`, `--until` (ISO dates or words such
 as "last week"), `--chronological` and `--json`. `mark ingest FILE` stores
 each line, sets kinds from their labels and is safe to repeat. Read commands
-on a store that does not exist say so instead of creating it. `mark serve`
-keeps the store warm so each command answers in about 0.1 s (loopback only,
-token-authenticated, `mark serve stop` to end it).
+on a store that does not exist say so instead of creating it. `mark forget
+--match` deletes memories containing those whole words (at least 3
+characters): it lists them and asks first, refuses without a terminal unless
+`--yes` is given, and needs `--all` for more than 50. `mark resolve` closes
+TODOs and bugs only (replace anything else with `mark supersede`), and
+revising an already superseded memory revises its current version.
+
+`mark serve --detach` keeps the store warm in the background so each command
+answers in about 0.1 s (loopback only, token-authenticated); it returns once
+the server answers. Agents should always start it with `--detach`, since a
+foreground `mark serve` blocks the shell. `mark serve status` says whether it
+runs, `mark serve stop` ends it.
 
 **MCP.** `mark mcp` (or `python -m mark.adapters.mcp`, same options) serves
 the same store to any MCP client over stdio. A client configuration:
@@ -181,13 +191,17 @@ the same store to any MCP client over stdio. A client configuration:
 Tools: `mark_brief` (call it first), `mark_retrieve`, `mark_write` (with
 `kind`), `mark_observe`, `mark_fact`, `mark_timeline`, `mark_list` (e.g. open
 TODOs), `mark_resolve`, `mark_supersede` and `mark_forget` (by id or
-`match`, optionally `secure`). Outputs show 8-character ids, which every
-tool accepts, and `mark_retrieve` stays within `budget_tokens` (default
-1500), showing each long memory's best passage. Options: `--db`, `--agent`
-(default namespace), `--briefing` (adds `mark_briefing`), `--preset
-default|small|tiny`, `--tools` (a subset), `--allow-agent` (limit the
-namespaces a client may use) and `--user-subject`. Errors come back as MCP
-error results with one sentence. The packaged `mark-usage` skill
+`match`; a match hitting several memories needs `confirm=true`).
+`mark_write`/`mark_observe` take `extract_facts=true`. Outputs show
+8-character ids, which every tool accepts; `mark_retrieve` shows each
+memory's score, labels superseded, resolved and outdated ones, and stays
+within `budget_tokens` (default 1500), showing each long memory's best
+passage. Options: `--db`, `--agent` (default namespace), `--briefing` (adds
+`mark_briefing`), `--preset default|small|tiny`, `--tools` (a subset; may
+name `mark_briefing`), `--allow-agent` (limit the namespaces a client may
+use), `--user-subject` and `--extract-facts` (record facts from every
+write). Errors, including unknown arguments, come back as MCP error results
+with one sentence. The packaged `mark-usage` skill
 (`mark.middlewares.skills`) teaches an agent these habits.
 
 ## Documents and files
@@ -233,7 +247,7 @@ with Mark.local("./.mark") as mark:
     print([f.value for f in facts.history("atlas-core", "port")])     # [6430, 5000, 4444]
     print(facts.as_of("atlas-core", "port", "20 March 2026").value)   # 5000 (ISO or words)
     print(facts.set("atlas-core", "port", 4500, valid_from="2099-01-01").as_text())
-    # atlas-core port = 4500 (scheduled from 2099-01-01): not current until then
+    # atlas-core port = 4500 (scheduled from 2099-01-01)   -- not current until then
     print(mark.memory.timeline("atlas-core").as_text())               # every event, oldest first
 ```
 
@@ -307,7 +321,10 @@ instruction block; on small models the self-explanatory briefing headers
 worked better than any added instructions.
 
 **LangChain.** `MarkAgentMiddleware` adds the same behaviour to any LangChain
-v1 agent (`invoke`, `ainvoke`, `astream`):
+v1 agent (`invoke`, `ainvoke`, `astream`). The example uses a local Ollama
+model, which needs `pip install "mark-sdk[langchain]" langchain-ollama` (or
+use `langchain-openai` pointed at Ollama's OpenAI-compatible endpoint, or any
+other chat model):
 
 ```python
 from langchain.agents import create_agent
@@ -364,9 +381,14 @@ with Mark.local("./.mark", embedder="auto") as mark:   # a model already on disk
 `"auto"` never downloads or contacts a server and warns once when it falls
 back to hash. Explicit specs: `"model2vec[:model]"`, `"fastembed[:model]"`,
 `"ollama[:model][|url]"`, `"openai:<base_url>|<model>"`, `"hash[:dim]"`.
-`MARK_EMBEDDER` sets the spec for every store opened without `embedder=`,
-including the CLI. Switching embedders re-embeds existing memory once instead
-of mixing vector spaces.
+**A store remembers its embedder.** The embedder a store was created with
+is recorded in it, and `Mark.local(path)`, the CLI and MCP use it whenever no
+embedder is given (`embedder_info().source == "store"`). If it cannot be
+loaded on this machine (its extra is not installed or its model not
+downloaded), the store opens keyword-only with one warning saying what to
+install; its vectors are left as they are. An explicit `embedder=` or
+`MARK_EMBEDDER` re-embeds existing memory once with the new embedder
+(instead of mixing vector spaces) and becomes the store's embedder.
 
 ## Speed
 
