@@ -198,27 +198,37 @@ file the CLI's `--db` uses) serves memory to MCP clients over stdio:
 
 ```text
 mark_brief(budget_tokens?, focus?, agent_id?)
-mark_retrieve(query, agent_id?, max_results?, budget_tokens?, session_id?, session_prefix?, tags?, block_id?, block_ids?)
-mark_write(content, agent_id?, session_id?, tags?, source?, importance?, canonical?)
+mark_retrieve(query, agent_id?, max_results?, budget_tokens?, max_item_chars?, session_id?, session_prefix?, tags?)
+mark_write(content, kind?, tags?, agent_id?, session_id?, source?, importance?, canonical?)
 mark_observe(content, agent_id?, session_id?, tags?, source?, importance?)
+mark_list(kind?, open?, limit?, offset?, agent_id?)
+mark_resolve(memory_id, note?, agent_id?)
+mark_supersede(memory_id, content, agent_id?)
+mark_forget(memory_id? | match?, secure?, agent_id?)
 mark_fact(action=get|set|history|list, subject?, attribute?, value?, valid_from?, agent_id?)
 mark_timeline(subject, attribute?, limit?, since?, until?, agent_id?)
-mark_forget(memory_id, agent_id?)
 ```
 
-Start a session with `mark_brief`. Use `mark_fact set` for values that
-change, and prefix notes with `DECISION:`, `TODO:`, `BUG:` or `FIX:` (or
-tag them `kind:<kind>`) so the brief lists them. A failed call returns an
-error result with the reason; fix the argument and retry. With `--briefing`
-the server also offers `mark_briefing(text?, session_id?, role?, messages?,
-agent_id?, wait?, budget_tokens?)`: call it with the latest message and a
-stable `session_id`, and put the result in your context before answering.
+Start a session with `mark_brief`. Write durable outcomes with
+`mark_write(content, kind=...)` (`decision`, `todo`, `bug`, `fix`, ...; a
+leading `DECISION:`, `TODO:`, `BUG:` or `FIX:` label works too) so the brief
+and `mark_list(kind, open=true)` find them. Close finished TODOs and fixed
+bugs with `mark_resolve`, replace a note that changed with `mark_supersede`
+(history is kept), and use `mark_fact set` for values that change. Ids may
+be given as the short 8-character form the tools print. `mark_forget` takes
+a `memory_id` or a `match` text, and `secure=true` also erases the text from
+the database file. A failed call returns an error result with the reason;
+fix the argument and retry. With `--briefing` the server also offers
+`mark_briefing(text?, session_id?, role?, messages?, agent_id?, wait?,
+budget_tokens?)`: call it with the latest message and a stable
+`session_id`, and put the result in your context before answering.
 
 ### MARK As Middleware
 
 For LangChain v1 agents, `MarkAgentMiddleware(backend=LocalMarkBackend(mark))`
-injects a `[MARK project memory]` block and the briefing before each model
-call and records useful model and tool output afterwards. `budget_tokens=`
+injects a `[MARK memory]` block with the briefing before each model call
+(counted inside `budget_tokens`) and stores each reply once, as low-trust
+context, and tool results, with errors marked. `budget_tokens=`
 caps everything it injects, and `history="mark", keep_last=6` sends the model
 only recent messages plus MARK's context. For other loops, the same pattern
 by hand:
