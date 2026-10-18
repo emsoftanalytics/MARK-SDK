@@ -66,17 +66,18 @@ def test_focus_puts_related_records_first(memory) -> None:
     text = brief(memory, budget_tokens=1000, focus="due dates timezone bug").text
     first_note = text.split("Related notes:\n", 1)[1].splitlines()[0]
     assert "due dates" in first_note
-    assert text.index("Known facts (current):") < text.index("Related notes:")
+    assert "tasky port" not in text and "CSV export" not in text   # a10: focus filters unrelated lines
     assert text.count("due dates shift") == 1                  # shown once, not again under bugs
 
 
-def test_empty_memory_gives_an_empty_brief(tmp_path) -> None:
+def test_empty_memory_says_it_is_empty(tmp_path) -> None:
+    # a10 (agent N8): an empty string looked like a failure; the brief now says why.
     runtime = MarkRuntime.local(store_path=tmp_path / "empty.db")
     try:
         result = brief(runtime.memory("none"))
     finally:
         runtime.shutdown()
-    assert result.text == "" and not result
+    assert result.text == "<mark_briefing>\n(memory is empty)\n</mark_briefing>"
 
 
 def test_kind_detection_and_explicit_resolution() -> None:
