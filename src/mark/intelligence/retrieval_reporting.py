@@ -28,6 +28,7 @@ from mark.intelligence.query_understanding import (
     gap_anchors,
     query_anchors,
 )
+from mark.intelligence.query_anchors import surface_form
 from mark.intelligence.retrieval_policy import RetrievalPolicy, RetrievalPolicySpec
 from mark.intelligence.retrieval_result import RetrievalResult
 from mark.types import GapReport, GapSeverity, MemoryFragment
@@ -186,20 +187,25 @@ class _ReportingMixin:
         # importance or graph weight can't make an irrelevant hit look like coverage.
         top = max(relevances, default=0.0)
         report = GapReport.from_score(top, len(relevances), spec.min_confidence)
+        shown = [surface_form(query, anchor) for anchor in missing_anchors or ()]
+        if shown and report.severity == GapSeverity.CRITICAL:
+            # Nothing retrieved: say what was asked about, as the user wrote it.
+            report = report.model_copy(update={
+                "reason": "Not found in memory: " + ", ".join(repr(a) for a in shown) + ".", "missing": shown})
         if top_covers_anchors and not missing_anchors and report.severity != GapSeverity.CRITICAL:
             # The best result names everything the question is about (an
             # exact identifier or name match): coverage, whatever the wording.
             report = GapReport()
-        if missing_anchors and report.severity in {GapSeverity.NONE, GapSeverity.LOW, GapSeverity.MEDIUM}:
+        if missing_anchors and report.severity != GapSeverity.CRITICAL:
             # Matching common words ("port", "billing") must not hide that the
             # thing actually asked about ("titan-billing") was never seen.
             report = GapReport(
                 severity=GapSeverity.HIGH,
-                reason="Not found in memory: " + ", ".join(repr(a) for a in missing_anchors) + ".",
+                reason="Not found in memory: " + ", ".join(repr(a) for a in shown) + ".",
                 suggested_action="web_search",
                 missing_coverage=round(len(missing_anchors) / max(1, len(gap_anchors(query))), 3),
                 confidence=min(report.confidence, 0.25),
-                missing=list(missing_anchors),
+                missing=shown,
             )
         if report.should_search:
             keywords = getattr(analysis, "keywords", None)
