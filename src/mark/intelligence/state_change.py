@@ -57,6 +57,7 @@ _WEAK = {"name", "call", "called", "much", "many", "old", "new", "former", "prev
 _FIRST_PERSON = r"\b(?:i|i'm|im|my|me|mine|myself|we|we're|our|ours)\b"
 _CHANGE_EXTRA = r"\b(?:new\s+one|now|these\s+days|nowadays)\b"
 _MIN_TOPIC_SHARE = 0.5
+_LOW_TRUST = frozenset({"mark:assistant", "mark:question"})
 # Marker "subject" for questions about a thing named by plain words (see _subject_and_terms).
 TOPIC = "\x00topic"
 # Words too generic to make a topic on their own ("What time is it?").
@@ -91,14 +92,16 @@ def _subject_and_terms(query: str) -> tuple[list[str], list[str]] | None:
 
     No names means the user ("I/my") is the subject."""
     first_person = _patterns()[0]
-    names = [n for n in gap_anchors(query) if not n.isdigit()]
+    anchors = gap_anchors(query)
+    names = [n for n in anchors if not n.isdigit()]
     name_words = {word for name in names for word in name.split()}
     terms = [t for t in _content_terms(query) if t not in name_words and t not in _WEAK
              and not t.isdigit() and t.isascii()]
     if not names and not first_person.search(query):
         # No name and no "I/we": the topic words are the subject ("What time is
         # standup?", "What is the wifi SSID?"); every one must be stated.
-        return ([TOPIC], terms) if len(terms) >= 1 and set(terms) - _GENERIC else None
+        # A question naming a number or id ("ticket 4521") asks for that one record.
+        return ([TOPIC], terms) if not anchors and not any(c.isdigit() for c in query) and set(terms) - _GENERIC else None
     return (names, terms) if terms else None
 
 
@@ -153,7 +156,9 @@ def state_band(query: str, intent: TemporalIntent, fragments: list[MemoryFragmen
     names, terms = parsed
     name_words = {word for name in names if name != TOPIC for word in name.split()}
     change_re = _patterns()[1]
-    band = [i for i, f in enumerate(fragments) if _member(f.content, names, terms)]
+    # The model's own replies and stored questions never outrank what the user stated.
+    band = [i for i, f in enumerate(fragments)
+            if _member(f.content, names, terms) and not _LOW_TRUST.intersection(f.tags or ())]
     if len(band) < 2:
         return None
     newest_first = _order_band(fragments, band, newest_first=True)
