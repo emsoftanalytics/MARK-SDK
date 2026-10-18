@@ -32,7 +32,10 @@ uv run --extra dev pytest -p no:cacheprovider --basetemp="$(mktemp -d)/pytest"
 
 The scale benchmark checks speed and recall quality against the budgets in
 `benchmarks/scale/thresholds.json`; run it before and after any change to the
-store, the index, or the retrieval pipeline (CI runs the same check):
+store, the index, or the retrieval pipeline (CI runs the same check). The
+CPU-time budgets (cold start, recall right after a write) gate the check;
+wall-clock budgets only warn, because they swing several-fold with machine
+load:
 
 ```bash
 uv run --extra fast python benchmarks/scale/bench.py --n 20000 --check
