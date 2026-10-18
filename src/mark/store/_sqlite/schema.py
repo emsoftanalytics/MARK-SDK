@@ -27,6 +27,7 @@ from mark.store._sqlite.codec import (
 from mark.store._sqlite.fts_text import multilingual_index_text
 from mark.store._sqlite.ddl import SchemaDDL
 from mark.store._sqlite.scope_delta import WRITE_LOG_DDL
+from mark.store._sqlite.scope_snapshot import SCOPE_DDL
 
 logger = logging.getLogger("mark.store.sqlite")
 
@@ -70,10 +71,11 @@ class SchemaMixin(SchemaDDL):
     # ── maintenance ───────────────────────────────────────────────────────────
 
     def integrity_check(self) -> list[str]:
-        """Run PRAGMA integrity_check. Returns [] on a healthy database."""
+        """Run PRAGMA integrity_check (and list unreadable encrypted rows). Returns [] when healthy."""
         rows = self._fetchall("PRAGMA integrity_check")
         results = [str(row[0]) for row in rows]
-        return [] if results == ["ok"] else results
+        # Plus rows an encrypted store could not decrypt (quarantined at open).
+        return ([] if results == ["ok"] else results) + self.unreadable_report()
 
     def export(self, dest_path: str | Path) -> None:
         """Backup the database to dest_path using the SQLite backup API."""
@@ -97,6 +99,7 @@ class SchemaMixin(SchemaDDL):
         into a layout it does not understand.
         """
         self._refuse_newer_schema()
+        self._refuse_migration_under_server()
         with self._writing() as conn:
             # Take the write lock before reading the schema stamp: two processes
             # creating the same new database must not both run migrations.
@@ -104,12 +107,17 @@ class SchemaMixin(SchemaDDL):
                 conn.execute("BEGIN IMMEDIATE")
             for ddl in [self._DDL_SCHEMA_INFO, self._DDL_BLOCKS, self._DDL_FRAGMENTS,
                         self._DDL_DOCUMENTS, self._DDL_NODES, self._DDL_EDGES,
-                        self._DDL_SESSION_EVENTS, self._DDL_BLOCK_NODES, self._DDL_BLOCK_LINKS, WRITE_LOG_DDL]:
+                        self._DDL_SESSION_EVENTS, self._DDL_BLOCK_NODES, self._DDL_BLOCK_LINKS, WRITE_LOG_DDL,
+                        SCOPE_DDL]:
                 conn.execute(ddl)
             row = conn.execute("SELECT value FROM schema_info WHERE key = 'schema_version'").fetchone()
             # Pre-versioned databases (no stamp) are treated as version 0. Which
             # columns to add is decided from the actual table shape, not data.
             stored = 0 if row is None else int(row[0])
+            if row is not None and stored == self.CURRENT_SCHEMA_VERSION:
+                # A plain reopen changes no fragment: log an empty change set, so
+                # id caches (and snapshot scopes) in any process stay valid.
+                self._note_changed(())
             self._run_migrations(conn, stored)
             if row is None:
                 conn.execute(
@@ -130,6 +138,8 @@ class SchemaMixin(SchemaDDL):
             # Must run before FTS setup: a keyless open of an encrypted store
             # would otherwise "backfill" ciphertext into the plaintext index.
             error = self._init_encryption(conn)
+            if error is None and self._encrypting:
+                self._quarantine_unreadable(conn)  # plaintext written by a keyless a8 (see unreadable.py)
             if error is None:
                 self._init_fts(conn)
         if error is not None:
@@ -149,6 +159,27 @@ class SchemaMixin(SchemaDDL):
         if row is not None and int(row[0]) > self.CURRENT_SCHEMA_VERSION:
             self.close()
             raise StoreVersionError(str(self.db_path), int(row[0]), self.CURRENT_SCHEMA_VERSION)
+
+    def _refuse_migration_under_server(self) -> None:
+        """Raise StoreInUseError if a migration is due while another process serves the store.
+
+        See :mod:`mark.store._sqlite.server_guard`: an older ``mark serve``
+        would keep writing into the migrated layout with its old code.
+        """
+        from mark.store._sqlite.server_guard import StoreInUseError, foreign_server
+
+        if self.db_path == ":memory:":
+            return
+        try:
+            row = self._fetchone("SELECT value FROM schema_info WHERE key = 'schema_version'")
+        except sqlite3.OperationalError:  # new database: nothing to migrate
+            return
+        if row is None or int(row[0]) >= self.CURRENT_SCHEMA_VERSION:
+            return
+        held, pid = foreign_server(self.db_path)
+        if held:
+            self.close()
+            raise StoreInUseError(self.db_path, pid)
 
     def _run_migrations(self, conn: sqlite3.Connection, from_version: int) -> None:
         """Bring the schema up to CURRENT_SCHEMA_VERSION.

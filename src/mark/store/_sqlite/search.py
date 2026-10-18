@@ -26,12 +26,13 @@ from mark.store._sqlite.fts_text import (
     multilingual_query_chunks,
 )
 from mark.store._sqlite.scope_delta import ScopeCacheMixin
+from mark.store._sqlite.scope_snapshot import ScopeSnapshotMixin
 from mark.store._sqlite.vector_snapshot import VectorSnapshotMixin
 
 logger = logging.getLogger("mark.store.sqlite")
 
 
-class SearchMixin(ScopeCacheMixin, VectorSnapshotMixin):
+class SearchMixin(ScopeCacheMixin, ScopeSnapshotMixin, VectorSnapshotMixin):
     """Cached retrievable-id sets, lexical (BM25) search and phrase lookup."""
 
     _fts_enabled: bool
@@ -87,7 +88,8 @@ class SearchMixin(ScopeCacheMixin, VectorSnapshotMixin):
         """BM25 keyword search over fragment content and tags.
 
         Returns (fragment_id, score) pairs, best first; higher score is better.
-        Returns [] when FTS5 is unavailable (or the store is encrypted), when
+        An encrypted store (no FTS) answers identifier-like tokens only, from
+        its keyed token sketches. Returns [] when FTS5 is unavailable, when
         the query has no usable tokens, or when SQLite rejects the query.
         Results are not state-filtered: intersect with retrievable_ids() (or
         pass it as include_ids) to restrict to retrievable fragments.
@@ -97,10 +99,12 @@ class SearchMixin(ScopeCacheMixin, VectorSnapshotMixin):
         in both gets the sum of its scores. Query cost is bounded at any store
         size (see :mod:`mark.store._sqlite.fts_query`).
         """
-        if not self._fts_enabled or limit <= 0:
+        if limit <= 0 or (include_ids is not None and not include_ids):
             return []
-        if include_ids is not None and not include_ids:
-            return []
+        if not self._fts_enabled:
+            # Encrypted: identifier tokens only, from the keyed sketches (sketch_search).
+            sketch = getattr(self, "_sketch_lexical", None) if getattr(self, "_encrypting", False) else None
+            return sketch(agent_id, query, limit, include_ids) if sketch is not None else []
         channels = [(_FTS_TABLE, ascii_query_terms(query))]
         if getattr(self, "_fts_ml_enabled", False):
             channels.append((_FTS_ML_TABLE, multilingual_query_chunks(query)))

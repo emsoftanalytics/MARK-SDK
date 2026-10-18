@@ -22,6 +22,9 @@ Consistency:
     rows it was built from were read (``write_version`` check), inside one
     transaction that also clears the agent's dirty set.
 
+Saving a snapshot also records the agent's retrievable scope when the
+saved ids are exactly that scope (see :mod:`.scope_snapshot`).
+
 Cost: about 1 KB per memory at dimension 256 (the database grows by roughly
 half). Only agents with at least ``MIN_ROWS`` memories get one; below that a
 bulk load from the rows already takes well under a second.
@@ -80,20 +83,35 @@ class VectorSnapshotMixin:
         dirty = {str(row[0]) for row in self._fetchall("SELECT id FROM vector_dirty WHERE agent_id = ?", (agent_id,))}
 
         def parts() -> Iterator[tuple[list[str], bytes]]:
-            for part in range((count + PART_ROWS - 1) // PART_ROWS):
-                row = self._fetchone(
-                    "SELECT ids, vectors FROM vector_snapshots WHERE agent_id = ? AND part = ?", (agent_id, part),
-                )
-                if row is None:
-                    return
-                ids, data = str(row[0]).split("\n"), bytes(row[1])
-                if dirty and not dirty.isdisjoint(ids):
-                    keep = [i for i, fid in enumerate(ids) if fid not in dirty]
-                    ids = [ids[i] for i in keep]
-                    data = b"".join(data[4 * dim * i:4 * dim * (i + 1)] for i in keep)
-                yield ids, data
+            # One statement streamed part by part (no per-part query, no fetchall):
+            # each 64 MB blob is copied once into Python and released after use.
+            with self._reading() as conn:
+                # Memory-mapped reads: blobs are copied out of the page cache once,
+                # not read() into SQLite's cache and copied again (restored below).
+                previous = conn.execute("PRAGMA mmap_size").fetchone()[0]
+                conn.execute("PRAGMA mmap_size = 2147418112")
+                cursor = conn.cursor()
+                cursor.row_factory = None
+                rows = cursor.execute(
+                    "SELECT ids, vectors FROM vector_snapshots WHERE agent_id = ? ORDER BY part", (agent_id,))
+                try:
+                    yield from self._snapshot_rows(rows, dirty, dim)
+                finally:
+                    rows.close()
+                    conn.execute(f"PRAGMA mmap_size = {int(previous)}")
 
         return dim, count, parts()
+
+    @staticmethod
+    def _snapshot_rows(rows: Iterable[tuple], dirty: set[str], dim: int) -> Iterator[tuple[list[str], bytes]]:
+        """(ids, float32 blob) per part, minus the dirty ids."""
+        for ids_text, blob in rows:
+            ids, data = str(ids_text).split("\n"), blob
+            if dirty and not dirty.isdisjoint(ids):
+                keep = [i for i, fid in enumerate(ids) if fid not in dirty]
+                ids = [ids[i] for i in keep]
+                data = b"".join(data[4 * dim * i:4 * dim * (i + 1)] for i in keep)
+            yield ids, data
 
     def save_vector_snapshot(
         self, agent_id: str, fingerprint: str, ids: list[str], vectors: Iterable[bytes], dim: int, write_version: int,
@@ -117,6 +135,8 @@ class VectorSnapshotMixin:
                 "INSERT INTO vector_snapshot_meta (agent_id, fingerprint, dim, count) VALUES (?, ?, ?, ?)",
                 (agent_id, fingerprint, dim, len(ids)),
             )
+            # The same ids are the agent's scope at this version: record it too (cheap).
+            self._record_scope_if_exact(conn, agent_id, ids, write_version)
         return True
 
     def drop_vector_snapshot(self, agent_id: str) -> None:

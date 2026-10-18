@@ -179,18 +179,49 @@ class LifecycleStoreMixin:
         return where, params
 
     def page_fragments(
-        self, agent_id: str, *, limit: int | None, offset: int = 0, **filters: Any,
+        self, agent_id: str, *, limit: int | None, offset: int = 0, include_unreadable: bool = False,
+        **filters: Any,
     ) -> list[Any]:
-        """One page of an agent's fragments in ``list_by_agent`` order (rowid breaks ties)."""
+        """One page of an agent's fragments in ``list_by_agent`` order (rowid breaks ties).
+
+        Memories an encrypted store could not decrypt (``mark:unreadable``,
+        see ``unreadable.py``) are left out unless ``include_unreadable``; then
+        their stored text is returned as it is and a warning is logged.
+        """
+        from mark.store._sqlite.unreadable import UNREADABLE_TAG
+
+        if not include_unreadable:
+            filters["exclude_tags"] = [*(filters.get("exclude_tags") or ()), UNREADABLE_TAG]
         where, params = self._page_where(agent_id, **filters)
         sql = f"SELECT * FROM fragments WHERE {where} ORDER BY importance DESC, created_at DESC, rowid DESC"
         if limit is not None or offset:
             sql += " LIMIT ? OFFSET ?"
             params += [-1 if limit is None else int(limit), max(0, int(offset))]
-        return [self._row_to_fragment(dict(row)) for row in self._fetchall(sql, params)]
+        out = [self._row_to_fragment(dict(row)) for row in self._fetchall(sql, params)]
+        return self._raw_unreadable(out) if include_unreadable else out
+
+    def _raw_unreadable(self, fragments: list[Any]) -> list[Any]:
+        """Show unreadable memories as stored (they were never encrypted), with a warning."""
+        import logging
+
+        from mark.store._sqlite.codec import _as_bytes
+        from mark.store._sqlite.unreadable import UNREADABLE_TAG
+
+        bad = {f.id for f in fragments if UNREADABLE_TAG in f.tags}
+        if not bad:
+            return fragments
+        logging.getLogger("mark.store.sqlite").warning(
+            "including %d unreadable memories as stored (not encrypted with this store's key)", len(bad))
+        raw = {str(r[0]): _as_bytes(r[1]).decode("utf-8", "replace") for chunk in _chunks(list(bad), _SQL_CHUNK)
+               for r in self._fetchall(f"SELECT id, content FROM fragments WHERE id IN ({','.join('?' * len(chunk))})", chunk)}
+        return [f.model_copy(update={"content": raw[f.id]}) if f.id in raw else f for f in fragments]
 
     def count_fragments(self, agent_id: str, **filters: Any) -> int:
         """How many fragments ``page_fragments`` would return without a limit."""
+        from mark.store._sqlite.unreadable import UNREADABLE_TAG
+
+        if not filters.pop("include_unreadable", False):
+            filters["exclude_tags"] = [*(filters.get("exclude_tags") or ()), UNREADABLE_TAG]
         where, params = self._page_where(agent_id, **filters)
         row = self._fetchone(f"SELECT COUNT(*) FROM fragments WHERE {where}", params)
         return int(row[0]) if row else 0

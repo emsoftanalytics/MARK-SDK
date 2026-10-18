@@ -47,6 +47,7 @@ from mark.store._sqlite.document_index import DocumentIndexMixin
 from mark.store._sqlite.encryption_guard import EncryptionGuardMixin
 from mark.store._sqlite.events import EventMixin
 from mark.store._sqlite.fact_jobs import FactJobMixin
+from mark.store._sqlite.fact_import import FactImportMixin
 from mark.store._sqlite.facts import FactMixin
 from mark.store._sqlite.facts_multi import FactMultiMixin
 from mark.store._sqlite.fragment_reads import FragmentReadMixin
@@ -57,6 +58,8 @@ from mark.store._sqlite.mentions import MentionMixin
 from mark.store._sqlite.rows import RowDecodingMixin
 from mark.store._sqlite.schema import SchemaMixin
 from mark.store._sqlite.search import SearchMixin
+from mark.store._sqlite.sketch_search import SketchSearchMixin
+from mark.store._sqlite.unreadable import UnreadableRowsMixin
 
 logger = logging.getLogger(__name__)
 
@@ -69,16 +72,19 @@ class LocalMemoryStore(
     FragmentReadMixin,
     SearchMixin,
     MentionMixin,
+    SketchSearchMixin,
     BlockMixin,
     GraphMixin,
     DocumentIndexMixin,
     FactMixin,
     FactMultiMixin,
+    FactImportMixin,
     FactJobMixin,
     EventMixin,
     RowDecodingMixin,
     SchemaMixin,
     EncryptionGuardMixin,
+    UnreadableRowsMixin,
     ConnectionMixin,
 ):
     """Thread-safe SQLite store for fragments, blocks, documents, nodes, and edges.

@@ -56,6 +56,8 @@ class RowDecodingMixin:
         # Report tampering only on the first detection: a row already stored as
         # CONTRADICTED needs no further write.
         if content is None or not ContentHasher.check(fragment, self.encryption):
+            if fragment.state == MemoryState.QUARANTINED:  # e.g. quarantined as unreadable at open: keep it so
+                return fragment, False
             already = fragment.state == MemoryState.CONTRADICTED
             return fragment.model_copy(update={"state": MemoryState.CONTRADICTED}), not already
         return fragment, False

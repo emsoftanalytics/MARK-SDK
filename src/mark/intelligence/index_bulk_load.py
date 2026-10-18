@@ -15,6 +15,7 @@ a million ids (see :mod:`mark.store._sqlite.scope_ids`).
 """
 from __future__ import annotations
 
+import itertools
 import logging
 import sys
 from typing import Any, Iterable
@@ -22,6 +23,10 @@ from typing import Any, Iterable
 from mark.index.vector_backends import _load_numpy
 from mark.store._sqlite.codec import _decode_embedding
 from mark.store._sqlite.scope_ids import ScopeIds  # re-exported: imported from here by callers
+
+# A gap of less than 1/BY_ID_FRACTION of the agent is read by primary key
+# instead of streaming every row (read at call time, so tests can patch it).
+BY_ID_FRACTION = 16
 
 
 def scope_ids(cache: dict, key: object, ids: frozenset[str]) -> ScopeIds:
@@ -156,14 +161,21 @@ def restore_snapshot(
     if snapshot is None or getattr(embedder, "dim", None) not in (None, snapshot[0]):
         return missing, before, np is not None, version
     dim, count, parts = snapshot
+    wanted = missing.frozen() if hasattr(missing, "frozen") else missing
+    gone: list[str] = []
     for ids, data in parts:
         if ids:
-            index.add_many(ids, np.frombuffer(data, dtype="<f4").reshape(len(ids), dim), agent_id=agent_id, expected=count)
-    # Deleted / no longer retrievable since the snapshot: one C-level difference.
-    for fragment_id in set(index.ids(agent_id)).difference(missing):
+            # Stored unit-length: no renormalising copy; one copy into the pre-sized matrix.
+            index.add_many(ids, np.frombuffer(data, dtype="<f4").reshape(len(ids), dim), agent_id=agent_id,
+                           expected=count, normalised=True)
+            # Deleted / no longer retrievable since the snapshot (C-level filter per part).
+            gone.extend(itertools.filterfalse(wanted.__contains__, ids))
+    for fragment_id in gone:
         index.remove(fragment_id)
-    left = index.missing(missing, agent_id)
-    return left, index.count(agent_id), len(left) >= max(1_000, len(missing) // 10), version
+    loaded = index.count(agent_id)
+    # Every loaded id is wanted and distinct: equal counts mean nothing is left.
+    left = set() if loaded == len(wanted) else index.missing(wanted, agent_id)
+    return left, loaded, len(left) >= max(1_000, len(wanted) // 10), version
 
 
 def save_snapshot(store: Any, index: Any, embedder: Any, agent_id: str, write_version: int) -> None:

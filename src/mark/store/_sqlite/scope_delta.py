@@ -40,10 +40,15 @@ WRITE_LOG_DDL = "CREATE TABLE IF NOT EXISTS write_log (version INTEGER PRIMARY K
 # Above this many changed ids (summed over the versions to catch up on) a
 # rescan is cheaper than per-id lookups.
 MAX_DELTA_IDS = 5_000
+# Catching up from a vector snapshot replaces a full scan (seconds at 1M
+# rows), so a much larger delta is still worth applying id by id.
+SNAPSHOT_MAX_DELTA_IDS = 50_000
 # A single write logging more ids is logged as unknown: bulk imports would
 # otherwise make the log large (~40 bytes per id), and they are rare and
 # already cost far more than one rescan.
 MAX_LOGGED_IDS = 512
+# The implicit index of ``fragments.id TEXT PRIMARY KEY``.
+_ID_INDEX = "sqlite_autoindex_fragments_1"
 _LOG_KEEP = 1_024  # versions kept in write_log (at most ~20 MB); older caches simply rescan
 _PRUNE_EVERY = 64
 
@@ -141,8 +146,15 @@ class ScopeCacheMixin:
                 entry = self._expire(entry, agent_id, now)
         else:
             entry = None
+        first_use = entry is None and key not in self._ids_cache
+        if first_use:
+            # First use in this process: a scope snapshot + the log replaces the O(N)
+            # scan. (The periodic refresh below keeps rescanning, as a safety net.)
+            entry = self._snapshot_scope(version, where, params, agent_id, now)
         if entry is None:
             entry = self._full_scope(version, where, params, agent_id, now)
+            if first_use:
+                self._save_scanned_scope(agent_id, where, params, entry)
         with self._lock:
             # Bounded FIFO eviction (dicts preserve insertion order).
             if key not in self._ids_cache and len(self._ids_cache) >= _IDS_CACHE_SIZE:
@@ -159,6 +171,34 @@ class ScopeCacheMixin:
             ids = ScopeIds(map(itemgetter(0), rows))
         return _Entry(ids, version, now + self._next_expiry(agent_id), now + _IDS_CACHE_MAX_AGE)
 
+    def _snapshot_scope(self, version: int, where: str, params: list, agent_id: str, now: float) -> _Entry | None:
+        """The scope rebuilt from the agent's scope snapshot plus the logged delta; None when unsure.
+
+        The snapshot records the exact scope at its ``write_version`` (see
+        ``scope_snapshot``); every change since is in ``write_log``, so this
+        is the same set a full scan returns, at O(delta) SQL cost.
+        """
+        load = getattr(self, "snapshot_scope_ids", None)
+        found = load(agent_id, where, params) if load is not None else None
+        if found is None or found[0] > version:
+            return None
+        snap_version, ids = found
+        entry: _Entry | None = _Entry(ScopeIds(ids), snap_version, math.inf, now + _IDS_CACHE_MAX_AGE)
+        if snap_version != version:
+            entry = self._apply_log(entry, version, where, params, now, SNAPSHOT_MAX_DELTA_IDS)
+        # Members whose TTL ran out since the snapshot leave now (read through the TTL index).
+        return None if entry is None else self._expire(entry, agent_id, now)
+
+    def _save_scanned_scope(self, agent_id: str, where: str, params: list, entry: _Entry) -> None:
+        """Keep a large agent's scanned scope as a scope snapshot, so the next cold start skips the scan."""
+        wanted = getattr(self, "scope_snapshot_wanted", None)
+        if wanted is None or not wanted(agent_id, where, params, len(entry.ids)):
+            return
+        try:  # exact at entry.version: the version was read before the scan (see above)
+            self.save_scope_snapshot(agent_id, where, params, entry.ids, entry.version)
+        except sqlite3.Error:  # e.g. a read-only database: only the next cold start pays
+            pass
+
     def _next_expiry(self, agent_id: str) -> float:
         """Seconds until the soonest live TTL fragment of the agent expires (inf: none)."""
         left = self._fetchone(
@@ -169,9 +209,11 @@ class ScopeCacheMixin:
         )[0]
         return math.inf if left is None else max(0.0, float(left))
 
-    def _apply_log(self, entry: _Entry, version: int, where: str, params: list, now: float) -> _Entry | None:
+    def _apply_log(
+        self, entry: _Entry, version: int, where: str, params: list, now: float, max_ids: int | None = None,
+    ) -> _Entry | None:
         """Apply the logged changes since ``entry.version``; None when they are unknown or too many."""
-        touched = self._changed_since(entry.version, version)
+        touched = self._changed_since(entry.version, version, max_ids)
         if touched is None:
             return None
         present: set[str] = set()
@@ -179,21 +221,32 @@ class ScopeCacheMixin:
         ordered = sorted(touched)
         for start in range(0, len(ordered), _SQL_CHUNK):
             chunk = ordered[start:start + _SQL_CHUNK]
-            marks = ",".join("?" for _ in chunk)
-            # The id IN (...) primary-key lookup leads; the filter checks each row.
-            for fragment_id, left in self._fetchall(
-                f"SELECT id, {_TTL_LEFT_SQL} FROM fragments WHERE id IN ({marks})"
-                f" AND {where}{_TTL_LIVE_SQL}", [*chunk, *params],
-            ):
+            for fragment_id, left in self._rows_by_id(chunk, where, params):
                 present.add(str(fragment_id))
                 if left is not None:
                     soonest = min(soonest, max(0.0, float(left)))
         ids = entry.ids
-        if not present.issubset(ids) or not ids.isdisjoint(touched.difference(present)):
+        # Membership tests on the cached scope (never set.issubset(scope): that copies it).
+        if not all(map(ids.__contains__, present)) or not ids.isdisjoint(touched.difference(present)):
             ids = ScopeIds.derive(ids, present, touched.difference(present))
         return _Entry(ids, version, min(entry.expiry, now + soonest), entry.refresh)
 
-    def _changed_since(self, old: int, new: int) -> set[str] | None:
+    def _rows_by_id(self, chunk: list[str], where: str, params: list) -> list:
+        """(id, seconds of TTL left) of the given ids that match the filter.
+
+        The primary-key lookup must lead: left to itself, SQLite picks the
+        (agent_id, state) index for the filter and walks every row of the
+        agent (1.6 s at a million memories, on every recall after a write).
+        """
+        marks = ",".join("?" for _ in chunk)
+        tail = f" WHERE id IN ({marks}) AND {where}{_TTL_LIVE_SQL}"
+        try:
+            return self._fetchall(f"SELECT id, {_TTL_LEFT_SQL} FROM fragments INDEXED BY {_ID_INDEX}" + tail,
+                                  [*chunk, *params])
+        except sqlite3.OperationalError:  # a table rebuilt without that implicit index name
+            return self._fetchall(f"SELECT id, {_TTL_LEFT_SQL} FROM fragments" + tail, [*chunk, *params])
+
+    def _changed_since(self, old: int, new: int, max_ids: int | None = None) -> set[str] | None:
         """Fragment ids changed by versions (old, new], or None when not known exactly."""
         if new < old or new - old > _LOG_KEEP:
             return None
@@ -210,16 +263,18 @@ class ScopeCacheMixin:
             if ids is None:
                 return None
             touched.update(json.loads(ids))
-            if len(touched) > MAX_DELTA_IDS:
+            if len(touched) > (MAX_DELTA_IDS if max_ids is None else max_ids):  # read at call time
                 return None
         return touched
 
     def _expire(self, entry: _Entry, agent_id: str, now: float) -> _Entry:
         """Drop members whose TTL elapsed (read through the partial TTL index)."""
+        # The rowid subquery keeps the partial TTL index covering (selecting id
+        # directly made SQLite walk every row of the agent: 1.5 s at 1M).
         expired = self._fetchall(
-            "SELECT id FROM fragments WHERE agent_id = ? AND ttl_seconds IS NOT NULL"
-            " AND julianday(created_at) IS NOT NULL"
-            " AND (julianday('now') - julianday(created_at)) * 86400.0 > ttl_seconds",
+            "SELECT id FROM fragments WHERE rowid IN (SELECT rowid FROM fragments WHERE agent_id = ?"
+            " AND ttl_seconds IS NOT NULL AND julianday(created_at) IS NOT NULL"
+            " AND (julianday('now') - julianday(created_at)) * 86400.0 > ttl_seconds)",
             (agent_id,),
         )
         gone = {str(row[0]) for row in expired}

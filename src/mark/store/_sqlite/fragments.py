@@ -122,6 +122,8 @@ class FragmentWriteMixin:
         )
         if self._fts_enabled:
             self._fts_upsert(conn, rowid, fragment.id, fragment.agent_id, fragment.content, fragment.tags)
+        elif self._encrypting:  # we hold the plaintext now: sketch it instead of decrypting it later
+            self._sketch_written(rowid, encrypted_content, fragment.content)
         return fragment.id, became_unretrievable
 
     def update_state(self, fragment_id: str, new_state: MemoryState) -> None:

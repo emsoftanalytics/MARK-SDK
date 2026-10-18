@@ -17,14 +17,16 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 class MaintenanceMixin:
     """Memory hygiene: promote, merge duplicates, decay and prune; warm the index."""
 
-    def warm_up(self, agent_ids: "list[str] | None" = None) -> int:
+    def warm_up(self, agent_ids: "list[str] | None" = None, *, sketches: bool = False) -> int:
         """Do now the work the first recall would do; returns the vectors indexed.
 
         Loads the embedder (one probe embedding) and, for every agent (or
         just ``agent_ids``), the stored vectors into the in-memory index and
         the retrievable-id cache. Read-only: unlike a dummy recall it does not
         bump access counts. Long-running hosts (``mark serve``, MCP servers)
-        call it at start so the first real recall is fast.
+        call it at start so the first real recall is fast. ``sketches=True``
+        also builds an encrypted store's token sketches (one decrypt per
+        memory), so the first timeline or identifier recall is fast too.
         """
         from mark.intelligence.retrieval_policy import SessionFilter
 
@@ -38,9 +40,40 @@ class MaintenanceMixin:
         if allowed_ids is None or sync_index is None:  # custom pipeline: nothing to preload
             return 0
         indexed = 0
+        warm_sketches = getattr(self.store, "warm_token_sketches", None) if sketches else None
         for agent_id in agent_ids:
             indexed += len(sync_index(agent_id, allowed_ids(agent_id, SessionFilter())))
+            if warm_sketches is not None:
+                warm_sketches(agent_id)
         return indexed
+
+    def save_vector_snapshots(self) -> int:
+        """Save a fresh vector snapshot for every large agent whose snapshot is stale; returns how many.
+
+        Long-running hosts call it on a graceful stop (``mark serve`` does),
+        so the next process starts from a snapshot that already covers every
+        write: its cold start then reads no rows and scans no scope. The index
+        is first brought in sync with the store (writes from other processes
+        included); a write racing with the save simply makes it skip.
+        """
+        from mark.intelligence.index_bulk_load import save_snapshot
+        from mark.intelligence.retrieval_policy import SessionFilter
+        from mark.store._sqlite import vector_snapshot
+
+        store, pipeline, index = self.store, self.pipeline, self.index
+        if not getattr(store, "fts_available", False) or not hasattr(pipeline, "_sync_index"):
+            return 0  # encrypted / custom stores never use snapshots
+        saved = 0
+        for agent_id in [a for a in list(getattr(index, "_partitions", {})) if a is not None]:
+            if index.count(agent_id) < vector_snapshot.MIN_ROWS:
+                continue
+            version = store._write_version()
+            if getattr(store, "scope_snapshot_version", lambda _a: None)(agent_id) == version:
+                continue  # the snapshots already describe the store as it is
+            pipeline._sync_index(agent_id, pipeline._allowed_ids(agent_id, SessionFilter()))
+            save_snapshot(store, index, self.embedder, agent_id, version)
+            saved += 1
+        return saved
 
     def consolidate(self, agent_id: str, *, promote_threshold: float = 0.7) -> "ConsolidationResult":
         """Promote high-importance working memory to LTM; delete expired fragments."""
