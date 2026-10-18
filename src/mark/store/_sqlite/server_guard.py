@@ -13,6 +13,10 @@ lock first: if another process holds it, the open is refused with
 server of the *same* build never triggers this: it migrated the store when
 it opened it, so no migration is pending. The lock is only probed when a
 migration is due (once per upgrade), never on a normal open.
+
+Servers from a8/a9 hold no OS lock (an ``O_EXCL`` pid file instead); they
+are recognised by :mod:`~mark.store._sqlite.server_legacy` (live pid in the
+lock or state file, or an answer to the ``/hello`` handshake).
 """
 from __future__ import annotations
 
@@ -24,8 +28,6 @@ from mark.errors import StoreInUseError  # noqa: F401 - re-exported for callers
 # Lock files this process holds as a server (``mark serve`` registers its own):
 # its engine opens the store after taking the lock and must not refuse itself.
 OWN_LOCKS: set[str] = set()
-
-
 
 
 def foreign_server(db_path: str) -> tuple[bool, int | None]:
@@ -41,17 +43,23 @@ def foreign_server(db_path: str) -> tuple[bool, int | None]:
     try:
         fd = os.open(lock, os.O_RDWR)
     except OSError:
-        return False, None  # no lock file: no server
-    try:
+        fd = None  # no lock file: no a10 server (an a8/a9 one may still answer)
+    if fd is not None:
         try:
-            _try_lock(fd)
-        except OSError:
-            pid = _owner(fd)
-            return pid != os.getpid(), pid  # our own server (serve opens its engine after locking)
-        _unlock(fd)
-        return False, None
-    finally:
-        os.close(fd)
+            try:
+                _try_lock(fd)
+            except OSError:
+                pid = _owner(fd)
+                return pid != os.getpid(), pid  # our own server (serve opens its engine after locking)
+            _unlock(fd)
+        finally:
+            os.close(fd)
+    from mark.store._sqlite.server_legacy import legacy_server
+
+    pid = legacy_server(db_path)
+    if pid is not None:
+        return True, pid or None
+    return False, None
 
 
 def _owner(fd: int) -> int | None:

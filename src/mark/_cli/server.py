@@ -173,6 +173,7 @@ def _acquire_lock(db: Path) -> _ServerLock:
         if not same:
             os.close(fd)
             continue
+        _refuse_legacy_server(db, fd)
         os.ftruncate(fd, 0)
         os.write(fd, str(os.getpid()).encode())
         from mark.store._sqlite.server_guard import OWN_LOCKS
@@ -180,6 +181,22 @@ def _acquire_lock(db: Path) -> _ServerLock:
         OWN_LOCKS.add(os.path.abspath(lock))  # our own engine may migrate the store
         return _ServerLock(lock, fd)
     raise SystemExit(f"could not acquire the server lock for {db}")
+
+
+def _refuse_legacy_server(db: Path, fd: int) -> None:
+    """Exit if an a8/a9 ``mark serve`` (pid lock file, no OS lock) still serves *db*.
+
+    Its lock file is not OS-locked, so our flock succeeded; serving (and
+    migrating) beside it would split writes between two builds.
+    """
+    from mark.store._sqlite.server_legacy import legacy_server
+
+    pid = legacy_server(str(db))
+    if pid is None:
+        return
+    os.close(fd)  # the file is the old server's: leave its content alone
+    raise SystemExit(f"an older MARK server{f' (pid {pid})' if pid else ''} is running for {db}; "
+                     "stop it first")
 
 
 def _release_lock(lock: _ServerLock) -> None:
