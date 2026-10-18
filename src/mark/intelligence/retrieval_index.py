@@ -20,13 +20,15 @@ fallbacks (helpers in ``retrieval_index_compat``). The host class provides ``_st
 from __future__ import annotations
 
 import logging
+import time
 from mark.index import VectorSearchResult
 from mark.intelligence import index_bulk_load
 from mark.intelligence.index_bulk_load import (
     _same_embedding_space, bulk_index, changed_ids, index_each, restore_snapshot, save_snapshot, scope_ids,
     sync_delta, wants_numpy,
 )
-from mark.intelligence.pending_embeddings import _PendingEmbeddingsMixin, is_transient
+from mark.intelligence import pending_embeddings
+from mark.intelligence.pending_embeddings import _PendingEmbeddingsMixin, catchup_deadline, is_transient
 from mark.intelligence.retrieval_index_compat import _StoreCompatMixin
 from mark.intelligence.retrieval_policy import _RETRIEVABLE_STATES, SessionFilter
 from mark.types import MemoryFragment
@@ -100,6 +102,9 @@ class _IndexSyncMixin(_PendingEmbeddingsMixin, _StoreCompatMixin):
         pipeline's equality check is O(1). Unchanged scope + index revision: no work.
         """
         with self._sync_lock:
+            # Embedding a backlog (rows written during an embedder outage) is
+            # bounded per recall; the rest continues on the next ones.
+            self.__dict__["_catchup_deadline"] = catchup_deadline()
             if agent_id not in self._verified_agents:
                 try:
                     self._verify_embedder(agent_id)
@@ -163,8 +168,8 @@ class _IndexSyncMixin(_PendingEmbeddingsMixin, _StoreCompatMixin):
             to_embed = index_each(stored, missing, getattr(self._embedder, "dim", None), self._index_add, agent_id)
         if snapshot_due and not to_embed:
             save_snapshot(self._store, self._index, self._embedder, agent_id, version)
-        if to_embed:
-            self._embed_and_index(agent_id, to_embed)
+        if to_embed and not self._embed_and_index(agent_id, to_embed, catch_up=True):
+            return False  # backlog left for the next recall
         return not to_embed or set(to_embed) <= self._index_ids(agent_id)
 
     def _verify_embedder(self, agent_id: str) -> None:
@@ -203,10 +208,25 @@ class _IndexSyncMixin(_PendingEmbeddingsMixin, _StoreCompatMixin):
             self._embed_and_index(agent_id, ids)
         set_meta(key, fingerprint)
 
-    def _embed_and_index(self, agent_id: str, fragment_ids: list[str], batch_size: int = 64) -> None:
+    def _embed_and_index(self, agent_id: str, fragment_ids: list[str], batch_size: int = 64,
+                         catch_up: bool = False) -> bool:
+        """Embed and index *fragment_ids*; False when some were left pending.
+
+        ``catch_up`` (a recall embedding a backlog) stops at the sync's
+        deadline, starting with small batches that grow while they are fast,
+        so a slow embedder delays one recall by about ``CATCHUP_SECONDS``.
+        """
         update = getattr(self._store, "update_embedding", None)
-        for start in range(0, len(fragment_ids), batch_size):
-            chunk = fragment_ids[start:start + batch_size]
+        deadline = self.__dict__.get("_catchup_deadline") if catch_up else None
+        size = min(batch_size, pending_embeddings.CATCHUP_FIRST_BATCH) if deadline is not None else batch_size
+        start = 0
+        while start < len(fragment_ids):
+            if deadline is not None and time.monotonic() >= deadline:
+                self.__dict__.setdefault("_pending_agents", set()).add(agent_id)
+                return False
+            chunk = fragment_ids[start:start + size]
+            start += size
+            began = time.monotonic()
             fragments = self._get_many(chunk)
             ordered = [fragments[fid] for fid in chunk if fid in fragments]
             if not ordered:
@@ -214,12 +234,15 @@ class _IndexSyncMixin(_PendingEmbeddingsMixin, _StoreCompatMixin):
             vectors = self._embed_batch_or_defer([f.content for f in ordered])
             if vectors is None:  # embedder down: these stay pending until it answers
                 self.__dict__.setdefault("_pending_agents", set()).add(agent_id)
-                return
+                return False
             getattr(self._store, "mark_vectors_dirty", lambda *a: None)(agent_id, [f.id for f in ordered])
             for fragment, vector in zip(ordered, vectors):
                 if update is not None:
                     update(fragment.id, vector)
                 self._index_add(fragment.id, vector, fragment.content, agent_id)
+            if deadline is not None and time.monotonic() - began < pending_embeddings.CATCHUP_SECONDS / 8:
+                size = min(batch_size, size * 2)
+        return True
 
     # ── Search channels ───────────────────────────────────────────────────────
 

@@ -12,7 +12,9 @@ warning per outage. Meanwhile:
   outage costs one timeout, not one per call;
 - every index sync re-embeds the pending memories once the embedder
   answers again (the next recall or ``warm_up``; in a new process the cold
-  load finds the NULL embeddings and embeds them).
+  load finds the NULL embeddings and embeds them), for at most about
+  ``CATCHUP_SECONDS`` per sync, so a slow server never stalls one recall
+  on the whole backlog; the following recalls continue it.
 
 Configuration errors (HTTP 4xx such as a bad key or model) are not
 transient: they still fail the write, as before.
@@ -27,6 +29,15 @@ from mark.types import MemoryFragment
 
 logger = logging.getLogger("mark.retrieval")
 RETRY_SECONDS = 30.0
+# A recall embeds a backlog for at most about this long (plus one batch);
+# the next recalls continue it. Batches start small and grow while fast.
+CATCHUP_SECONDS = 2.0
+CATCHUP_FIRST_BATCH = 8
+
+
+def catchup_deadline() -> float:
+    """Monotonic time at which one index sync stops embedding a backlog."""
+    return time.monotonic() + CATCHUP_SECONDS
 
 
 def is_transient(exc: BaseException) -> bool:
