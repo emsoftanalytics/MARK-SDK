@@ -2,9 +2,9 @@
 
 Recall and list lines show what an agent needs to act on a memory and no
 more: its short id (for ``forget``/``resolve``/``supersede``), its date (the
-declared event date, else the day it was stored) and the text. A ``#k``
-marker appears only when two shown results share a date, giving their
-order on that day; retired memories are flagged ``(superseded)``/``(resolved)``.
+declared event date, else the day it was stored) and the text; retired
+memories are flagged ``(superseded)``/``(resolved)``. Results sharing a date
+keep their order without a rank marker (``order`` stays in ``--json``).
 Standard library only.
 """
 from __future__ import annotations
@@ -15,12 +15,10 @@ from typing import Any
 
 def _memory_line(memory: dict[str, Any], prefix: str) -> str:
     date = memory.get("date") or ""
-    if memory.get("order"):
-        date += f"#{memory['order']}"
     content = memory["content"]
     # The text already starts with "[<date>]": don't print the date twice.
-    if memory.get("date") and content.startswith(f"[{memory['date']}"):
-        date = f"#{memory['order']}" if memory.get("order") else ""
+    if date and content.startswith(f"[{date}"):
+        date = ""
     flag = f" ({memory['lifecycle']})" if memory.get("lifecycle") else ""
     kind = f"[{memory['kind']}] " if memory.get("kind") else ""
     head = " ".join(part for part in (prefix, memory.get("short_id") or memory["id"][:8], date) if part)
@@ -64,6 +62,9 @@ def print_result(args: Any, cmd: str, result: dict[str, Any]) -> None:
         print(result["text"])
     elif cmd == "list":
         print_list(result)
+    elif cmd == "fact-set" and result["fact"].get("scheduled"):
+        fact = result["fact"]
+        print(f"{fact['text']}  (not current until then)")
     elif cmd == "fact-retract":
         print(f"retracted {result['retracted']} fact(s)")
     elif cmd.startswith("fact-"):
@@ -73,23 +74,30 @@ def print_result(args: Any, cmd: str, result: dict[str, Any]) -> None:
         if not facts:
             print("(no facts)")
     elif cmd == "ingest":
-        extracted = f", {result['extracted']} facts extracted" if "extracted" in result else ""
-        print(f"stored {result['stored']} memories{extracted}")
+        print(_ingest_line(result))
     elif cmd in {"store", "remember"}:
         extracted = f" ({result['extracted']} facts extracted)" if "extracted" in result else ""
-        print(f"stored {result['id']}{extracted}")
+        print(f"stored {result['id'][:8]}{extracted}")  # the short id every command accepts
     elif cmd == "forget":
         secure = " and erased from disk" if result["secure"] and result["forgotten"] else ""
         print(f"forgot {result['forgotten']} memor{'y' if result['forgotten'] == 1 else 'ies'}{secure}")
     elif cmd == "resolve":
         print(f"resolved {result['id'][:8]}")
     elif cmd == "supersede":
-        print(f"superseded {result['superseded'][:8]} with {result['id']}")
+        print(f"superseded {result['superseded'][:8]} with {result['id'][:8]}")
     elif cmd in {"export", "import"}:
         skipped = f", {result['skipped']} skipped" if result.get("skipped") else ""
+        invalid = f", {result['invalid']} invalid line(s)" if result.get("invalid") else ""
         verb = "exported" if cmd == "export" else "imported"
         print(f"{verb} {result['memories']} memories, {result['facts']} facts, "
-              f"{result['documents']} documents{skipped} ({result['path']})")
+              f"{result['documents']} documents{skipped}{invalid} ({result['path']})")
+        for problem in result.get("problems", []):
+            print(f"  {problem}")
+    elif cmd == "config-show":
+        print(f"store: {result['db']}\nuser subject: {result['user_subject']}\n"
+              f"schema version: {result['schema_version']}\nembedder: {_embedder(result['embedder'])}")
+    elif cmd == "config-user-subject":
+        print(f"user subject: {result['user_subject']} (stored with the store)")
     elif cmd == "agents":
         for item in result["agents"]:
             print(f"{item['agent']}  ({item['memories']} memories)")
@@ -99,6 +107,21 @@ def print_result(args: Any, cmd: str, result: dict[str, Any]) -> None:
         embedder = result.get("embedder")
         line = f"{result['memories']} memories, {result['facts']} current facts"
         if embedder:
-            kind = "semantic" if embedder["semantic"] else "lexical"
-            line += f"; embedder {embedder['name']} ({kind}, {embedder['source']})"
+            line += f"; embedder {_embedder(embedder)}"
         print(line)
+
+
+def _ingest_line(result: dict[str, Any]) -> str:
+    stored, existing = result["stored"], result.get("existing", 0)
+    line = f"stored {stored} new memor{'y' if stored == 1 else 'ies'}"
+    details = [f"{existing} already present"] if existing else []
+    if result.get("skipped"):
+        details.append(f"{result['skipped']} skipped")
+    if "extracted" in result:
+        details.append(f"{result['extracted']} facts extracted")
+    return line + (f" ({', '.join(details)})" if details else "")
+
+
+def _embedder(info: dict[str, Any]) -> str:
+    kind = "semantic" if info["semantic"] else "lexical"
+    return f"{info['name']} ({kind}, {info['source']})"

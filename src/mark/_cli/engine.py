@@ -7,6 +7,7 @@ in-process and over the loopback server.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -21,14 +22,18 @@ def protocol_fingerprint() -> str:
     in-process instead). Computed from signatures only — MARK isn't loaded.
     """
     import hashlib
-    import inspect
 
     from mark._version import __version__
 
     parts = [__version__]
     for name in sorted(dir(_Engine)):
         if name.startswith("cmd_"):
-            parts.append(f"{name}{inspect.signature(getattr(_Engine, name))}")
+            # Parameter names and defaults straight from the code object:
+            # `inspect` costs ~10 ms of every served call's start-up.
+            func = getattr(_Engine, name)
+            code = func.__code__
+            params = code.co_varnames[: code.co_argcount + code.co_kwonlyargcount]
+            parts.append(f"{name}{params}{func.__defaults__}{func.__kwdefaults__}")
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
 
 
@@ -43,9 +48,12 @@ class _Engine(EngineOpsMixin):
     def __init__(self, db: Path) -> None:
         from mark._private_fs import ensure_private_dir
         from mark.memory.runtime import MarkRuntime
+        from mark.runtime_config import apply_user_subject
 
         ensure_private_dir(db.parent)  # 0700 when created here
+        self.db = db
         self.runtime = MarkRuntime.local(store_path=db)
+        apply_user_subject(self.runtime)  # the subject stored with the store (mark config)
 
     def close(self) -> None:
         self.runtime.shutdown()
@@ -65,19 +73,17 @@ class _Engine(EngineOpsMixin):
                    kind: str | None = None) -> dict[str, Any]:
         import hashlib
 
-        from mark.kinds import kind_tag, normalize_kind
-
         texts = [line.strip() for line in lines if line.strip()]
-        kind = normalize_kind(kind)
-        all_tags = [*(tags or []), *([kind_tag(kind)] if kind else [])]
         # Idempotent: a retried ingest (e.g. after the server was killed mid-request) maps the
         # same lines to the same ids and never duplicates them; each call is one transaction.
         key = "ingest:" + hashlib.sha256("\n".join(texts).encode("utf-8", "surrogatepass")).hexdigest()
+        # remember_many: "TODO:"/"BUG:"... lines get their kind, as `mark remember` does.
         # extract_facts=True: built-in pattern packs, each line's "[YYYY-MM-DD]" stamp as valid_from.
-        report = self._memory(agent).store_many_sync(texts, session_id=session, tags=all_tags or None,
-                                                     extract_facts=True if extract_facts else None,
-                                                     idempotency_key=key)
-        result: dict[str, Any] = {"stored": report.stored}
+        report = self._memory(agent).remember_many(texts, kind=kind, tags=tags or None, session_id=session,
+                                                   extract_facts=True if extract_facts else None,
+                                                   idempotency_key=key)
+        # "stored" counts new memories only; a re-ingest reports what was already there.
+        result: dict[str, Any] = {"stored": report.stored - report.existing, "existing": report.existing}
         if report.skipped:
             result["skipped"] = len(report.skipped)
         if extract_facts:
@@ -108,14 +114,15 @@ class _Engine(EngineOpsMixin):
 
     def cmd_recall(self, agent: str, query: str, k: int = 10, order: str = "relevance",
                    session: str | None = None, since: str | None = None, until: str | None = None,
-                   tags: list[str] | None = None, kind: str | None = None) -> dict[str, Any]:
-        if not any((session, since, until, tags, kind)):
+                   tags: list[str] | None = None, kind: str | None = None,
+                   open: bool = False) -> dict[str, Any]:  # noqa: A002 - mirrors `--open`
+        if not any((session, since, until, tags, kind, open)):
             return self.cmd_recall_many(agent, [query], k, order)["results"][0]
         # Filtered recall goes through MarkMemory.recall (tag/kind/session
-        # pre-filters, since/until on event time).
+        # pre-filters, since/until on event time, open= drops retired memories).
         k = max(1, min(int(k), 15))
-        result = self._memory(agent).recall(query, k=k, session_id=session, since=since,
-                                            until=until, tags=tags, kind=kind)
+        result = self._memory(agent).recall(query, k=k, session_id=session, since=since, until=until,
+                                            tags=tags, kind=kind, open=True if open else None)
         return _result_json(result, k, order)
 
     def cmd_recall_many(self, agent: str, queries: list[str], k: int = 10,
@@ -154,6 +161,9 @@ class _Engine(EngineOpsMixin):
     def cmd_fact_history(self, agent: str, subject: str, attribute: str) -> dict[str, Any]:
         return {"facts": [_fact_json(f) for f in self._memory(agent).facts.history(subject, attribute)]}
 
+    def cmd_fact_list(self, agent: str, subject: str | None = None) -> dict[str, Any]:
+        return {"facts": [_fact_json(f) for f in self._memory(agent).facts.current(subject or None)]}
+
     def cmd_stats(self, agent: str) -> dict[str, Any]:
         from mark.embeddings.info import embedder_info
 
@@ -168,6 +178,7 @@ def _fact_json(fact: Any) -> dict[str, Any]:
         "valid_from": fact.valid_from.isoformat(),
         "valid_to": fact.valid_to.isoformat() if fact.valid_to else None,
         "text": fact.as_text(), "current": fact.is_current,
+        "scheduled": fact.valid_from > datetime.now(timezone.utc),
     }
 
 

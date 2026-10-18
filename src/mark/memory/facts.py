@@ -11,11 +11,14 @@ nothing is deleted.
     mem.facts.history("atlas-core", "port")      # oldest → newest
     mem.facts.as_of("atlas-core", "port", "2026-03-20")
     mem.facts.add("Dr. Bello", "phone", "+234 1")  # several current values
+    mem.facts.get_all("Dr. Bello", "phone")      # every current value
     mem.facts.scheduled()                        # values that start in the future
 
 Values keep their Python type (str, int, float, bool, None, list, dict);
 rows written before typed values existed read back as strings. A value whose
-``valid_from`` is in the future is *scheduled*: not current until then.
+``valid_from`` is in the future is *scheduled*: not current until then (its
+``as_text()`` says "scheduled from <date>"). Times (``valid_from``, ``as_of``)
+accept datetimes, ISO text or words such as "yesterday" or "3 May 2026".
 
 Facts can also be extracted automatically from stored memories (see
 :mod:`mark.intelligence.fact_extraction`); slow extractors queue their work,
@@ -54,15 +57,22 @@ class Fact:
         return self.valid_from <= now and (self.valid_to is None or self.valid_to > now)
 
     @property
+    def is_scheduled(self) -> bool:
+        """True when the value starts in the future (recorded ahead of time)."""
+        return self.valid_from > datetime.now(timezone.utc)
+
+    @property
     def text(self) -> str:
         """The value as text (str as-is, numbers plainly, other types as JSON)."""
         return value_text(self.value)
 
     def as_text(self) -> str:
-        """One-line rendering, e.g. 'atlas-core port = 4444 (since 2026-03-30)'."""
+        """One line: 'atlas-core port = 4444 (since 2026-03-30)', or '(scheduled from ...)'."""
         since = self.valid_from.date().isoformat()
         until = f" until {self.valid_to.date().isoformat()}" if self.valid_to else ""
-        return f"{self.subject} {self.attribute} = {self.text} (since {since}{until})"
+        # A future value is not current: "since" would claim it already holds.
+        label = "scheduled from" if self.is_scheduled else "since"
+        return f"{self.subject} {self.attribute} = {self.text} ({label} {since}{until})"
 
 
 class FactsView:
@@ -141,9 +151,16 @@ class FactsView:
         return [_fact(row) for row in self._store.fact_current(self._agent_id, subject, attribute)]
 
     def get(self, subject: str, attribute: str) -> Fact | None:
-        """The current value of (subject, attribute), or None (latest one if several)."""
+        """The current value of (subject, attribute), or None (latest one if several).
+
+        For multi-valued attributes (see :meth:`add`) use :meth:`get_all`.
+        """
         found = self.current(subject, attribute)
         return found[-1] if found else None
+
+    def get_all(self, subject: str, attribute: str) -> list[Fact]:
+        """Every current value of (subject, attribute): one for ``set``, several after ``add``."""
+        return self.current(subject, attribute)
 
     def scheduled(self, subject: str | None = None, attribute: str | None = None) -> list[Fact]:
         """Values recorded to take effect in the future, soonest first."""
@@ -201,12 +218,38 @@ def _fact(row: dict[str, Any]) -> Fact:
 
 
 def _when(value: datetime | str | None) -> datetime | None:
+    """A UTC-aware time from a datetime, ISO text or words ("yesterday", "3 May 2026")."""
     if value is None:
         return None
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return parse_time(value)
+
+
+def parse_time(value: Any, what: str = "date") -> datetime:
+    """Parse *value* (ISO text or natural words) into a UTC-aware datetime.
+
+    Shared by facts (``valid_from``, ``as_of``) and writes (``occurred_at``);
+    bad input raises :class:`mark.errors.InvalidInputError` (a ValueError).
+    """
+    from mark.errors import InvalidInputError
+
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    text = str(value).strip()
     try:
-        parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise ValueError(f"expected an ISO-8601 time, got {value!r}") from exc
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        parsed = None
+    if parsed is None:
+        from mark.intelligence.date_parsing import parse_when
+
+        try:
+            parsed = parse_when(text) if text else None
+        except ValueError:
+            parsed = None
+    if parsed is None:
+        raise InvalidInputError(
+            f"could not read a {what} from {value!r}; use an ISO date such as 2026-10-01 "
+            "(or 2026-10-01T14:30) or words such as 'yesterday', '3 May 2026', 'last tuesday'")
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)

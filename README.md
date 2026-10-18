@@ -36,11 +36,17 @@ The same from a shell (the store defaults to `./.mark/memory.db`):
 
 ```bash
 mark remember "We use FastAPI for the public API." --kind decision
-mark remember "TODO: add rate limiting to /login" --kind todo
+mark remember "TODO: add rate limiting to /login"      # "TODO:" sets the kind
 mark recall "What do we use for the API?"
 mark brief
 mark list --kind todo --open
 ```
+
+**One store, one rule.** Python, the CLI and MCP find the store the same
+way: a project folder keeps it in `<folder>/.mark/memory.db`, a folder named
+`.mark` is the store folder itself, and a `.db` file is the database. So
+`Mark.local(".")`, `Mark.local("./.mark")`, `mark --db .mark` and
+`mark mcp --db .mark` all open `./.mark/memory.db`.
 
 ### The memory API
 
@@ -51,19 +57,26 @@ are synchronous; an `a` prefix marks the async twin (`await mem.arecall(...)`).
 
 | Verb | What it does |
 | --- | --- |
-| `remember(text, kind=, tags=, session_id=, occurred_at=, extract_facts=)` | Store one memory; returns its id. Kinds: `decision`, `todo`, `bug`, `fix`, `preference`, `snippet`, `api`, `note`. |
-| `recall(query, k=, kind=, tags=, session_id=, since=, until=)` | Hybrid keyword + vector search. Returns a result with `as_context()`, `as_text()`, `to_dict()`, `facts`, `missing_anchors`. |
+| `remember(text, kind=, tags=, session_id=, occurred_at=, extract_facts=)` | Store one memory; returns its id. Kinds: `decision`, `todo`, `bug`, `fix`, `preference`, `snippet`, `api`, `note`; without `kind=`, a leading `TODO:`, `DECISION:`/`ADR:`, `BUG:`, `FIX:`, `DONE:`/`NOTE:`, `API:` or `SNIPPET:` label sets it. `occurred_at` takes ISO text or words ("yesterday", "3 May 2026"). |
+| `remember_many(texts, kind=, tags=, idempotency_key=)` | Store a batch in one transaction; returns a `StoreReport` (ids in input order, `skipped`, `existing`). |
+| `recall(query, k=, kind=, tags=, session_id=, since=, until=, open=)` | Hybrid keyword + vector search (`open=True` leaves out resolved and superseded memories). Returns a result with `as_context()`, `as_text()`, `to_dict()`, `facts`, `missing_anchors`. |
 | `brief(budget_tokens=400, focus=)` | One-call session brief: current facts, open TODOs, decisions, bugs and fixes, recent changes. |
-| `facts` | Values that change over time: `set`, `get`, `history`, `as_of`, `add`/`remove`, `retract`, `delete`. |
+| `facts` | Values that change over time: `set`, `get`, `get_all`, `history`, `as_of`, `add`/`remove`, `scheduled`, `retract`, `delete`. |
 | `timeline(subject, attribute=)` | Everything known about a subject, oldest first, no top-k cap. |
 | `supersede(id, text)` / `update(id, text)` | Replace a memory; the old one is kept as history and ranked down. |
 | `resolve(id, note=)` | Close a TODO or bug. |
 | `forget(id or match=, secure=)` | Delete a memory and the facts extracted from it; `secure=True` plus `vacuum()` erase the text from disk. |
 | `get`, `list(kind=, open=)`, `count` | Read and page through memories. |
-| `export_jsonl(path)` / `import_jsonl(path)` | Back up and restore (idempotent). `Mark` has the same for the whole store. |
+| `store_document(text_or_path)`, `remember_file(path)`, `documents`, `images` | Long documents, any file routed by content, image memories (see below). |
+| `export_jsonl(path)` / `import_jsonl(path)` | Back up and restore (idempotent; bad lines are skipped and reported). `Mark` has the same for the whole store. |
 | `embedder_info()` | Which embedder is active and how it was chosen. |
 
-The 0.2.0a9 names (`store_sync`, `retrieve_sync`, `retrieve`) still work.
+`mark.kinds.kind_of(memory.get(id))` gives a memory's kind. The 0.2.0a9
+names (`store_sync`, `retrieve_sync`) still work; `mark.memory.retrieve()`
+still works but is deprecated (it warns): use `recall(...).as_context()`.
+Errors are `mark.MarkError` subclasses (`InvalidInputError`,
+`MemoryTooLargeError`, `StoreClosedError`, `StoreVersionError`, ...), and
+`mark.close()` is the same as `mark.shutdown()`.
 
 ## Install
 
@@ -79,13 +92,16 @@ The 0.2.0a9 names (`store_sync`, `retrieve_sync`, `retrieve`) still work.
 ## Recipe: a personal assistant
 
 First-person statements become facts about the user, newer statements win,
-and anything can be forgotten for good.
+and anything can be forgotten for good. The user subject (who "I" is) is
+stored with the store, so every later open, `mark recall` and MCP use it too;
+set it from a shell with `mark config user-subject Ana` (`mark config show`
+prints it).
 
 ```python
 from mark import Mark
 
-with Mark.local("./.mark", fact_extractor="patterns") as mark:  # facts from every write
-    mark.runtime.configure_user_subject("Ana")                  # "I"/"my" facts are about Ana
+with Mark.local("./.mark", fact_extractor="patterns",   # facts from every write
+                user_subject="Ana") as mark:            # "I"/"my" facts are about Ana
     me = mark.memory
 
     me.remember("I prefer tea over coffee.", kind="preference")
@@ -135,34 +151,44 @@ From the command line, which is what most coding agents call:
 
 ```bash
 mark remember "DECISION: retries use exponential backoff with jitter" --kind decision
-id=$(mark remember "TODO: cover uploader.py::Uploader.send with a retry test" --kind todo | awk '{print substr($2,1,8)}')
+id=$(mark remember "TODO: cover uploader.py::Uploader.send with a retry test" | awk '{print $2}')
 mark brief                         # facts, open TODOs, decisions, bugs and fixes
 mark resolve "$id" --note "test added"
 mark list --kind todo --open       # nothing left open
 mark recall "Uploader.send" -k 3
+mark fact set billing-api port 9191 --valid-from "last monday"
+mark fact list billing-api
 mark forget --match "exponential backoff" --secure
 ```
 
-Output shows 8-character ids, which every command accepts. `recall` also
-takes `--kind`, `--tag`, `--session`, `--since`, `--until`, `--chronological`
-and `--json`. `mark serve` keeps the store warm so each command answers in
-about 0.1 s (loopback only, token-authenticated, `mark serve stop` to end
-it).
+Output shows 8-character ids (`--json` for full ones), which every command
+accepts. `recall` also takes `--kind` (open memories only, unless `--all`),
+`--open`, `--tag`, `--session`, `--since`, `--until` (ISO dates or words such
+as "last week"), `--chronological` and `--json`. `mark ingest FILE` stores
+each line, sets kinds from their labels and is safe to repeat. Read commands
+on a store that does not exist say so instead of creating it. `mark serve`
+keeps the store warm so each command answers in about 0.1 s (loopback only,
+token-authenticated, `mark serve stop` to end it).
 
-**MCP.** `mark mcp` (or `python -m mark.adapters.mcp --db .mark/memory.db`)
-serves the same store to any MCP client over stdio. A client configuration:
+**MCP.** `mark mcp` (or `python -m mark.adapters.mcp`, same options) serves
+the same store to any MCP client over stdio. A client configuration:
 
 ```json
 {"mcpServers": {"mark": {"command": "python",
-  "args": ["-m", "mark.adapters.mcp", "--db", "/path/to/project/.mark/memory.db"]}}}
+  "args": ["-m", "mark.adapters.mcp", "--db", "/path/to/project/.mark"]}}}
 ```
 
-Tools: `mark_brief` (call it first), `mark_retrieve`, `mark_write`,
-`mark_observe`, `mark_fact`, `mark_timeline`, `mark_forget`; `--briefing`
-adds `mark_briefing`, `--tools` exposes a subset, and `--allow-agent` limits
-the namespaces a client may use. Errors come back as MCP error results with
-the reason. The packaged `mark-usage` skill (`mark.middlewares.skills`)
-teaches an agent these habits.
+Tools: `mark_brief` (call it first), `mark_retrieve`, `mark_write` (with
+`kind`), `mark_observe`, `mark_fact`, `mark_timeline`, `mark_list` (e.g. open
+TODOs), `mark_resolve`, `mark_supersede` and `mark_forget` (by id or
+`match`, optionally `secure`). Outputs show 8-character ids, which every
+tool accepts, and `mark_retrieve` stays within `budget_tokens` (default
+1500), showing each long memory's best passage. Options: `--db`, `--agent`
+(default namespace), `--briefing` (adds `mark_briefing`), `--preset
+default|small|tiny`, `--tools` (a subset), `--allow-agent` (limit the
+namespaces a client may use) and `--user-subject`. Errors come back as MCP
+error results with one sentence. The packaged `mark-usage` skill
+(`mark.middlewares.skills`) teaches an agent these habits.
 
 ## Documents and files
 
@@ -205,7 +231,9 @@ with Mark.local("./.mark") as mark:
 
     print(facts.get("atlas-core", "port").value)                      # 4444 (types are kept)
     print([f.value for f in facts.history("atlas-core", "port")])     # [6430, 5000, 4444]
-    print(facts.as_of("atlas-core", "port", "2026-03-20").value)      # 5000
+    print(facts.as_of("atlas-core", "port", "20 March 2026").value)   # 5000 (ISO or words)
+    print(facts.set("atlas-core", "port", 4500, valid_from="2099-01-01").as_text())
+    # atlas-core port = 4500 (scheduled from 2099-01-01): not current until then
     print(mark.memory.timeline("atlas-core").as_text())               # every event, oldest first
 ```
 
@@ -311,7 +339,7 @@ separated from its result. `create_mark_tools(LocalMarkBackend(mark))` (in
 | Surface | Entry point | Use it when |
 | --- | --- | --- |
 | Python | `Mark.local()`, `mark.memory`, `mark.runtime.memory(id)` | Your code owns the agent loop. |
-| Command line | `mark remember / recall / brief / resolve / forget / fact / timeline / export` | Shell scripts and coding agents that run commands. |
+| Command line | `mark remember / recall / brief / resolve / forget / fact / timeline / export / config` | Shell scripts and coding agents that run commands. |
 | MCP | `mark mcp`, `python -m mark.adapters.mcp --db PATH` | Any MCP client (desktop assistants, IDE agents). |
 | LangChain | `MarkAgentMiddleware`, `create_mark_tools` | LangChain v1 agents. |
 | Plain loops | `ContextWatch` + `inject`, `MarkChat`, `mark.wrap_agent(fn)` | Any OpenAI-style message list or plain function. |
