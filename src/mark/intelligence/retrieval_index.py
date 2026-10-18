@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 from mark.index import VectorSearchResult
+from mark.intelligence import index_bulk_load
 from mark.intelligence.index_bulk_load import (
     _same_embedding_space, bulk_index, changed_ids, index_each, restore_snapshot, save_snapshot, scope_ids,
     sync_delta, wants_numpy,
@@ -139,15 +140,20 @@ class _IndexSyncMixin(_StoreCompatMixin):
         pages, add_many = getattr(self._store, "embedding_pages", None), getattr(self._index, "add_many", None)
         if pages is not None and add_many is not None and before is not None and len(missing) > 256:
             numpy = wants_numpy(self._index, before + len(missing))
-            to_embed = bulk_index(pages(agent_id), missing, getattr(self._embedder, "dim", None), add_many, agent_id, numpy)
+            # A gap that is a small part of the agent (rows written since a snapshot)
+            # is read by id; streaming every row of a million-memory agent is not.
+            by_id = getattr(self._store, "embedding_rows", None)
+            small = len(missing) * index_bulk_load.BY_ID_FRACTION < before + len(missing)
+            source = [by_id(missing)] if by_id is not None and small else pages(agent_id)
+            to_embed = bulk_index(source, missing, getattr(self._embedder, "dim", None), add_many, agent_id, numpy)
             if count(agent_id) - before + len(to_embed) != len(missing):
                 # Some ids were not in embedding_pages (state changed meanwhile).
-                to_embed = list(missing - self._index_ids(agent_id))
-            if snapshot_due and not to_embed:
-                save_snapshot(self._store, self._index, self._embedder, agent_id, version)
+                to_embed = list(set(missing) - self._index_ids(agent_id))
         else:  # small gaps (or legacy stores/indexes): per-vector path
             stored = self._stored_embeddings(agent_id, set(missing))
             to_embed = index_each(stored, missing, getattr(self._embedder, "dim", None), self._index_add, agent_id)
+        if snapshot_due and not to_embed:
+            save_snapshot(self._store, self._index, self._embedder, agent_id, version)
         if to_embed:
             self._embed_and_index(agent_id, to_embed)
         return not to_embed or set(to_embed) <= self._index_ids(agent_id)

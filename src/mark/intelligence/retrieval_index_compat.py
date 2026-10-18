@@ -18,6 +18,11 @@ class _StoreCompatMixin:
     """Reads and index operations that tolerate legacy/custom stores and indexes."""
 
     def _stored_embeddings(self, agent_id: str, ids: set[str] | None) -> dict[str, list[float] | None]:
+        by_id = getattr(self._store, "embedding_rows", None)
+        if ids is not None and by_id is not None:  # just these rows (never decode the whole agent)
+            from mark.store._sqlite.codec import _decode_embedding
+
+            return {str(row[0]): _decode_embedding(row[1], row[2]) for row in by_id(ids)}
         fetch = getattr(self._store, "embeddings_for_agent", None)
         if fetch is not None and (ids is None or len(ids) > 2_000):  # a few ids: read just their rows
             rows = fetch(agent_id)

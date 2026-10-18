@@ -149,3 +149,33 @@ def test_serve_saves_a_fresh_snapshot_on_graceful_stop(snapshot_store, monkeypat
     info = json.loads(store.get_meta(f"{vector_snapshot.SCOPE_META_PREFIX}{AGENT}"))
     assert info["version"] == version and info["count"] == len(ids) + 1
     store.close()
+
+
+def test_a_snapshot_without_a_scope_record_is_resaved_once(snapshot_store, monkeypatch) -> None:
+    path, ids = snapshot_store
+    store = LocalMemoryStore(path / ".mark" / "memory.db")
+    with store._writing(structural=False) as conn:  # as an earlier build saved it
+        conn.execute("DELETE FROM schema_info WHERE key = ?", (f"{vector_snapshot.SCOPE_META_PREFIX}{AGENT}",))
+    store.close()
+    with Mark.local(path) as mark:  # full scan this time, and the snapshot gets its record
+        mark.runtime.memory(AGENT).retrieve_sync("svc-001 patched")
+    scans = _no_full_scan(monkeypatch)
+    with Mark.local(path) as mark:
+        assert len(mark.runtime.store.retrievable_id_set(AGENT)) == len(ids)
+    assert scans == []
+
+
+def test_a_few_rows_since_the_snapshot_are_read_by_id(snapshot_store, monkeypatch) -> None:
+    path, _ = snapshot_store
+    with Mark.local(path) as mark:
+        mark.runtime.memory(AGENT).store_many_sync(_texts(300, start=1000))  # > 256: the bulk path
+    from mark.intelligence import index_bulk_load
+
+    monkeypatch.setattr(index_bulk_load, "BY_ID_FRACTION", 2)  # 300 of 700 counts as "a few" here
+    pages: list[str] = []
+    monkeypatch.setattr(LocalMemoryStore, "embedding_pages", lambda self, agent_id, page_size=20_000: pages.append(agent_id) or iter(()))
+    with Mark.local(path) as mark:
+        memory = mark.runtime.memory(AGENT)
+        assert memory.retrieve_sync("ticket T-1299").fragments
+        assert mark.runtime.index.count(AGENT) == 700
+    assert pages == []  # never streamed the whole agent for 300 new rows

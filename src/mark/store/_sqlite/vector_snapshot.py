@@ -133,6 +133,8 @@ class VectorSnapshotMixin:
                 (agent_id, fingerprint, dim, len(ids)),
             )
             scope = self._snapshot_scope_record(agent_id, ids, write_version)
+            if scope is not None:
+                self.__dict__.get("_snapshot_scope_missing", set()).discard(agent_id)
             conn.execute("DELETE FROM schema_info WHERE key = ?", (SCOPE_META_PREFIX + agent_id,))
             if scope is not None:
                 conn.execute("INSERT INTO schema_info (key, value) VALUES (?, ?)", (SCOPE_META_PREFIX + agent_id, scope))
@@ -174,6 +176,10 @@ class VectorSnapshotMixin:
         raw = self.get_meta(SCOPE_META_PREFIX + agent_id)
         try:
             info = json.loads(raw) if raw else None
+            if info is None and (where, list(params)) == self._default_scope_key(agent_id):
+                # A snapshot from a build that did not record its scope: the next
+                # index load re-saves it once (see index_bulk_load.restore_snapshot).
+                self.__dict__.setdefault("_snapshot_scope_missing", set()).add(agent_id)
             if not info or info["key"] != _key_hash(where, params):
                 return None
             texts = [str(row[0]) for row in self._fetchall(

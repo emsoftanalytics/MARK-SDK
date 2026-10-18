@@ -107,6 +107,22 @@ class FragmentReadMixin:
         )
         return [(str(row[0]), _decode_embedding(row[1], row[2])) for row in rows]
 
+    def embedding_rows(self, ids: Iterable[str]) -> list[tuple]:
+        """Raw (id, float32 blob, legacy JSON, rowid) rows for *ids*, like ``embedding_pages`` yields.
+
+        Primary-key lookups in chunks: a few thousand rows written since a
+        vector snapshot load without streaming the whole agent.
+        """
+        rows: list[tuple] = []
+        for chunk in _chunks(list(ids), _SQL_CHUNK):
+            with self._reading() as conn:
+                cursor = conn.cursor()
+                cursor.row_factory = None  # plain tuples
+                rows.extend(cursor.execute(
+                    "SELECT id, embedding_blob, embedding, rowid FROM fragments"
+                    f" WHERE id IN ({','.join('?' for _ in chunk)})", chunk).fetchall())
+        return rows
+
     def list_sessions(self, agent_id: str) -> list[str]:
         """Return distinct session_ids for agent_id, ordered by most recent activity."""
         rows = self._fetchall(

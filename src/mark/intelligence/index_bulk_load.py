@@ -24,6 +24,10 @@ from mark.index.vector_backends import _load_numpy
 from mark.store._sqlite.codec import _decode_embedding
 from mark.store._sqlite.scope_ids import ScopeIds  # re-exported: imported from here by callers
 
+# A gap of less than 1/BY_ID_FRACTION of the agent is read by primary key
+# instead of streaming every row (read at call time, so tests can patch it).
+BY_ID_FRACTION = 16
+
 
 def scope_ids(cache: dict, key: object, ids: frozenset[str]) -> ScopeIds:
     """Wrap the store's cached id set in a ScopeIds, once per distinct set object."""
@@ -171,7 +175,10 @@ def restore_snapshot(
     loaded = index.count(agent_id)
     # Every loaded id is wanted and distinct: equal counts mean nothing is left.
     left = set() if loaded == len(wanted) else index.missing(wanted, agent_id)
-    return left, loaded, len(left) >= max(1_000, len(wanted) // 10), version
+    # Re-save when stale, or once for a snapshot saved without its scope record
+    # (an earlier build): later cold starts then skip the scope scan too.
+    resave = agent_id in getattr(store, "_snapshot_scope_missing", ())
+    return left, loaded, resave or len(left) >= max(1_000, len(wanted) // 10), version
 
 
 def save_snapshot(store: Any, index: Any, embedder: Any, agent_id: str, write_version: int) -> None:
