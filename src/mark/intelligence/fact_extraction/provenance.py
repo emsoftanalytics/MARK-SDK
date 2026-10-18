@@ -15,20 +15,21 @@ all is returned unchanged.
 from __future__ import annotations
 
 import re
+from mark.security.lazy_regex import lazy_compile
 
 # "User said:", "User:", "Human:", "Me:" -> the user's own words.
-_USER = re.compile(r"^\s*(?:\[[^\]\n]*\]\s*)?(?:user|human|me)(?:\s+(?:said|says|wrote|asked))?\s*:\s*",
+_USER = lazy_compile(r"^\s*(?:\[[^\]\n]*\]\s*)?(?:user|human|me)(?:\s+(?:said|says|wrote|asked))?\s*:\s*",
                    re.IGNORECASE)
 # Assistant / agent / tool turns: never extracted. ("System:" is left alone: ops
 # logs use it as an ordinary label, "[2026-03-01] SYSTEM: atlas-core moved ...".)
-_OTHER = re.compile(
+_OTHER = lazy_compile(
     r"^\s*(?:\[[^\]\n]*\]\s*)?(?:"
     r"(?:assistant|ai|bot|claude|gpt)(?:\s+(?:said|says|replied|answered|wrote|responded))?"
     r"|agent(?:\s+(?:reasoning|said|replied|completed\s+task\.\s*response|response|note|thought|plan))?"
     r"|tool(?:\s*\[[^\]\n]*\])?(?:\s+(?:returned|result|output|said|error))?|\[called\s+tool\]"
     r"|observation|function(?:\s+result)?)\s*:\s*",
     re.IGNORECASE)
-_CALLED_TOOL = re.compile(r"^\s*\[called tool\]", re.IGNORECASE)
+_CALLED_TOOL = lazy_compile(r"^\s*\[called tool\]", re.IGNORECASE)
 
 
 def user_text(text: str) -> str:

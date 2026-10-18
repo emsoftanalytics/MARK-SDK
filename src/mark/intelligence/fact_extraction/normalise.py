@@ -18,10 +18,11 @@ from mark.intelligence.fact_extraction.base import FactCandidate, clean_text, is
 from mark.intelligence.fact_extraction.personal import restore
 from mark.intelligence.fact_extraction.rules import ATTRIBUTE_SYNONYMS, ATTRIBUTE_WORDS, RulePack
 from mark.intelligence.fact_extraction.vocab import change_attribute, value_type
+from mark.security.lazy_regex import lazy_compile
 
 # Leading kind nouns dropped from subjects when an identifier follows
 # ("service atlas-core" -> "atlas-core", "TICKET OPS-12" -> "OPS-12").
-_KIND_PREFIX = re.compile(
+_KIND_PREFIX = lazy_compile(
     r"^(?:the\s+)?(?:service|server|ticket|issue|bug|project|user|employee|customer|host|app|application"
     r"|system|repo|repository|job|task|incident|cluster|node|account|component|module)\s+"
     # Case-sensitive on purpose: only an identifier or a name follows ("project Phoenix"),
@@ -29,13 +30,13 @@ _KIND_PREFIX = re.compile(
     r"(?=\S*(?-i:[\d_.A-Z-]))",
     re.IGNORECASE)
 # Trailing kind nouns after an identifier ("the docs-site service" -> "docs-site").
-_KIND_SUFFIX = re.compile(
+_KIND_SUFFIX = lazy_compile(
     r"^(\S*[\d_.-]\S*)\s+(?:service|server|repo|repository|api|app|cluster|project|job|component|module)$",
     re.IGNORECASE)
 # One identifier-like token with letters and digits ("OPS-17", "web2").
-ID_TOKEN = re.compile(r"^(?=\S*\d)(?=\S*[^\W\d_])\S+$")
-_ARTICLE = re.compile(r"^(?:the|a|an|our|my|your|their)\s+", re.IGNORECASE)
-_TRAILING_FILLER = re.compile(
+ID_TOKEN = lazy_compile(r"^(?=\S*\d)(?=\S*[^\W\d_])\S+$")
+_ARTICLE = lazy_compile(r"^(?:the|a|an|our|my|your|their)\s+", re.IGNORECASE)
+_TRAILING_FILLER = lazy_compile(
     r"\s+(?:now|today|yesterday|tonight|instead|permanently|temporarily|again|as\s+well|too"
     r"|immediately|effective\s+immediately|in\s+production|last\s+(?:night|week|year|spring|summer|autumn|winter)"
     r"|this\s+(?:morning|week|year))$",
@@ -45,11 +46,11 @@ _TRAILING_FILLER = re.compile(
 _NOUNS = frozenset(tuple(w.lower().split()) for w in ATTRIBUTE_WORDS)
 _LONGEST = max(len(n) for n in _NOUNS)
 # "Maya's office is in Oslo": a preposition before a place name is not part of it.
-_PLACE_PREPOSITION = re.compile(r"^(?:in|at)\s+(?=(?-i:[A-Z]))", re.IGNORECASE)
+_PLACE_PREPOSITION = lazy_compile(r"^(?:in|at)\s+(?=(?-i:[A-Z]))", re.IGNORECASE)
 # An infinitive is a plan, never a value ("My plan is to finish by Friday").
-_INFINITIVE = re.compile(r"^to\s+[a-z]", re.IGNORECASE)
+_INFINITIVE = lazy_compile(r"^to\s+[a-z]", re.IGNORECASE)
 _SPELLING = (("favorite", "favourite"), ("color", "colour"))
-_CODE_SPAN = re.compile(r"`([^`\n]+)`")
+_CODE_SPAN = lazy_compile(r"`([^`\n]+)`")
 # Verbs that change any kind of value; "moved"/"migrated" also move things to
 # places or days ("the meeting moved from Monday to Tuesday"), so they are left out.
 _TEXT_CHANGE_VERBS = frozenset({"changed", "switched", "updated"})

@@ -25,13 +25,14 @@ import re
 
 from mark.intelligence.fact_extraction.labels import KIND_LABELS
 from mark.intelligence.fact_extraction.rules import ATTRIBUTE_SYNONYMS, ATTRIBUTE_WORDS
+from mark.security.lazy_regex import lazy_compile
 
 Triple = tuple[str, str, str]
-_ENV = re.compile(r"^\s*(?:export\s+)?(?P<key>[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*)\s*[:=]\s*(?P<value>\S.*?)\s*$")
-_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(?P<text>.+?)\s*#*\s*$")
-_LIST_HEADER = re.compile(r"^\s*(?:#{1,6}\s+)?(?P<text>(?:[A-Za-z][\w-]*\s+){0,2}(?P<noun>[A-Za-z]+))\s*:?\s*$")
-_LIST_ITEM = re.compile(r"^\s*(?:[-*+]\s+)?(?P<key>[^\W_][\w.@/-]*)\s*[:=]\s*(?P<value>\S[^:]*?)\s*$")
-_PORT = re.compile(r"^\d{2,5}$")
+_ENV = lazy_compile(r"^\s*(?:export\s+)?(?P<key>[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*)\s*[:=]\s*(?P<value>\S.*?)\s*$")
+_HEADING = lazy_compile(r"^\s{0,3}#{1,6}\s+(?P<text>.+?)\s*#*\s*$")
+_LIST_HEADER = lazy_compile(r"^\s*(?:#{1,6}\s+)?(?P<text>(?:[A-Za-z][\w-]*\s+){0,2}(?P<noun>[A-Za-z]+))\s*:?\s*$")
+_LIST_ITEM = lazy_compile(r"^\s*(?:[-*+]\s+)?(?P<key>[^\W_][\w.@/-]*)\s*[:=]\s*(?P<value>\S[^:]*?)\s*$")
+_PORT = lazy_compile(r"^\d{2,5}$")
 _NOUNS = frozenset(ATTRIBUTE_WORDS)
 
 

@@ -18,10 +18,11 @@ from collections.abc import Callable, Iterable
 from dataclasses import replace
 
 from mark.intelligence.fact_extraction.base import FactCandidate
+from mark.security.lazy_regex import lazy_compile
 
 _MAX_ATTRIBUTE_WORDS = 5
 # "shorty is a URL shortener": a lower-case identifier defined at the start of a sentence.
-_DEFINED = re.compile(r"(?:^|(?<=[.!?]\s)|(?<=\n))\s*(?P<name>[a-z][\w.-]*)\s+(?:is|are)\s+(?:a|an|the|our|my)\s",
+_DEFINED = lazy_compile(r"(?:^|(?<=[.!?]\s)|(?<=\n))\s*(?P<name>[a-z][\w.-]*)\s+(?:is|are)\s+(?:a|an|the|our|my)\s",
                       re.MULTILINE)
 _NOT_NAMES = frozenset("it this that there here what which who everything nothing something everyone".split())
 

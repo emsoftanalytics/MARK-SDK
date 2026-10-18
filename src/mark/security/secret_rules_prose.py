@@ -22,10 +22,11 @@ import re
 
 from mark.security.rules import Rule, value_of
 from mark.security.secret_rules import SECRET_RULES, _VALUE, _plausible_value
+from mark.security.lazy_regex import lazy_compile
 
 # ── "password <for|on|of|to> <1-5 words> is <value>" ─────────────────────────
 
-_PROSE_PASSWORD = re.compile(
+_PROSE_PASSWORD = lazy_compile(
     r"(?i)(?<![\w-])(?:password|passwd|passphrase|pwd)\s+(?:for|on|of|to|at)\s+(?:[\w.@'’/-]+\s+){1,5}?"
     rf"(?:is|was|=|:)\s+{_VALUE}")
 
@@ -46,7 +47,7 @@ def _prose_password_ok(match: "re.Match[str]") -> bool:
 # not only digits; "pw" is unambiguous enough for 4+.
 # The separator must touch the keyword ("pw: x"), so docstrings such as
 # "pass :data:`h11.CLIENT`" (the verb, then a reST role) stay untouched.
-_SHORT_PASSWORD = re.compile(rf"(?i)(?<![\w-])(?P<kw>pw|pass)[:=](?![/=:])[ \t]*{_VALUE}")
+_SHORT_PASSWORD = lazy_compile(rf"(?i)(?<![\w-])(?P<kw>pw|pass)[:=](?![/=:])[ \t]*{_VALUE}")
 
 
 def _short_password_ok(match: "re.Match[str]") -> bool:
@@ -60,12 +61,12 @@ def _short_password_ok(match: "re.Match[str]") -> bool:
 
 # ── "API key <32+ chars>", "token is <32+ chars>" ────────────────────────────
 
-_LONG_KEY = re.compile(
+_LONG_KEY = lazy_compile(
     r"(?i)(?<![\w-])(?P<kw>api[ _-]?key|access[ _-]?key|secret[ _-]?key|client[ _-]?secret|secret|token)"
     # "the AWS secret for prod is <key>": a short "for/of/on <what>" may sit before "is".
     r"(?:[ \t]+(?:for|of|on|in|to)[ \t]+(?:[\w.@-]+[ \t]+){0,3}?(?:is|was)|[ \t]+(?:is|was)|[ \t]*[:=])?"
     r"[ \t]+[`\"']?(?P<v>[A-Za-z0-9_\-+/=]{32,})(?![\w/+=-])")
-_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
+_UUID = lazy_compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 
 
 def _long_key_ok(match: "re.Match[str]") -> bool:
@@ -90,7 +91,7 @@ def _long_key_kind(match: "re.Match[str]") -> str:
 
 _SEED_LEAD = (r"(?i)(?<![\w-])(?:(?:wallet|bip-?39)\s+)?(?:seed(?:\s+(?:phrase|words))?|recovery\s+(?:phrase|words|seed)"
               r"|mnemonic(?:\s+(?:phrase|words))?|secret\s+recovery\s+phrase)")
-_SEED_PHRASE = re.compile(_SEED_LEAD + r"[ \t]*(?:[:=]|is|was)?\s+(?P<v>[a-z]{3,8}(?:[ \t\n]+[a-z]{3,8}){11,23})"
+_SEED_PHRASE = lazy_compile(_SEED_LEAD + r"[ \t]*(?:[:=]|is|was)?\s+(?P<v>[a-z]{3,8}(?:[ \t\n]+[a-z]{3,8}){11,23})"
                           r"(?=\s*(?:[.,;)]|$))", re.MULTILINE)
 # BIP-39 words are 3-8 letters and the English list has no function words, so
 # any of these means the run is a sentence, not a recovery phrase.

@@ -15,11 +15,12 @@ from __future__ import annotations
 import re
 
 from mark.intelligence.fact_extraction.personal import USER_TOKEN
+from mark.security.lazy_regex import lazy_compile
 
-_EMAIL = re.compile(r"^[\w.+%-]+@[\w-]+(?:\.[\w-]+)+$")
-_PHONE = re.compile(r"^\+?[\d\s().-]{7,}$")
-_CAPITALISED = re.compile(r"^(?-i:[A-Z])[\w'’-]*(?:\s+(?-i:[A-Z])[\w'’-]*)?$")
-_WORDS = re.compile(r"^[\w'’.+#-]+(?:\s+[\w'’.+#-]+){0,2}$")
+_EMAIL = lazy_compile(r"^[\w.+%-]+@[\w-]+(?:\.[\w-]+)+$")
+_PHONE = lazy_compile(r"^\+?[\d\s().-]{7,}$")
+_CAPITALISED = lazy_compile(r"^(?-i:[A-Z])[\w'’-]*(?:\s+(?-i:[A-Z])[\w'’-]*)?$")
+_WORDS = lazy_compile(r"^[\w'’.+#-]+(?:\s+[\w'’.+#-]+){0,2}$")
 
 #: Plural noun -> (attribute, item check).
 _PLURALS: dict[str, tuple[str, re.Pattern[str]]] = {
@@ -31,10 +32,11 @@ _PLURALS: dict[str, tuple[str, re.Pattern[str]]] = {
 }
 _PLURAL_ALT = "|".join(re.escape(p).replace(r"\ ", r"\s+") for p in sorted(_PLURALS, key=len, reverse=True))
 _OWNER = rf"(?P<owner>{USER_TOKEN}|(?-i:[A-Z])[\w.'’-]*(?:\s+(?-i:[A-Z])[\w.'’-]*){{0,2}})"
-_PLURAL_LIST = re.compile(rf"^{_OWNER}['’]s\s+(?P<noun>{_PLURAL_ALT})\s+(?:are|include)\s+(?P<items>.+?)[.!]?\s*$",
+_PLURAL_LIST = lazy_compile(rf"^{_OWNER}['’]s\s+(?P<noun>{_PLURAL_ALT})\s+(?:are|include)\s+(?P<items>.+?)[.!]?\s*$",
                           re.IGNORECASE)
-_SPEAKS = re.compile(rf"^{_OWNER}\s+(?:also\s+|now\s+)?(?:speaks|is\s+fluent\s+in)\s+(?:fluent\s+)?(?P<items>.+?)[.!]?\s*$")
-_SPLIT = re.compile(r"\s*,\s*(?:and\s+|&\s+)?|\s+(?:and|&)\s+")
+_SPEAKS = lazy_compile(rf"^{_OWNER}\s+(?:also\s+|now\s+)?(?:speaks|is\s+fluent\s+in)\s+(?:fluent\s+)?(?P<items>.+?)[.!]?\s*$")
+_REDACTED_ITEM = lazy_compile(r"^\[[A-Z]+(?::[a-z0-9_]+)?\]$")
+_SPLIT = lazy_compile(r"\s*,\s*(?:and\s+|&\s+)?|\s+(?:and|&)\s+")
 
 
 def list_triples(sentence: str) -> list[tuple[str, str, str]] | None:
@@ -54,8 +56,7 @@ def list_triples(sentence: str) -> list[tuple[str, str, str]] | None:
 
 def _items(owner: str, attribute: str, text: str, check: re.Pattern[str]) -> list[tuple[str, str, str]] | None:
     items = [item.strip().strip("\"'`") for item in _SPLIT.split(text.strip()) if item.strip()]
-    redacted = re.compile(r"^\[[A-Z]+(?::[a-z0-9_]+)?\]$")
-    kept = [item for item in items if not redacted.match(item)]  # "[EMAIL]" is unknown, not wrong
+    kept = [item for item in items if not _REDACTED_ITEM.match(item)]  # "[EMAIL]" is unknown, not wrong
     if not kept or len(items) > 8 or not all(check.match(item) for item in kept):
         return None
     return [(owner, attribute, item) for item in kept]

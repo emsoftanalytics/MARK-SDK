@@ -20,19 +20,20 @@ import re
 
 from mark.intelligence.fact_extraction.numbers import NUMBER_WORD, parse_number
 from mark.intelligence.fact_extraction.personal import USER_TOKEN
+from mark.security.lazy_regex import lazy_compile
 
 Triple = tuple[str, str, str]
 _WHO = rf"(?P<who>{USER_TOKEN}|(?-i:[A-Z])[\w.'’-]*(?:\s+(?-i:[A-Z])[\w.'’-]*){{0,2}})"
 _POSSESSIVE = rf"(?:his|her|their|{USER_TOKEN}['’]s)"
 _DETAIL = (r"(?P<noun>(?:phone\s+|mobile\s+|cell\s+)?number|phone|mobile|email(?:\s+address)?|e-mail"
            r"|(?:home\s+)?address)")
-_CONTACT_CHANGE = re.compile(
+_CONTACT_CHANGE = lazy_compile(
     rf"^{_WHO}\s+(?:has\s+|just\s+|recently\s+)*(?:changed|updated|got)\s+{_POSSESSIVE}\s+(?:new\s+)?{_DETAIL}"
     r"(?:\s*[,;:—-]+\s*(?:and\s+)?(?:the\s+new\s+(?:one|number|email|address)|it)\s+is(?:\s+now)?\s+"
     r"|\s+to\s+)(?P<value>.+?)\s*[.!]?\s*$", re.IGNORECASE)
-_PHONE = re.compile(r"^\+?[\d\s().-]{7,}$")
-_EMAIL = re.compile(r"^[\w.+%-]+@[\w-]+(?:\.[\w-]+)+$")
-_LAST_STEP = re.compile(
+_PHONE = lazy_compile(r"^\+?[\d\s().-]{7,}$")
+_EMAIL = lazy_compile(r"^[\w.+%-]+@[\w-]+(?:\.[\w-]+)+$")
+_LAST_STEP = lazy_compile(
     rf"^(?:step\s+(?P<n>{NUMBER_WORD})|the\s+(?P<ord>{NUMBER_WORD})\s+step)"
     r"(?:\s+(?:of|in)\s+(?:the\s+|our\s+)?(?P<p1>[^,]+?))?\s+is\s+the\s+(?:last|final)(?:\s+(?:one|step))?"
     r"(?:\s+(?:of|in)\s+(?:the\s+|our\s+)?(?P<p2>[^,]+?))?\s*[.!]?\s*$", re.IGNORECASE)

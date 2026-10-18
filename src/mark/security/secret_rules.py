@@ -14,12 +14,13 @@ import re
 
 from mark.security.checksums import luhn_valid
 from mark.security.rules import Rule, value_of
+from mark.security.lazy_regex import lazy_compile
 
 # ── value plausibility ────────────────────────────────────────────────────────
 
 # References and placeholders that name a secret without containing it:
 # $VAR, ${VAR}, %VAR%, os.environ[...], getenv(...), <your-key>, ****, …
-_REFERENCE = re.compile(
+_REFERENCE = lazy_compile(
     r"""(?ix)^(?:
         \$\{?[A-Za-z_][\w]*\}?[\w.\[\]'"()]*      # shell / compose variables
       | %[A-Za-z_]\w*%                            # windows variables
@@ -33,11 +34,11 @@ _REFERENCE = re.compile(
       | [rbfu]{1,2}["'].*                         # r"…" / f"…" / b"…" code literals
     )[,;.)\]}`]*$"""
 )
-_LOWER_WORD = re.compile(r"^[a-z]+$")
+_LOWER_WORD = lazy_compile(r"^[a-z]+$")
 # Code identifiers passed as values: session_id=session_id, token=self._token,
 # api_key=OPENAI_API_KEY, passphrase=args.passphrase. A real secret is
 # rarely a dotted name or an all-lowercase/all-uppercase snake_case word.
-_IDENTIFIER = re.compile(
+_IDENTIFIER = lazy_compile(
     r"^(?:[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+|_*[a-z]+(?:_[a-z]+)+|[A-Z]+(?:_[A-Z]+)+|self|cls|kwargs|args)$"
 )
 
@@ -77,8 +78,8 @@ _SECRET_KW = (
     r"signing[_-]?key|encryption[_-]?key|cookie|credentials?|authorization)"
 )
 
-PASSWORD_ASSIGNMENT = re.compile(rf"(?i)(?P<kw>{_PASSWORD_KW})(?P<sep>{_SEP}){_VALUE}")
-SECRET_ASSIGNMENT = re.compile(rf"(?i)(?P<kw>{_SECRET_KW})(?P<sep>{_SEP}){_VALUE}")
+PASSWORD_ASSIGNMENT = lazy_compile(rf"(?i)(?P<kw>{_PASSWORD_KW})(?P<sep>{_SEP}){_VALUE}")
+SECRET_ASSIGNMENT = lazy_compile(rf"(?i)(?P<kw>{_SECRET_KW})(?P<sep>{_SEP}){_VALUE}")
 
 
 def _key_of(match: "re.Match[str]") -> str | None:
@@ -139,7 +140,7 @@ def _bearer_ok(match: "re.Match[str]") -> bool:
     return bool(re.search(r"[0-9._~+/=\-]", token)) or len(token) >= 20
 
 
-_AWS_CONTEXT = re.compile(r"(?i)aws|secret|access[ _-]?key")
+_AWS_CONTEXT = lazy_compile(r"(?i)aws|secret|access[ _-]?key")
 
 
 def _aws_secret_ok(match: "re.Match[str]") -> bool:
@@ -159,7 +160,7 @@ def _aws_secret_ok(match: "re.Match[str]") -> bool:
 
 # Labelled identifiers ("order #…", "invoice no. …") are never card numbers,
 # even when ~1 in 10 of them happens to pass the Luhn check.
-_ID_LABEL = re.compile(
+_ID_LABEL = lazy_compile(
     r"(?i)\b(?:order|invoice|tracking|ref(?:erence)?|ticket|case|booking|confirmation|serial|"
     r"shipment|parcel|transaction|txn|request|build|id)\b[\s#:.-]*(?:no\.?|num(?:ber)?|id)?[\s#:.-]*$"
 )
@@ -173,7 +174,7 @@ def _card_ok(match: "re.Match[str]") -> bool:
 
 
 def _rx(pattern: str, flags: int = 0) -> "re.Pattern[str]":
-    return re.compile(pattern, flags)
+    return lazy_compile(pattern, flags)
 
 
 SECRET_RULES: list[Rule] = [
@@ -211,7 +212,7 @@ SECRET_RULES: list[Rule] = [
     # Card shapes: contiguous, 4-4-4-4(+), or Amex 4-6-5; then a Luhn check.
     Rule("card_number", _rx(r"(?:\d{13,19}|\d{4}([ -])\d{4}\1\d{4}\1\d{1,7}|\d{4}([ -])\d{6}\2\d{4,5})"
                             r"(?!\w|-\d)"), validate=_card_ok,
-         prefilter=re.compile(r"\d{4}[ -]?\d{4}")),
+         prefilter=lazy_compile(r"\d{4}[ -]?\d{4}")),
     # PINs only in an explicit "PIN: 1234" context: bare 4-digit numbers are
     # years, ports, quantities and codes far more often than PINs.
     Rule("pin", _rx(r"(?i)(?:PIN(?:[ \t]*(?:code|number))?|passcode)(?P<sep>[ \t]*(?:[:=#]|is|was)[ \t]*)"

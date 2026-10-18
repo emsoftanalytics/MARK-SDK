@@ -20,9 +20,10 @@ from mark.intelligence.fact_extraction import personal
 from mark.intelligence.fact_extraction.base import FactCandidate, clean_text, is_redacted, valid_candidate
 from mark.intelligence.fact_extraction.normalise import peel_value
 from mark.intelligence.fact_extraction.vocab import RELATION_ALT
+from mark.security.lazy_regex import lazy_compile
 
-_OWNED = re.compile(rf"^{personal.USER_TOKEN}['’]s\s+(?P<rest>.+)$")
-_RELATION_NAME = re.compile(rf"^(?P<relation>{RELATION_ALT})\s+(?P<name>(?-i:[A-Z])[\w'’-]*(?:\s+(?-i:[A-Z])[\w'’-]*)?)$",
+_OWNED = lazy_compile(rf"^{personal.USER_TOKEN}['’]s\s+(?P<rest>.+)$")
+_RELATION_NAME = lazy_compile(rf"^(?P<relation>{RELATION_ALT})\s+(?P<name>(?-i:[A-Z])[\w'’-]*(?:\s+(?-i:[A-Z])[\w'’-]*)?)$",
                             re.IGNORECASE)
 
 

@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 
 from mark.intelligence.fact_extraction.vocab import RELATION_ALT
+from mark.security.lazy_regex import lazy_compile
 
 #: Placeholder subject for the speaker; one identifier-like token so every
 #: pack's subject pattern accepts it, and unlikely to occur in real text.
@@ -30,25 +31,25 @@ USER_TOKEN = "MARKUSER"
 # so the roman numeral in "World War I" or "Phase I" is left alone.
 _BOUNDARY = r"(?:^|(?<=[,;:])\s*|(?<=\s)(?:and|but|so|because|since|now|then)\s+|(?<=\())"
 _I_FORMS = (
-    (re.compile(rf"{_BOUNDARY}\bI\s*['’]m\b|{_BOUNDARY}\bI\s+am\b"), "is"),
-    (re.compile(rf"{_BOUNDARY}\bI\s*['’]ve\b|{_BOUNDARY}\bI\s+have\b"), "has"),
-    (re.compile(rf"{_BOUNDARY}\bI\s*['’]ll\b|{_BOUNDARY}\bI\s+will\b"), "will"),
-    (re.compile(rf"{_BOUNDARY}\bI\s*['’]d\b"), "would"),
-    (re.compile(rf"{_BOUNDARY}\bI\s+don['’]t\b|{_BOUNDARY}\bI\s+do\s+not\b"), "does not"),
+    (lazy_compile(rf"{_BOUNDARY}\bI\s*['’]m\b|{_BOUNDARY}\bI\s+am\b"), "is"),
+    (lazy_compile(rf"{_BOUNDARY}\bI\s*['’]ve\b|{_BOUNDARY}\bI\s+have\b"), "has"),
+    (lazy_compile(rf"{_BOUNDARY}\bI\s*['’]ll\b|{_BOUNDARY}\bI\s+will\b"), "will"),
+    (lazy_compile(rf"{_BOUNDARY}\bI\s*['’]d\b"), "would"),
+    (lazy_compile(rf"{_BOUNDARY}\bI\s+don['’]t\b|{_BOUNDARY}\bI\s+do\s+not\b"), "does not"),
 )
-_I_VERB = re.compile(rf"{_BOUNDARY}\bI\s+(?P<adverb>(?:(?:also|now|currently|still|really|actually|just|usually"
+_I_VERB = lazy_compile(rf"{_BOUNDARY}\bI\s+(?P<adverb>(?:(?:also|now|currently|still|really|actually|just|usually"
                      r"|mostly|no\s+longer|recently|finally|totally)\s+)*)(?P<verb>[a-z][a-z'-]*)\b")
-_MY = re.compile(r"(?<![\w'])[Mm]y\s+(?=[a-z])")
-_ME = re.compile(r"(?<![\w'])me\b(?!['’-])")
+_MY = lazy_compile(r"(?<![\w'])[Mm]y\s+(?=[a-z])")
+_ME = lazy_compile(r"(?<![\w'])me\b(?!['’-])")
 # Verbs that keep their form after "I": past tenses and modals.
 _KEEP = frozenset("was were had did could would should might must can may will shall used".split())
 _IRREGULAR = {"am": "is", "be": "is", "have": "has", "do": "does", "go": "goes"}
 
 # "<user>'s sister Ines lives in Faro": a relation in apposition to a name.
-_APPOSITION = re.compile(
+_APPOSITION = lazy_compile(
     rf"^(?P<owner>{USER_TOKEN}|(?-i:[A-Z])[\w.-]*)['’]s\s+(?P<relation>{RELATION_ALT})\s+"
     r"(?P<name>(?-i:[A-Z])[\w'-]*(?:\s+(?-i:[A-Z])[\w'-]*){0,2})\s+(?P<rest>(?-i:[a-z]).+)$")
-_DIET_NEG = re.compile(
+_DIET_NEG = lazy_compile(
     r"^(?P<who>.+?)\s+(?:no\s+longer\s+eats?|does\s+not\s+eat|doesn['’]t\s+eat|(?:has\s+)?stopped\s+eating"
     r"|(?:has\s+)?quit\s+eating|(?:has\s+)?given\s+up|gave\s+up(?:\s+eating)?|never\s+eats?)\s+"
     r"(?P<food>meat|red\s+meat|fish|dairy|pork|beef|gluten|sugar|eggs|alcohol)(?:\s+any\s?more)?"
@@ -58,12 +59,12 @@ _DIET_NEG = re.compile(
     re.IGNORECASE)
 # Addresses keep their commas: a word joiner after the comma stops clause
 # splitting and value truncation; :func:`restore` puts the space back.
-_ADDRESS = re.compile(r"(\baddress\s*(?:is|:)\s+)([^.;!?]+)", re.IGNORECASE)
+_ADDRESS = lazy_compile(r"(\baddress\s*(?:is|:)\s+)([^.;!?]+)", re.IGNORECASE)
 _JOINER = ",⁠"
-_HE_SHE = re.compile(r"^(?:he|she)\b", re.IGNORECASE)
-_HIS_HER = re.compile(r"^(?:his|her)\s+(?!other\b)", re.IGNORECASE)
-_PERSON_NAME = re.compile(r"^(?:(?:Dr|Mr|Mrs|Ms|Prof)\.\s+)?[A-Z][a-z'’-]+(?:\s+[A-Z][a-z'’-]+){0,2}$")
-_USER_WORDS = re.compile(r"^(?:the\s+)?user$", re.IGNORECASE)
+_HE_SHE = lazy_compile(r"^(?:he|she)\b", re.IGNORECASE)
+_HIS_HER = lazy_compile(r"^(?:his|her)\s+(?!other\b)", re.IGNORECASE)
+_PERSON_NAME = lazy_compile(r"^(?:(?:Dr|Mr|Mrs|Ms|Prof)\.\s+)?[A-Z][a-z'’-]+(?:\s+[A-Z][a-z'’-]+){0,2}$")
+_USER_WORDS = lazy_compile(r"^(?:the\s+)?user$", re.IGNORECASE)
 # Base-form verbs that continue a first-person clause ("... and work at X"),
 # matching the continuation verbs in :mod:`.clauses`.
 _CONTINUATION_BASE = "work|live|own|lead|use|prefer|like|love|hate|enjoy|speak|drive|weigh"

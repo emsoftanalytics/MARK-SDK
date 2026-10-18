@@ -15,6 +15,7 @@ was, so extraction can report it:
 from __future__ import annotations
 
 import re
+from mark.security.lazy_regex import lazy_compile
 
 #: Upper-case label word -> kind. Several spellings fold onto one kind.
 KIND_LABELS: dict[str, str] = {
@@ -31,9 +32,9 @@ KIND_LABELS: dict[str, str] = {
 #: Status recorded for a ticket id that follows a TODO/DONE/FIX label.
 STATUS_BY_KIND: dict[str, str] = {"todo": "todo", "done": "done", "fix": "fixed"}
 
-_LABEL_WORD = re.compile(r"^\s*(?:\[[^\]]*\]\s*)?(?P<label>[A-Z][A-Z0-9_/&-]*(?:\s+[A-Z][A-Z0-9_/&-]*){0,2})\s*:\s+")
-_ID_LABEL = re.compile(r"^[A-Z][A-Z0-9_]*-?\d[A-Z0-9_-]*$")
-_LEADING_ID = re.compile(r"^(?P<id>[A-Za-z][A-Za-z0-9_]*-\d+[A-Za-z0-9_-]*|#\d+)(?=[\s:.,;]|$)")
+_LABEL_WORD = lazy_compile(r"^\s*(?:\[[^\]]*\]\s*)?(?P<label>[A-Z][A-Z0-9_/&-]*(?:\s+[A-Z][A-Z0-9_/&-]*){0,2})\s*:\s+")
+_ID_LABEL = lazy_compile(r"^[A-Z][A-Z0-9_]*-?\d[A-Z0-9_-]*$")
+_LEADING_ID = lazy_compile(r"^(?P<id>[A-Za-z][A-Za-z0-9_]*-\d+[A-Za-z0-9_-]*|#\d+)(?=[\s:.,;]|$)")
 
 
 def label_kind(label: str) -> str | None:

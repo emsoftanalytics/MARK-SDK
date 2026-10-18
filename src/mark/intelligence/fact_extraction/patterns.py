@@ -58,15 +58,16 @@ from mark.intelligence.fact_extraction.sentences import (
 )
 from mark.intelligence.fact_extraction.structured import attribute_key, extract_records, step_sentence, usable_key
 from mark.intelligence.fact_extraction.subjects import defined_names, split_known, subject_key
+from mark.security.lazy_regex import lazy_compile
 
 #: Non-regex features that can be named in ``packs`` like a pack.
 FEATURES = frozenset({"structured", "steps"})
-_WORD = re.compile(r"[\w'’-]+")
-_PREFERS = re.compile(r"\bprefers?\b", re.IGNORECASE)
+_WORD = lazy_compile(r"[\w'’-]+")
+_PREFERS = lazy_compile(r"\bprefers?\b", re.IGNORECASE)
 # Structured keys are folded only for where a config lives ("config_path" -> "config file");
 # other keys keep their own spelling ("db engine").
 _CONFIG_SYNONYMS = {key: value for key, value in ATTRIBUTE_SYNONYMS.items() if value == "config file"}
-_ORPHAN_FIELD = re.compile(r"^(?P<key>[A-Za-z][\w .-]{0,30}?)\s*[:=]\s*(?P<value>\S.*)$")
+_ORPHAN_FIELD = lazy_compile(r"^(?P<key>[A-Za-z][\w .-]{0,30}?)\s*[:=]\s*(?P<value>\S.*)$")
 
 
 class PatternFactExtractor:

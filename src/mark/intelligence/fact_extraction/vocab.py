@@ -15,6 +15,7 @@ is. These lists provide that evidence:
 from __future__ import annotations
 
 import re
+from mark.security.lazy_regex import lazy_compile
 
 _RELATIONS = (
     "sister brother mother father mom mum dad mother-in-law father-in-law wife husband partner spouse"
@@ -87,7 +88,7 @@ _TYPES: tuple[tuple[str, str], ...] = (
     ("editor", r"vs\s?code|visual\s+studio\s+code|vim|neovim|nvim|emacs|sublime(?:\s+text)?|intellij(?:\s+idea)?"
                r"|pycharm|webstorm|goland|cursor|zed|helix|nano|atom|xcode|android\s+studio"),
 )
-_TYPE_PATTERNS = tuple((name, re.compile(rf"^(?:{alt})(?:\s+v?\d+(?:\.\d+)*)?$", re.IGNORECASE))
+_TYPE_PATTERNS = tuple((name, lazy_compile(rf"^(?:{alt})(?:\s+v?\d+(?:\.\d+)*)?$", re.IGNORECASE))
                        for name, alt in _TYPES)
 
 

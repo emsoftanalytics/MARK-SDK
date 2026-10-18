@@ -23,6 +23,7 @@ from typing import Any, Iterator
 
 from mark.intelligence.fact_extraction.numbers import NUMBER_WORD, parse_number
 from mark.intelligence.fact_extraction.tables import table_records
+from mark.security.lazy_regex import lazy_compile
 
 Triple = tuple[str, str, str]
 
@@ -38,23 +39,23 @@ _PROSE_KEYS = frozenset((
     " output input response request traceback details context background agenda action action items"
     " correction problem solution lesson caveat issue changelog"
 ).split())
-_ID_KEY = re.compile(r"\d.*-|-.*\d")
+_ID_KEY = lazy_compile(r"\d.*-|-.*\d")
 # Section headings that are not subjects ("## Notes").
 _GENERIC_HEADERS = frozenset((
     "notes summary overview details background config configuration settings status todo todos decisions"
     " introduction appendix faq changelog misc links references contacts team people meeting notes agenda"
     " action items next steps example examples usage install installation setup requirements"
 ).split())
-_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(?P<text>.+?)\s*#*\s*$")
-_KV = re.compile(r"^(?P<indent>[ \t]*)(?:[-*+]\s+)?(?P<key>[A-Za-z][\w .\-/]{0,40}?)\s*:\s*(?P<value>.*?)\s*$")
-_PAIR = re.compile(r"(?<![\w.-])(?P<key>[A-Za-z][\w.-]{0,30})=(?P<value>\"[^\"]*\"|'[^']*'|[^\s,;]+)")
-_PAIR_SUBJECT = re.compile(r"\b(?:for|on|of|in)\s+(?P<subject>[^\W_][\w.@/-]*)\s*\.?\s*$", re.IGNORECASE)
-_HEADER_LINE = re.compile(r"^\s*(?P<text>[^:\n]{2,60}?)\s*:\s*$")
-_INLINE_STEPS = re.compile(r"^\s*(?P<head>[^:\n]{2,60}?)\s*:\s*(?=1[.)]\s)(?P<body>.+)$")
-_STEP_SPLIT = re.compile(r"(?:^|\s)(\d{1,2})[.)]\s+")
-_STEP_LINE = re.compile(rf"^\s*(?:(?P<num>\d{{1,2}})[.)]|step\s+(?P<word>{NUMBER_WORD})\s*[:.)\-–—]|(?P<ord>{NUMBER_WORD})"
+_HEADING = lazy_compile(r"^\s{0,3}#{1,6}\s+(?P<text>.+?)\s*#*\s*$")
+_KV = lazy_compile(r"^(?P<indent>[ \t]*)(?:[-*+]\s+)?(?P<key>[A-Za-z][\w .\-/]{0,40}?)\s*:\s*(?P<value>.*?)\s*$")
+_PAIR = lazy_compile(r"(?<![\w.-])(?P<key>[A-Za-z][\w.-]{0,30})=(?P<value>\"[^\"]*\"|'[^']*'|[^\s,;]+)")
+_PAIR_SUBJECT = lazy_compile(r"\b(?:for|on|of|in)\s+(?P<subject>[^\W_][\w.@/-]*)\s*\.?\s*$", re.IGNORECASE)
+_HEADER_LINE = lazy_compile(r"^\s*(?P<text>[^:\n]{2,60}?)\s*:\s*$")
+_INLINE_STEPS = lazy_compile(r"^\s*(?P<head>[^:\n]{2,60}?)\s*:\s*(?=1[.)]\s)(?P<body>.+)$")
+_STEP_SPLIT = lazy_compile(r"(?:^|\s)(\d{1,2})[.)]\s+")
+_STEP_LINE = lazy_compile(rf"^\s*(?:(?P<num>\d{{1,2}})[.)]|step\s+(?P<word>{NUMBER_WORD})\s*[:.)\-–—]|(?P<ord>{NUMBER_WORD})"
                         r"\s*[:)\-–—])\s*(?P<text>\S.*?)\s*$", re.IGNORECASE)
-_STEP_SENTENCE = re.compile(
+_STEP_SENTENCE = lazy_compile(
     rf"^(?:the\s+)?(?:step\s+(?P<a>{NUMBER_WORD})|(?P<b>{NUMBER_WORD})\s+step)\s+(?:of|in)\s+(?:the\s+|our\s+)?"
     r"(?P<subject>[^,;]{2,60}?)\s+is\s+(?:to\s+)?(?P<value>[^;]+?)\.?\s*$", re.IGNORECASE)
 

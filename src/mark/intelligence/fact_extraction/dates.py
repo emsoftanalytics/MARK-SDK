@@ -15,19 +15,20 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from mark.security.lazy_regex import lazy_compile
 
-LEADING_DATE = re.compile(
+LEADING_DATE = lazy_compile(
     r"^(?:starting|from|effective|beginning|as\s+of|commencing)\s+(?:on\s+|from\s+)?(\d{4}-\d{2}-\d{2})\b\s*,?\s*",
     re.IGNORECASE)
 _MONTHS = ("january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
            "november", "december")
 _MONTH_ALT = (r"jan(?:uary)?|feb(?:ruary)?|march|april|may|june|july|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?"
               r"|nov(?:ember)?|dec(?:ember)?")
-_IN_MONTH = re.compile(rf"\b(?:in|since)\s+(?:early\s+|late\s+|mid-?)?(?P<month>{_MONTH_ALT})\b(?:\s+(?P<year>\d{{4}}))?",
+_IN_MONTH = lazy_compile(rf"\b(?:in|since)\s+(?:early\s+|late\s+|mid-?)?(?P<month>{_MONTH_ALT})\b(?:\s+(?P<year>\d{{4}}))?",
                        re.IGNORECASE)
 # A past-tense clause: "-ed" verbs and the common irregular ones. A present
 # clause with a month ("the review is in May") is a plan, not a dated change.
-_PAST = re.compile(r"\b(?:\w+ed|was|were|became|began|left|got|took|joined|went|came|made|bought|sold|quit)\b",
+_PAST = lazy_compile(r"\b(?:\w+ed|was|were|became|began|left|got|took|joined|went|came|made|bought|sold|quit)\b",
                    re.IGNORECASE)
 
 

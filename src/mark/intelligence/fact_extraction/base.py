@@ -26,6 +26,8 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
+from mark.security.lazy_regex import lazy_compile
+
 
 @dataclass(frozen=True)
 class FactCandidate:
@@ -101,7 +103,7 @@ _PRONOUNS = frozenset(
 )
 # A subject may not *start* with a possessive or a referring word either:
 # "her other", "my sister", "their team" name something only in context.
-_REFERRING_START = re.compile(
+_REFERRING_START = lazy_compile(
     r"^(?:my|your|his|her|its|our|their|this|that|these|those|other|another|some|any|each|every)\b",
     re.IGNORECASE)
 _MAX_SUBJECT_CHARS = 80

@@ -18,7 +18,7 @@ Phrasing the 0.2.0a10 re-tests found unrecorded, each with a precision guard:
 """
 from __future__ import annotations
 
-from mark.intelligence.fact_extraction.numbers import NUMBER_WORD, parse_number
+from mark.intelligence.fact_extraction.numbers import NUMBER_WORD
 from mark.intelligence.fact_extraction.packs_people import DATE
 from mark.intelligence.fact_extraction.personal import USER_TOKEN
 from mark.intelligence.fact_extraction.rules import NOW, VALUE, RulePack
@@ -50,9 +50,11 @@ COUNT = RulePack(
               rf"(?P<value>\d{{1,7}}|{NUMBER_WORD})\s+(?!\w+\s+{_TIME_NOUNS}\b|{_TIME_NOUNS}\b)"
               r"(?P<attribute_free>(?:[a-z][\w-]*\s+)?[a-z][a-z-]*s)\s*$",),
     attribute_from_value=False,
-    value_map={word: str(parse_number(word)) for word in (
-        "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen"
-        " seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety").split()},
+    # Number words as digits (plain dict: nothing is parsed or compiled at import).
+    value_map={**{w: str(i) for i, w in enumerate(
+        "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen"
+        " seventeen eighteen nineteen".split())},
+        **{w: str(20 + 10 * i) for i, w in enumerate("twenty thirty forty fifty sixty seventy eighty ninety".split())}},
     confidence=0.7,
     trigger=r"\b(?:has|have|owns)\s+(?:about\s+|around\s+|over\s+|exactly\s+|only\s+)?(?:\d|[a-z]+\s+[a-z])",
 )

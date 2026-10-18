@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterator
+from mark.security.lazy_regex import lazy_compile
 
 Triple = tuple[str, str, str]
-_ROW = re.compile(r"^\s*\|.*\|\s*$")
-_SEPARATOR = re.compile(r"^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$")
+_ROW = lazy_compile(r"^\s*\|.*\|\s*$")
+_SEPARATOR = lazy_compile(r"^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$")
 
 
 def _cells(line: str) -> list[str]:
