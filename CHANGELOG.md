@@ -50,8 +50,10 @@ a million memories.
 - **`resolve()` closes only TODOs and bugs**; other kinds raise
   `InvalidInputError` (use `supersede()`).
 - **Encrypted stores** build their token sketches on the first identifier
-  recall or timeline in each process (a few seconds at 20,000 memories). Run
-  `mark serve` to keep them warm, or opt in to `persist_token_sketches()`.
+  recall or timeline in each process (a few seconds at 20,000 memories).
+  Keep one long-running process and call
+  `runtime.warm_up(sketches=True)` at start, or opt in to
+  `persist_token_sketches()`.
 
 ### Added
 

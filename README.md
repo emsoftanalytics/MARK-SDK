@@ -313,10 +313,9 @@ with Mark.local("./.mark") as mark:
 `preset="small"` (the `MarkChat` default, 200 tokens, for ~1-3B models) and
 `"tiny"` (160 tokens, for models under 1B); `ContextWatch.for_preset(memory,
 "small")` gives the same watch. On a 25-question personal-assistant test with
-real local models, llama3.2:1b went from 7 to 18 correct with about two
-thirds of the prompt tokens (522 to 348 per turn), and llama3.2:3b answered
-20 of 25 with 349 tokens of memory where the 0.2.0a9 briefing used 534 for
-21. The opt-in `mark-memory-compact` skill exists for hosts that want an
+real local models, llama3.2:3b answered 24 of 25 with about 233 prompt
+tokens per turn (0.2.0a9: 21 with 534), and llama3.2:1b 20 of 25 (0.2.0a9:
+7). The opt-in `mark-memory-compact` skill exists for hosts that want an
 instruction block; on small models the self-explanatory briefing headers
 worked better than any added instructions.
 
@@ -395,13 +394,17 @@ install; its vectors are left as they are. An explicit `embedder=` or
 Measured with `benchmarks/scale/bench.py` (offline, default embedder, numpy
 installed, SQLite on disk):
 
-| Memories | Recall p50 | Recall p95 | Reopen and first recall |
-| --- | --- | --- | --- |
-| 100,000 | 35 ms | 50 ms | 1.7 s (vector snapshot) |
-| 1,000,000 | 182 ms | — | 20.8 s (without a snapshot) |
+| Memories | Recall p50 | Recall p95 | Recall right after a write | Cold start |
+| --- | --- | --- | --- | --- |
+| 100,000 | 35 ms | 50 ms | about 40 ms | 1.7 s |
+| 1,000,000 | 180-270 ms | about 400 ms | about 200 ms | about 8 s of CPU |
 
-Keyword search scales with the rarest query terms, and agents with 50,000 or
-more memories keep a vector snapshot so a large store reopens quickly.
+Keyword search scales with the rarest query terms, a write updates the
+cached scope instead of rescanning it, and agents with 50,000 or more
+memories keep vector and scope snapshots so a large store reopens quickly.
+Wall-clock times swing with machine load: the million-memory cold start
+took about 9 s on a quiet machine and 14-16 s on a loaded one. For a
+long-running agent, `mark serve --detach` pays the cold start once.
 Reproduce with `uv run --extra fast python benchmarks/scale/bench.py --n
 100000`; CI runs `--n 20000 --check` against committed budgets.
 
@@ -413,19 +416,35 @@ Reproduce with `uv run --extra fast python benchmarks/scale/bench.py --n
   unless you pass `redact=RedactionPolicy(pii=True)` (from `mark.security`);
   `redact=False` turns redaction off for data you control.
 - **Prompt-injection screening.** Instruction-like memories ("ignore previous
-  instructions", chat-template markers) are tagged `mark:untrusted` and
-  labelled as untrusted wherever they are rendered;
-  `Mark.local(..., injection="quarantine")` keeps them out of recall.
+  instructions" in about 25 languages, role reassignment, chat-template
+  markers, instructions hidden in invisible HTML or encoded text) are tagged
+  `mark:untrusted` and labelled as untrusted wherever they are rendered;
+  `Mark.local(..., injection="quarantine")` keeps them out of recall. Both
+  screens are heuristics: treat recalled tool, document and web text as data.
 - **Private files.** On POSIX the store directory is `0700` and the database
   and exports are `0600`.
 - **Encryption at rest** with `mark-sdk[crypto]`:
   `Mark.local(".", encryption=FernetEncryptionProvider(passphrase=...))`. An
   encrypted store refuses to open without its key, and exports it only with
-  `decrypt=True`.
+  `decrypt=True`. Its first identifier recall in a process builds keyed
+  token sketches (a few seconds at 20,000 memories); a long-running process
+  can pay that at start with `mark.runtime.warm_up(sketches=True)`. The `mark`
+  command line does not open encrypted stores.
 - **No implicit network.** Model servers are contacted only when you name
   them; `mark serve` binds to loopback and requires a token.
 
 See [SECURITY.md](SECURITY.md) for the details and their limits.
+
+## Upgrading
+
+Stores upgrade in place on first open. Back up `memory.db` first, and stop
+every `mark serve`, MCP server and agent that uses the store: 0.2.0a10
+refuses to migrate while an older server runs (`StoreInUseError`). Once
+upgraded, a store must not be reopened with 0.2.0a8 or older, which do not
+detect the newer schema (0.2.0a9 refuses it with `StoreVersionError`). The
+[changelog](CHANGELOG.md) lists every upgrade note, including the
+behaviour changes (redaction by default, whole-word `forget(match=)`,
+`resolve()` for TODOs and bugs only, curated top-level imports).
 
 ## Examples
 
