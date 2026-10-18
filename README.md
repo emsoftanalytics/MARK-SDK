@@ -221,8 +221,9 @@ with Mark.local("./.mark") as mark:
     print([d.title for d in docs.documents.list()])            # list, get, chunks, count, forget
 ```
 
-`remember_file(path)` routes by the file's content: text, Markdown, code and
-HTML become documents, PDFs too with `mark-sdk[pdf]`, images become image
+`remember_file(path)` routes by the file's content: text (UTF-8, UTF-16/32
+with a byte-order mark, Latin-1), Markdown, code, HTML, and Word, Excel and
+PowerPoint files become documents, PDFs too with `mark-sdk[pdf]`, images become image
 memories (path and SHA-256, never the bytes), and audio or video go through
 a transcriber you pass (`mark.media.OpenAITranscriber` for any
 OpenAI-compatible server). Long memories render as their best passage, so a

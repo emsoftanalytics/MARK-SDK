@@ -74,9 +74,12 @@ memory.supersede(note, "Run the tests with `uv run --extra dev pytest -q`.")  # 
 print([m.content for m in memory.list(kind="todo", open=True)])   # what is still open
 ```
 
-Supersede a note that changed instead of adding a second version next to
-it. `forget(id)` deletes a memory you should not have stored, together with
-the facts extracted from it (`secure=True` also erases it from disk).
+`resolve()` closes TODOs and bugs only; supersede any other note that
+changed instead of adding a second version next to it. `forget(id)` deletes
+a memory you should not have stored, together with the facts extracted from
+it (`secure=True` also erases it from disk). `forget(match="words")` deletes
+every memory containing those whole words: preview it first with
+`dry_run=True`.
 
 ### Recall
 
@@ -199,12 +202,12 @@ file the CLI's `--db` uses) serves memory to MCP clients over stdio:
 ```text
 mark_brief(budget_tokens?, focus?, agent_id?)
 mark_retrieve(query, agent_id?, max_results?, budget_tokens?, max_item_chars?, session_id?, session_prefix?, tags?)
-mark_write(content, kind?, tags?, agent_id?, session_id?, source?, importance?, canonical?)
-mark_observe(content, agent_id?, session_id?, tags?, source?, importance?)
+mark_write(content, kind?, tags?, agent_id?, session_id?, source?, importance?, canonical?, extract_facts?)
+mark_observe(content, agent_id?, session_id?, tags?, source?, importance?, extract_facts?)
 mark_list(kind?, open?, limit?, offset?, agent_id?)
 mark_resolve(memory_id, note?, agent_id?)
 mark_supersede(memory_id, content, agent_id?)
-mark_forget(memory_id? | match?, secure?, agent_id?)
+mark_forget(memory_id? | match?, confirm?, all?, secure?, agent_id?)
 mark_fact(action=get|set|history|list, subject?, attribute?, value?, valid_from?, agent_id?)
 mark_timeline(subject, attribute?, limit?, since?, until?, agent_id?)
 ```
@@ -216,8 +219,9 @@ and `mark_list(kind, open=true)` find them. Close finished TODOs and fixed
 bugs with `mark_resolve`, replace a note that changed with `mark_supersede`
 (history is kept), and use `mark_fact set` for values that change. Ids may
 be given as the short 8-character form the tools print. `mark_forget` takes
-a `memory_id` or a `match` text, and `secure=true` also erases the text from
-the database file. A failed call returns an error result with the reason;
+a `memory_id` or a `match` of whole words; a match hitting several memories
+only lists them until you call again with `confirm=true`, and `secure=true`
+also erases the text from the database file. A failed call returns an error result with the reason;
 fix the argument and retry. With `--briefing` the server also offers
 `mark_briefing(text?, session_id?, role?, messages?, agent_id?, wait?,
 budget_tokens?)`: call it with the latest message and a stable
@@ -244,6 +248,7 @@ print(mark_middleware("Add pagination to the tasks endpoint.", lambda text: text
 ### MARK From The Command Line
 
 ```bash
+mark serve --detach                                 # once: keeps later calls fast (never run it in the foreground)
 mark brief                                          # start of a session
 mark remember "payments-api uses Postgres 16" --kind decision
 mark remember "TODO: add an index on orders.created_at" --kind todo
@@ -252,6 +257,7 @@ mark resolve 3f2a9c1b --note "index added"
 mark recall "Which database does payments-api use?"
 mark fact set payments-api owner eli --valid-from 2026-04-01
 mark timeline payments-api owner                    # every owner change, oldest first
+mark forget --match "orders.created_at" --dry-run   # see what a match would delete, then --yes
 ```
 
 ## What To Remember
