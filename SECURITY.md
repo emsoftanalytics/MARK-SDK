@@ -85,34 +85,72 @@ Out of scope for this repository:
 
 ## Secrets And Untrusted Text In Memory
 
-MARK redacts credentials before any memory is written to disk: API keys and
-tokens (OpenAI, Anthropic, Stripe, AWS, GitHub, GitLab, Slack, Google,
-Hugging Face), JWTs, private key blocks, passwords, card numbers (Luhn
-checked) and PINs. This applies to every write path: single and batched
-writes, observations, healed and quarantined memories, memory blocks, and
-caller metadata. Each value is replaced by a deterministic placeholder such
-as `[SECRET:aws_secret_access_key]`, so recall still shows that a key
-existed, and the redacted kinds are listed in
+MARK redacts credentials before any memory is written to disk. This applies
+to every write path: single and batched writes, observations, healed and
+quarantined memories, memory blocks, caller metadata, and the full text,
+title and source of documents, files and transcripts. Each value is replaced
+by a deterministic placeholder such as `[SECRET:aws_secret_access_key]`, so
+recall still shows that a key existed, and the redacted kinds are listed in
 `metadata["mark_security"]["redacted"]`.
+
+Redaction recognises secrets mainly by **structure** rather than by a list of
+known examples:
+
+- any value bound to a secret-named key (`DATABASE_PASSWORD=`, `"apiKey":`,
+  `AccountKey=`, `_authToken:`) in env files, YAML, JSON, TOML, connection
+  strings and URL queries; credentials inside URLs and DSNs; `.netrc`
+  entries;
+- command-line secret flags (`--api-key V`, `--password=V`, `mysql -pV`,
+  `sshpass -p V`, `redis-cli -a V`, `docker login -p V`, `curl -u user:V`);
+- documented token shapes (OpenAI, Anthropic, Stripe, AWS, GitHub, GitLab,
+  Slack, Google, Hugging Face, PyPI, Docker Hub, Vault, Discord, Telegram
+  and others), JWTs and private key blocks;
+- Luhn-checked card numbers, PINs, 12-24 word seed phrases, and passwords
+  stated in prose ("the wifi password is ...") in about 20 languages.
+
+Template placeholders such as `your-api-key-here` are left alone, and a value
+in prose must look like a credential, so "the password is too short" stays
+untouched.
 
 Contact identifiers (emails, phone numbers, IBANs, SSNs) are kept by default
 because agents need them; pass `redact=RedactionPolicy(pii=True)` (from
-`mark.security`) to remove them too. Disable redaction only for data you
-control: `Mark.local(..., redact=False)`. Redaction is pattern-based and
-cannot recognise every secret, so do not rely on it as your only control;
-encrypt stores that may hold sensitive data (see below).
+`mark.security`) to remove them too, including national-format phone numbers
+next to a phone word. Disable redaction only for data you control:
+`Mark.local(..., redact=False)`.
 
 Memories are later replayed into prompts, so MARK screens every write for
-prompt-injection markers: "ignore previous instructions", role or
-chat-template markers, smuggled tool calls, hidden zero-width or HTML-comment
-payloads, and "decode and run" encodings. Matching memories are tagged
-`mark:untrusted`, the reasons are recorded in
+prompt injection: instruction overrides ("ignore previous instructions"),
+role reassignment ("from now on you are ...") and messages addressed to an
+AI reader ("note to any AI summarising this file"), in about 25 languages;
+role and chat-template markers and smuggled tool calls; instructions hidden
+in invisible HTML (`display:none`, white or zero-size text), zero-width
+characters or HTML comments; exfiltration links whose query string is to be
+filled from conversation data; and letter-spaced, leetspeak or
+base64-encoded payloads. Matching memories are tagged `mark:untrusted` (every
+chunk of a flagged document too), the reasons are recorded in
 `metadata["mark_security"]["injection"]`, and they are rendered as untrusted
 data in recall results and briefings; they are never silently dropped. Use
 `Mark.local(..., injection="quarantine")` to keep them out of retrieval
-entirely, or `injection="off"` to skip the screen. The screen is a cheap
-heuristic: treat every recalled memory that came from tools, documents or
-the web as data, not instructions.
+entirely, or `injection="off"` to skip the screen.
+
+Every rendering also defuses prompt-boundary lookalikes inside stored text:
+`as_context()` escapes markup, and `as_text()` and the session brief turn
+`</memory_context>`, `<system>`, `<|im_start|>`, `[INST]` and similar markers
+into harmless lookalike characters, so a memory cannot close the block it is
+quoted in.
+
+**Both screens are heuristics.** They were measured on samples written
+independently of the rules: on a frozen held-out set, redaction caught 45 of
+45 planted secrets and the injection screen 30 of 30, with no false positives
+on 60 and 30 benign texts; on 3,303 Python source files and about 67,000
+docstring paragraphs the final rules produced no new redactions or injection
+flags compared with the previous release. An earlier independent corpus showed how such numbers can fall on
+unfamiliar text (19 of 37 secrets and 3 of 18 injections caught before the
+rules were generalised). Expect misses on text unlike these samples: do not
+rely on redaction as your only control, encrypt stores that may hold
+sensitive data (see below), and treat every recalled memory that came from tools,
+documents or the web as data, not instructions. Each screen costs well under
+a millisecond per write.
 
 Replies written by the model are stored as low-trust context (tag
 `mark:assistant`): they rank below what the user said and never appear as
@@ -128,7 +166,11 @@ retrieval.
 - `memory.forget(id)` (or `forget(match="text")`, `mark forget`) deletes the
   memory, its keyword-index rows and its pending extraction jobs, and retracts
   the facts extracted from it. Retracted facts leave current values, history
-  and timelines but are kept for audit.
+  and timelines but are kept for audit. `match` deletes only memories
+  containing those whole words (at least 3 characters, not only stopwords)
+  and refuses more than 50 matches unless `all=True`; `dry_run=True`,
+  `mark forget --match ... --dry-run` and MCP `mark_forget` without
+  `confirm=true` show what would go first.
 - `forget(..., secure=True)` (`mark forget --secure`) overwrites the content
   before deleting the row, hard-deletes the derived facts, and turns on
   SQLite's `secure_delete` so freed pages are zeroed. Follow it with
@@ -138,10 +180,11 @@ retrieval.
 - `memory.facts.delete(subject, attribute)` hard-deletes facts instead of
   retracting them.
 - Agents with 50,000 or more memories keep a vector snapshot for fast
-  reopening. A forgotten memory is never served from it, but its embedding
-  can remain in the snapshot until the snapshot is next rebuilt. Embeddings
-  are not text, but they can reveal meaning; account for this if you must
-  prove erasure.
+  reopening. A forgotten memory is never served from it. After a plain
+  `forget` its embedding can remain in the snapshot until the snapshot is
+  next rebuilt; `secure=True` drops the agent's snapshot, so no vector of the
+  forgotten text remains (the next large reopen rebuilds it). Scope
+  snapshots hold memory ids only.
 - Backups, copies of the database file, and filesystem snapshots are outside
   MARK's control. Erase them separately.
 
@@ -184,8 +227,10 @@ process exits.
 | Embeddings | Plaintext; they can reveal the meaning of the content |
 
 MARK filters on the plaintext fields in SQL. Do not put secrets in them.
-Encrypted stores never build the plaintext keyword (FTS5) index, so recall
-uses vector search only. Automatic fact extraction derives subjects and
+Encrypted stores never build the plaintext keyword (FTS5) index. Recall uses
+vector search plus exact matching of identifier-like query words (ids,
+ticket numbers, versions) through the keyed token sketches described below,
+confirmed on the decrypted text. Automatic fact extraction derives subjects and
 attributes from encrypted content and stores them in plaintext, like any
 other fact key; leave it off for content whose subject names are sensitive.
 
@@ -201,17 +246,30 @@ three subclass `mark.errors.StoreEncryptionError` (also a `RuntimeError`) and
 can be imported from `mark.errors` or `mark.security`.
 
 A store written by a newer MARK whose schema this version cannot read is
-refused before anything is written (`StoreVersionError`), and rows that
-cannot be decrypted are set aside instead of failing every read.
+refused before anything is written (`StoreVersionError`).
+
+**Rows written without the key.** MARK 0.2.0a8 and older do not know the
+encryption marker: opened without the key, they write plaintext into an
+encrypted store. When 0.2.0a10 opens the store with its key, it checks the
+rows added since its last check and quarantines any that do not decrypt:
+they are tagged `mark:unreadable`, never reach recall, are reported by
+`integrity_check()`, and are left out of exports unless `decrypt=True`. The
+plaintext itself stays on disk until you forget those memories with
+`secure=True` and run `vacuum()`. Never open an encrypted store with
+0.2.0a8 or older. Decryption rejects input that is not a Fernet token before
+any key derivation, so a store holding many such rows still opens quickly.
 
 **Exports.** `export_jsonl()` writes plaintext. For an encrypted store it
 refuses unless you pass `decrypt=True` (`mark export --decrypt`) to confirm;
 keep such a file somewhere safe. Export files are created with mode `0600`.
 
 **Timelines and token sketches.** An encrypted store has no keyword index, so
-timelines use keyed token sketches (small Bloom filters keyed from the
-encryption key) to decrypt only candidate memories. By default the sketches
-live only in process memory and nothing new is written to disk.
+timelines and identifier recall use keyed token sketches (small Bloom
+filters keyed from the encryption key) to decrypt only candidate memories.
+By default the sketches live only in process memory and nothing new is
+written to disk; each process builds them once, decrypting every memory
+once (a few seconds at 20,000 memories), at its first timeline or
+identifier recall, or at start with `runtime.warm_up(sketches=True)`.
 `mark.runtime.store.persist_token_sketches()` opts in to keeping them in the
 database so a new process starts warm. A persisted sketch reveals, to someone
 who holds the file but not the key, roughly how many distinct words each
@@ -255,9 +313,34 @@ permissions. This applies to the Python API as well as the CLI.
   client runs the command in-process instead of sending arguments the server
   cannot accept.
 - **Request limits.** Request bodies are limited to 8 MB.
+- **Background start.** `mark serve --detach` starts the server in the
+  background and returns once it answers; `mark serve status` reports it.
+  The server's log is `<db>.server.log`, created with mode `0600`.
 
 Any process running as your user can read the state file and therefore use
 the server. Treat it like the database file itself.
+
+## Store Safety
+
+- **Closing under load.** A store's connections are shared with background
+  threads (briefing prefetch, fact extraction, servers). `close()` and
+  `shutdown()` pass through a statement gate: new statements are refused with
+  `StoreClosedError`, statements already running get up to 5 s to finish,
+  and a connection still in use is never closed under the thread using it.
+  Background readers register with `MarkRuntime.register_closer()` (a
+  `ContextWatch` does so itself) and stop before the store closes.
+- **No migration under a running server.** A store that needs a schema
+  upgrade checks first that no `mark serve` holds it: the current server's
+  OS lock, and for 0.2.0a8/0.2.0a9 servers (which use a pid lock file) the
+  live pid in `<db>.server.lock` or `<db>.server.json` or an answer on the
+  recorded port. If one runs, the open is refused with `StoreInUseError`
+  and nothing is written; `mark serve` also refuses to start next to one.
+  Stop every server, MCP server and agent that uses a store before upgrading
+  MARK, and back the store up first.
+- **Older versions.** 0.2.0a9 refuses a store with a newer schema
+  (`StoreVersionError`). 0.2.0a8 and older have no such check and must never
+  open a store written by a newer version (see "Rows written without the
+  key" above for encrypted stores).
 
 ## Dependency Policy
 
