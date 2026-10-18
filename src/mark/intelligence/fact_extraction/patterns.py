@@ -33,6 +33,7 @@ from datetime import datetime
 from typing import Iterable
 
 from mark.intelligence.fact_extraction import negation, personal
+from mark.intelligence.fact_extraction.attributes import refine
 from mark.intelligence.fact_extraction.base import FactCandidate, clean_text, valid_candidate
 from mark.intelligence.fact_extraction.candidates import (for_user, keep_attribute_case, previous_value, retraction,
                                                           triple)
@@ -118,7 +119,9 @@ class PatternFactExtractor:
             candidate = for_user(candidate, self.user_subject)
             if candidate is None:
                 return
-            candidate = split_known(candidate, known, self.user_subject)
+            candidate = refine(split_known(candidate, known, self.user_subject))
+            if candidate is None:
+                return
             key = (candidate.subject.lower(), candidate.attribute.lower(), candidate.value.lower(),
                    candidate.valid_from, candidate.retract, candidate.previous)
             if key not in seen:
@@ -173,8 +176,14 @@ class PatternFactExtractor:
             text = ""
         carried: str | None = None
         previous: list[FactCandidate] = []
+        retracted: FactCandidate | None = None
         for raw in split_clauses(text):
             clause = LEADING_FILLER.sub("", raw.strip())
+            switched = negation.switched_value(clause) if retracted else None
+            if switched:
+                # "I no longer drink coffee; I switched to green tea": the new value of that slot.
+                out.append(replace(retracted, value=clean_text(switched), retract=False, historical=False))
+                continue
             denied = negation.denied_value(clause)
             if denied is not None:
                 # "X runs on port 9443, not 9444": withdraw 9444 for the same slot.
@@ -198,6 +207,7 @@ class PatternFactExtractor:
             if not continuation:
                 carried = carried_subject(clause, candidates)
             previous = [c for c in candidates if not (c.retract or c.previous)] or previous
+            retracted = next((c for c in candidates if c.retract and not c.historical), None)
             out.extend(candidates)
         tags = tuple(sent.kinds)
         return [replace(c, correction=corrected and not (c.retract or c.previous), tags=tags or c.tags)

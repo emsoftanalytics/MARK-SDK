@@ -23,6 +23,7 @@ Modules:
   - ``lists``     "My emails are A and B", "I speak X, Y and Z" (multi-valued)
   - ``dates``     "Starting 2027-01-01," and "moved ... in September"
   - ``subjects``  known subjects ("shorty plugin group" -> shorty + "plugin group")
+  - ``attributes`` modifiers into the attribute ("default currency"), one "db path" key, tool slots
   - ``candidates`` candidate builders and the first-person placeholder rules
   - ``patterns``  PatternFactExtractor (regex packs; fast, runs inline)
   - ``apply``     record candidates: assertions, corrections, retractions
