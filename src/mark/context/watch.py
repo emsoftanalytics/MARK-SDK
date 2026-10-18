@@ -153,6 +153,7 @@ class ContextWatch(_WatchMessagesMixin, _WatchPrefetchMixin, _WatchLifecycleMixi
         # One worker: prefetches run in order and never compete with each other.
         self._executor = WatchWorker() if background else None
         self._closed = False
+        self._unbind = self._bind_shutdown(memory)   # closed before its store closes
         #: First briefing for a new request waits this long for its prefetch, so
         #: a cold call returns memory, not "Nothing relevant" (agent test N5).
         self.cold_wait = 1.5

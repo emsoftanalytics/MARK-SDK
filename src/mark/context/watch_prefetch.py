@@ -73,6 +73,9 @@ def _with_user_lane(memory: Any, batch: list[str], results: list[Any]) -> list[A
     try:
         extra = memory.retrieve_many_sync([batch[i] for i in crowded], tags=[USER_TAG])
     except Exception as exc:   # the first pass is still a valid answer
+        from mark.errors import StoreClosedError
+        if isinstance(exc, StoreClosedError):
+            raise   # shutdown, not a failure: _done stops the watch quietly
         logger.warning("user-statement retrieval failed: %s", exc)
         return results
     merged = list(results)
@@ -182,7 +185,10 @@ class _WatchPrefetchMixin:
         batch = list(queries) + ([task] if task else [])
         if not batch:
             return
-        results = _with_user_lane(self._memory, batch, self._memory.retrieve_many_sync(batch))
+        results = self._memory.retrieve_many_sync(batch)
+        if getattr(self, "_closed", False):
+            return   # closing (often: its store is about to close): skip follow-up queries
+        results = _with_user_lane(self._memory, batch, results)
         from mark.intelligence.query_understanding import _anchor_norm
 
         links: list[str] = []
@@ -208,7 +214,7 @@ class _WatchPrefetchMixin:
         if previous and hasattr(self, "_previous"):
             with self._lock:
                 self._previous.update(previous)
-        if links:
+        if links and not getattr(self, "_closed", False):
             self._prefetch(links, None)
 
     def _links_from(self, anchor: _Anchor, result: Any) -> list[str]:
