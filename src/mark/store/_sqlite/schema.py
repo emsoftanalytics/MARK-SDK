@@ -27,6 +27,7 @@ from mark.store._sqlite.codec import (
 from mark.store._sqlite.fts_text import multilingual_index_text
 from mark.store._sqlite.ddl import SchemaDDL
 from mark.store._sqlite.scope_delta import WRITE_LOG_DDL
+from mark.store._sqlite.scope_snapshot import SCOPE_DDL
 
 logger = logging.getLogger("mark.store.sqlite")
 
@@ -106,7 +107,8 @@ class SchemaMixin(SchemaDDL):
                 conn.execute("BEGIN IMMEDIATE")
             for ddl in [self._DDL_SCHEMA_INFO, self._DDL_BLOCKS, self._DDL_FRAGMENTS,
                         self._DDL_DOCUMENTS, self._DDL_NODES, self._DDL_EDGES,
-                        self._DDL_SESSION_EVENTS, self._DDL_BLOCK_NODES, self._DDL_BLOCK_LINKS, WRITE_LOG_DDL]:
+                        self._DDL_SESSION_EVENTS, self._DDL_BLOCK_NODES, self._DDL_BLOCK_LINKS, WRITE_LOG_DDL,
+                        SCOPE_DDL]:
                 conn.execute(ddl)
             row = conn.execute("SELECT value FROM schema_info WHERE key = 'schema_version'").fetchone()
             # Pre-versioned databases (no stamp) are treated as version 0. Which

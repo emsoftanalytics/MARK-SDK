@@ -26,12 +26,13 @@ from mark.store._sqlite.fts_text import (
     multilingual_query_chunks,
 )
 from mark.store._sqlite.scope_delta import ScopeCacheMixin
+from mark.store._sqlite.scope_snapshot import ScopeSnapshotMixin
 from mark.store._sqlite.vector_snapshot import VectorSnapshotMixin
 
 logger = logging.getLogger("mark.store.sqlite")
 
 
-class SearchMixin(ScopeCacheMixin, VectorSnapshotMixin):
+class SearchMixin(ScopeCacheMixin, ScopeSnapshotMixin, VectorSnapshotMixin):
     """Cached retrievable-id sets, lexical (BM25) search and phrase lookup."""
 
     _fts_enabled: bool

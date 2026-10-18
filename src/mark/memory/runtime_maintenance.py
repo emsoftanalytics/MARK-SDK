@@ -56,8 +56,6 @@ class MaintenanceMixin:
         is first brought in sync with the store (writes from other processes
         included); a write racing with the save simply makes it skip.
         """
-        import json
-
         from mark.intelligence.index_bulk_load import save_snapshot
         from mark.intelligence.retrieval_policy import SessionFilter
         from mark.store._sqlite import vector_snapshot
@@ -70,9 +68,8 @@ class MaintenanceMixin:
             if index.count(agent_id) < vector_snapshot.MIN_ROWS:
                 continue
             version = store._write_version()
-            raw = store.get_meta(vector_snapshot.SCOPE_META_PREFIX + agent_id)
-            if raw and json.loads(raw).get("version") == version:
-                continue  # the snapshot already describes the store as it is
+            if getattr(store, "scope_snapshot_version", lambda _a: None)(agent_id) == version:
+                continue  # the snapshots already describe the store as it is
             pipeline._sync_index(agent_id, pipeline._allowed_ids(agent_id, SessionFilter()))
             save_snapshot(store, index, self.embedder, agent_id, version)
             saved += 1

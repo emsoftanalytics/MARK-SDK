@@ -15,7 +15,7 @@ import pytest
 
 from mark import Mark
 from mark.index import vector as vector_module
-from mark.store._sqlite import scope_delta, vector_snapshot
+from mark.store._sqlite import scope_delta, scope_snapshot, vector_snapshot
 from mark.store.sqlite import LocalMemoryStore
 from mark.types import MemoryFragment, MemoryState
 
@@ -81,7 +81,7 @@ def test_scope_comes_from_the_snapshot_plus_the_logged_delta(snapshot_store, mon
 def test_unknown_or_tampered_snapshot_scope_falls_back_to_a_full_scan(snapshot_store, monkeypatch) -> None:
     path, _ = snapshot_store
     store = LocalMemoryStore(path / ".mark" / "memory.db")
-    key = f"{vector_snapshot.SCOPE_META_PREFIX}{AGENT}"
+    key = f"{scope_snapshot.SCOPE_META_PREFIX}{AGENT}"
     info = json.loads(store.get_meta(key))
     store.set_meta(key, json.dumps({**info, "digest": "0" * len(info["digest"])}))
     store.close()
@@ -146,23 +146,24 @@ def test_serve_saves_a_fresh_snapshot_on_graceful_stop(snapshot_store, monkeypat
     stop.set()
     thread.join(60)
     store = LocalMemoryStore(db)
-    info = json.loads(store.get_meta(f"{vector_snapshot.SCOPE_META_PREFIX}{AGENT}"))
+    info = json.loads(store.get_meta(f"{scope_snapshot.SCOPE_META_PREFIX}{AGENT}"))
     assert info["version"] == version and info["count"] == len(ids) + 1
     store.close()
 
 
-def test_a_snapshot_without_a_scope_record_is_resaved_once(snapshot_store, monkeypatch) -> None:
+def test_a_cold_start_that_had_to_scan_saves_the_scope_for_the_next_one(snapshot_store, monkeypatch) -> None:
     path, ids = snapshot_store
     store = LocalMemoryStore(path / ".mark" / "memory.db")
-    with store._writing(structural=False) as conn:  # as an earlier build saved it
-        conn.execute("DELETE FROM schema_info WHERE key = ?", (f"{vector_snapshot.SCOPE_META_PREFIX}{AGENT}",))
+    with store._writing(structural=False) as conn:  # as before this build, or after an unknown write
+        conn.execute("DELETE FROM schema_info WHERE key = ?", (f"{scope_snapshot.SCOPE_META_PREFIX}{AGENT}",))
+        conn.execute("DELETE FROM scope_snapshots")
     store.close()
-    with Mark.local(path) as mark:  # full scan this time, and the snapshot gets its record
-        mark.runtime.memory(AGENT).retrieve_sync("svc-001 patched")
     scans = _no_full_scan(monkeypatch)
+    with Mark.local(path) as mark:  # scans once, and keeps the result
+        assert len(mark.runtime.store.retrievable_id_set(AGENT)) == len(ids)
     with Mark.local(path) as mark:
         assert len(mark.runtime.store.retrievable_id_set(AGENT)) == len(ids)
-    assert scans == []
+    assert len(scans) == 1
 
 
 def test_a_few_rows_since_the_snapshot_are_read_by_id(snapshot_store, monkeypatch) -> None:

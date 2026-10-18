@@ -175,10 +175,7 @@ def restore_snapshot(
     loaded = index.count(agent_id)
     # Every loaded id is wanted and distinct: equal counts mean nothing is left.
     left = set() if loaded == len(wanted) else index.missing(wanted, agent_id)
-    # Re-save when stale, or once for a snapshot saved without its scope record
-    # (an earlier build): later cold starts then skip the scope scan too.
-    resave = agent_id in getattr(store, "_snapshot_scope_missing", ())
-    return left, loaded, resave or len(left) >= max(1_000, len(wanted) // 10), version
+    return left, loaded, len(left) >= max(1_000, len(wanted) // 10), version
 
 
 def save_snapshot(store: Any, index: Any, embedder: Any, agent_id: str, write_version: int) -> None:

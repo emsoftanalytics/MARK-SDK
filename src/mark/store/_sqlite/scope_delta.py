@@ -144,12 +144,15 @@ class ScopeCacheMixin:
                 entry = self._expire(entry, agent_id, now)
         else:
             entry = None
-        if entry is None and key not in self._ids_cache:
-            # First use in this process: the snapshot + log replaces the O(N) scan.
-            # (The periodic refresh below keeps rescanning, as a safety net.)
+        first_use = entry is None and key not in self._ids_cache
+        if first_use:
+            # First use in this process: a scope snapshot + the log replaces the O(N)
+            # scan. (The periodic refresh below keeps rescanning, as a safety net.)
             entry = self._snapshot_scope(version, where, params, agent_id, now)
         if entry is None:
             entry = self._full_scope(version, where, params, agent_id, now)
+            if first_use:
+                self._save_scanned_scope(agent_id, where, params, entry)
         with self._lock:
             # Bounded FIFO eviction (dicts preserve insertion order).
             if key not in self._ids_cache and len(self._ids_cache) >= _IDS_CACHE_SIZE:
@@ -167,10 +170,10 @@ class ScopeCacheMixin:
         return _Entry(ids, version, now + self._next_expiry(agent_id), now + _IDS_CACHE_MAX_AGE)
 
     def _snapshot_scope(self, version: int, where: str, params: list, agent_id: str, now: float) -> _Entry | None:
-        """The scope rebuilt from the agent's vector snapshot plus the logged delta; None when unsure.
+        """The scope rebuilt from the agent's scope snapshot plus the logged delta; None when unsure.
 
         The snapshot records the exact scope at its ``write_version`` (see
-        ``vector_snapshot``); every change since is in ``write_log``, so this
+        ``scope_snapshot``); every change since is in ``write_log``, so this
         is the same set a full scan returns, at O(delta) SQL cost.
         """
         load = getattr(self, "snapshot_scope_ids", None)
@@ -183,6 +186,16 @@ class ScopeCacheMixin:
             entry = self._apply_log(entry, version, where, params, now, SNAPSHOT_MAX_DELTA_IDS)
         # Members whose TTL ran out since the snapshot leave now (read through the TTL index).
         return None if entry is None else self._expire(entry, agent_id, now)
+
+    def _save_scanned_scope(self, agent_id: str, where: str, params: list, entry: _Entry) -> None:
+        """Keep a large agent's scanned scope as a scope snapshot, so the next cold start skips the scan."""
+        wanted = getattr(self, "scope_snapshot_wanted", None)
+        if wanted is None or not wanted(agent_id, where, params, len(entry.ids)):
+            return
+        try:  # exact at entry.version: the version was read before the scan (see above)
+            self.save_scope_snapshot(agent_id, where, params, entry.ids, entry.version)
+        except sqlite3.Error:  # e.g. a read-only database: only the next cold start pays
+            pass
 
     def _next_expiry(self, agent_id: str) -> float:
         """Seconds until the soonest live TTL fragment of the agent expires (inf: none)."""
