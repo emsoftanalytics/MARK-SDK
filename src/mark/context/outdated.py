@@ -16,13 +16,17 @@ October" next to "vet moved to 21 October"; a10 small-model run, root cause
      his number" vs "Joao's phone number is ...").
 
 Only lines that are both in the candidate pool are compared, and only an
-older line is ever marked. Callers drop outdated lines for small models and
+older line is ever marked. Only the first ``_WINDOW`` characters of a memory
+are read (a change statement leads its memory; a briefing line shows little
+more), each window is analysed once (cached), and only pairs that can match
+are compared — 12 x 16 KB memories took 1-6 s per briefing (a10 re-test 4). Callers drop outdated lines for small models and
 label them "(outdated)" otherwise (``mark.context.watch_render``).
 """
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, Iterable
+from functools import lru_cache
+from typing import Any, Callable, Iterable, NamedTuple
 
 from mark.context.relevance import content_words
 
@@ -69,17 +73,40 @@ def _contains_value(text: str, value: str) -> bool:
     return bool(value) and re.search(r"(?<!\w)" + re.escape(value) + r"(?!\w)", text or "", re.IGNORECASE) is not None
 
 
+#: Characters of a memory read for replacement (see the module docstring).
+_WINDOW = 600
+
+
+class _Profile(NamedTuple):
+    text: str                          # the window
+    words: frozenset[str]              # content words minus change words
+    old_values: tuple[tuple[str, str], ...]
+    change: bool                       # has a change word ("moved", "now", ...)
+
+
+@lru_cache(maxsize=1024)   # keyed by the window text: an edited memory is a new key
+def _profile_of(text: str) -> _Profile:
+    return _Profile(text, content_words(text) - _CHANGE_WORDS, tuple(_old_values(text)),
+                    _CHANGE.search(text) is not None)
+
+
+def _profile(fragment: Any) -> _Profile:
+    return _profile_of((getattr(fragment, "content", "") or "")[:_WINDOW])
+
+
 def replaces(newer: Any, older: Any) -> bool:
     """Does the *newer* statement replace what the *older* one said?"""
-    new_text = getattr(newer, "content", "") or ""
-    old_text = getattr(older, "content", "") or ""
-    shared = (content_words(new_text) & content_words(old_text)) - _CHANGE_WORDS
-    for negator, value in _old_values(new_text):
+    return _replaces(_profile(newer), _profile(older))
+
+
+def _replaces(new: _Profile, old: _Profile) -> bool:
+    shared = new.words & old.words
+    for negator, value in new.old_values:
         # A bare "not X" also needs a shared topic word ("sister"): "not Monday" alone is too weak.
-        if len(value) > 1 and _contains_value(old_text, value) \
+        if len(value) > 1 and _contains_value(old.text, value) \
                 and (negator != "not" or shared - content_words(value)):
             return True
-    if not _CHANGE.search(new_text):
+    if not new.change:
         return False
     return len({w for w in shared if not w.isdigit()}) >= 2
 
@@ -88,14 +115,29 @@ def replaced_by(fragments: Iterable[Any], key: Callable[[Any], Any]) -> dict[str
     """``{old id: newer id}`` for every line of *fragments* a later line replaces.
 
     *key* orders fragments in time (oldest lowest); an equal key never replaces.
+    Instead of every pair, an older line is compared only with newer lines
+    that can replace anything (a change word or an old value) and share a
+    content word with it, or that name an old value ("moved from Porto"):
+    no other pair can match (see ``_replaces``).
     """
     pool = {getattr(f, "id", None): f for f in fragments if getattr(f, "id", None)}
     timed = sorted(pool.values(), key=key)
+    keys = [key(f) for f in timed]
+    profiles = [_profile(f) for f in timed]
+    by_word: dict[str, list[int]] = {}
+    for position, profile in enumerate(profiles):
+        if not (profile.change or profile.old_values):
+            continue   # a plain statement never replaces another
+        for word in profile.words:
+            by_word.setdefault(word, []).append(position)
+    naming = {i for i, p in enumerate(profiles) if any(n != "not" for n, _ in p.old_values)}
     out: dict[str, str] = {}
     for index, older in enumerate(timed):
-        for newer in reversed(timed[index + 1:]):   # the newest replacement wins
-            if key(newer) != key(older) and replaces(newer, older):
-                out[older.id] = newer.id
+        candidates = {j for w in profiles[index].words for j in by_word.get(w, ()) if j > index}
+        candidates.update(j for j in naming if j > index)
+        for j in sorted(candidates, reverse=True):   # the newest replacement wins
+            if keys[j] != keys[index] and _replaces(profiles[j], profiles[index]):
+                out[older.id] = timed[j].id
                 break
     return out
 
