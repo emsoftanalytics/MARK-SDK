@@ -93,7 +93,8 @@ def test_every_exchange_is_stored_before_it_leaves_the_window(server, memory) ->
             chat.send(text)
         assert len(chat.window) == 2
     stored = {f.content: f for f in memory.list(limit=None)}
-    user = stored["User said: My hive is called Colmeia Azul."]
+    # The user's own words, no "User said:" prefix (a10: the prefix broke fact extraction).
+    user = stored["My hive is called Colmeia Azul."]
     reply = stored["Assistant replied: ack 2"]
     # One dense memory per user message; the reply is separate, low-trust context.
     assert user.source == "user" and "mark:assistant" not in user.tags
@@ -106,7 +107,7 @@ def test_assistant_replies_can_be_left_out_and_never_anchor(server, memory) -> N
         for text in TURNS[:3]:
             chat.send(text)
     contents = [f.content for f in memory.list(limit=None)]
-    assert len(contents) == 3 and all(c.startswith("User said:") for c in contents)
+    assert sorted(contents) == sorted(TURNS[:3])
 
 
 def test_questions_are_stored_but_not_briefed(server, memory) -> None:
@@ -114,7 +115,7 @@ def test_questions_are_stored_but_not_briefed(server, memory) -> None:
         chat.send("My hive is called Colmeia Azul.")
         chat.send("What is my hive called?")
         stored = {f.content: f for f in memory.list(limit=None)}
-        assert "mark:question" in stored["User said: What is my hive called?"].tags
+        assert "mark:question" in stored["What is my hive called?"].tags
         brief = chat.prepare("Remind me about the hive Colmeia Azul.")[0]["content"]
     assert "Colmeia Azul." in brief and "What is my hive called" not in brief
 
