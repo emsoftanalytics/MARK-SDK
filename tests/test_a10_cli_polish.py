@@ -55,7 +55,7 @@ def test_serve_stop_without_a_server_fails(db: str, capsys) -> None:
 
 
 def test_brief_on_an_empty_store(db: str, capsys) -> None:
-    assert run(db, "remember", "x") == 0 and run(db, "forget", "--match", "x") == 0
+    assert run(db, "remember", "xyzzy") == 0 and run(db, "forget", "--match", "xyzzy", "--yes") == 0
     capsys.readouterr()
     assert run(db, "brief") == 0
     assert capsys.readouterr().out.strip() == "(memory is empty)"

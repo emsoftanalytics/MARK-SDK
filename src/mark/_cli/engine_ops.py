@@ -57,12 +57,19 @@ class EngineOpsMixin:
         raise ValueError(f"id {memory_id!r} is ambiguous; give more characters")
 
     def cmd_forget(self, agent: str, id: str | None = None, match: str | None = None,  # noqa: A002
-                   secure: bool = False) -> dict[str, Any]:
+                   secure: bool = False, dry_run: bool = False, all: bool = False) -> dict[str, Any]:  # noqa: A002
+        from mark.memory.facade.forget_match import FORGET_MATCH_CAP
+
         memory = self._memory(agent)
+        if dry_run:  # what `forget --match` would delete: count + preview lines
+            found = memory.forget(self._full_id(agent, id) if id is not None else None,
+                                  match=match, dry_run=True)
+            return {"match": found.match, "count": found.count, "previews": found.previews,
+                    "over_cap": found.over_cap, "cap": FORGET_MATCH_CAP}
         if id is not None:
             forgotten = memory.forget(self._full_id(agent, id), secure=secure)
         else:
-            forgotten = memory.forget(match=match, secure=secure)
+            forgotten = memory.forget(match=match, secure=secure, all=all)
         if secure and forgotten:
             memory.vacuum()  # the CLI promise: the text is gone from disk when this returns
         return {"forgotten": forgotten, "secure": secure}

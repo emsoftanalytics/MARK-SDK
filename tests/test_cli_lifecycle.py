@@ -85,7 +85,7 @@ def test_lifecycle_commands_by_short_id(tmp_path: Path, capsys) -> None:
     assert [m["content"] for m in current] == ["Storage backend is SQLite."]
 
     assert "forgot 1 memory" in _run(capsys, db, "forget", current[0]["short_id"])
-    assert "forgot 2 memories" in _run(capsys, db, "forget", "--match", "TODO:")
+    assert "forgot 2 memories" in _run(capsys, db, "forget", "--match", "TODO:", "--yes")
     assert cli.main(["--db", db, "--no-server", "forget", "deadbeef"]) == 1
     assert "no memory with id 'deadbeef'" in capsys.readouterr().err
 
@@ -95,7 +95,7 @@ def test_secure_forget_erases_text_from_disk(tmp_path: Path, capsys) -> None:
     # Not a credential (credentials are redacted before they reach disk; see below).
     _run(capsys, str(db), "remember", "The launch codename is qzx-hidden-77.")
     _run(capsys, str(db), "remember", "Something to keep.")
-    assert "erased from disk" in _run(capsys, str(db), "forget", "--match", "qzx-hidden-77", "--secure")
+    assert "erased from disk" in _run(capsys, str(db), "forget", "--match", "qzx-hidden-77", "--secure", "--yes")
     data = b"".join(p.read_bytes() for p in tmp_path.glob("s.db*") if p.is_file())
     assert b"qzx-hidden-77" not in data and b"Something to keep" in data
 

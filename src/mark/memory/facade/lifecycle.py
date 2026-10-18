@@ -11,11 +11,14 @@ update) live in :mod:`mark.memory.facade.revisions`.
 from __future__ import annotations
 
 import warnings
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mark.kinds import TAG_RESOLVED, TAG_SUPERSEDED, kind_tag, normalize_kind
 from mark.memory.facade.core import MemoryCore
 from mark.types import MemoryFragment, MemoryState
+
+if TYPE_CHECKING:
+    from mark.memory.facade.forget_match import ForgetPreview
 
 #: list() page size when the caller does not choose one. A sentinel (not a
 #: plain 100) lets list() warn only when the *default* silently truncated.
@@ -128,33 +131,45 @@ class LifecycleMixin(MemoryCore):
         *,
         match: str | None = None,
         secure: bool = False,
-    ) -> int:
-        """Forget one memory by id, or every memory whose text contains *match*.
+        dry_run: bool = False,
+        all: bool = False,  # noqa: A002 - mirrors `mark forget --all`
+    ) -> int | ForgetPreview:
+        """Forget one memory by id, or every memory containing the words *match*.
 
         Returns how many memories were forgotten (0 when nothing matched).
         Facts extracted from a forgotten memory are retracted, so they leave
         current values and timelines. ``secure=True`` also overwrites the
         text, hard-deletes those facts and zeroes freed pages; call
         :meth:`vacuum` afterwards to purge the file and its WAL.
-        ``match`` is a case-insensitive literal substring, never a semantic
-        search, so it only ever removes memories that contain those words.
+
+        ``match`` is a case-insensitive **whole-word or phrase** match ("cat"
+        never matches "concatenate"), never a semantic search. It needs at
+        least 3 characters and more than stopwords; more than 50 matches
+        (:data:`~mark.memory.facade.forget_match.FORGET_MATCH_CAP`) raise
+        :class:`~mark.errors.InvalidInputError` unless ``all=True``.
+        ``dry_run=True`` deletes nothing and returns a
+        :class:`~mark.memory.facade.forget_match.ForgetPreview` (count, ids
+        and one short preview line per memory).
         """
+        from mark.memory.facade import forget_match
+
         if (memory_id is None) == (match is None):
             from mark.errors import InvalidInputError
 
             raise InvalidInputError("forget() needs exactly one of memory_id or match=")
         if memory_id is not None:
-            ids = [memory_id] if self.get(memory_id) is not None else []
+            one = self.get(memory_id)
+            targets = [one] if one is not None else []
         else:
-            needle = str(match).casefold().strip()
-            if not needle:
-                from mark.errors import InvalidInputError
-
-                raise InvalidInputError("forget(match=...) needs non-empty text")
-            ids = [f.id for f in self._store.page_fragments(self.agent_id, limit=None)
-                   if needle in f.content.casefold()]
+            targets = forget_match.matching(self._store.page_fragments(self.agent_id, limit=None),
+                                            str(match))
+        found = forget_match.preview(str(match or memory_id), targets)
+        if dry_run:
+            return found
+        if match is not None and found.over_cap and not all:
+            raise forget_match.over_cap_error(found)
         forgotten = 0
-        for fragment_id in ids:
+        for fragment_id in found.ids:
             self._pipeline._index.remove(fragment_id)
             forgotten += bool(self._store.forget_fragment(fragment_id, secure=secure))
         return forgotten

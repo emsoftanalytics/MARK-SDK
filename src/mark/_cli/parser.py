@@ -55,8 +55,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("forget", help="forget a memory (and the facts extracted from it)")
     p.add_argument("id", nargs="?", help="memory id (the 8-character short id is enough)")
-    p.add_argument("--match", help="forget every memory containing this text instead")
+    p.add_argument("--match", help="forget every memory containing these whole words instead "
+                                   "(lists them and asks first)")
     p.add_argument("--secure", action="store_true", help="also erase the text from the database file")
+    p.add_argument("--yes", "-y", action="store_true", help="with --match: do not ask for confirmation")
+    p.add_argument("--dry-run", action="store_true", help="with --match: only list what would be forgotten")
+    p.add_argument("--all", action="store_true", help="with --match: allow more than 50 matches")
     p = sub.add_parser("resolve", help="mark a TODO/bug memory as done")
     p.add_argument("id")
     p.add_argument("--note")
