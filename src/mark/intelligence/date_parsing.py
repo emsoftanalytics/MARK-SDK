@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import calendar
 import re
+
+from mark.intelligence._lazy_re import LazyPattern, lazy  # compiled on first use (cold start)
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
@@ -42,31 +44,31 @@ _UNIT = r"(?P<unit>day|week|month|quarter|year)s?"
 
 # Order matters: longer, more specific forms first; matched spans are claimed
 # so "3rd of May 2026" is not also read as "May 2026".
-_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("iso", re.compile(r"\b(?P<y>\d{4})-(?P<m>\d{2})-(?P<d>\d{2})\b")),
-    ("numeric", re.compile(r"(?<![\w./-])(?P<a>\d{1,2})[/.](?P<b>\d{1,2})[/.](?P<y>\d{4}|\d{2})(?![\w./-]|\.\d)")),
-    ("day_month", re.compile(rf"\b{_DAY}(?:\s+of)?\s+{_MON}(?:,?\s+{_YEAR})?\b", re.I)),
-    ("month_day", re.compile(rf"\b{_MON}\s+{_DAY}(?!\d|:)(?:,?\s+{_YEAR})?\b", re.I)),
-    ("iso_month", re.compile(r"\b(?P<y>\d{4})-(?P<m>\d{2})\b(?!-\d)")),
-    ("quarter", re.compile(r"\b(?:Q(?P<q>[1-4])|(?P<qw>first|second|third|fourth|1st|2nd|3rd|4th)[\s-]+quarter)"
+_PATTERNS: list[tuple[str, LazyPattern]] = [
+    ("iso", lazy(r"\b(?P<y>\d{4})-(?P<m>\d{2})-(?P<d>\d{2})\b")),
+    ("numeric", lazy(r"(?<![\w./-])(?P<a>\d{1,2})[/.](?P<b>\d{1,2})[/.](?P<y>\d{4}|\d{2})(?![\w./-]|\.\d)")),
+    ("day_month", lazy(rf"\b{_DAY}(?:\s+of)?\s+{_MON}(?:,?\s+{_YEAR})?\b", re.I)),
+    ("month_day", lazy(rf"\b{_MON}\s+{_DAY}(?!\d|:)(?:,?\s+{_YEAR})?\b", re.I)),
+    ("iso_month", lazy(r"\b(?P<y>\d{4})-(?P<m>\d{2})\b(?!-\d)")),
+    ("quarter", lazy(r"\b(?:Q(?P<q>[1-4])|(?P<qw>first|second|third|fourth|1st|2nd|3rd|4th)[\s-]+quarter)"
                            r"(?:\s+(?:of\s+)?(?P<year>(?:19|20)\d{2}))?\b", re.I)),
-    ("half", re.compile(r"\bH(?P<h>[12])\s*(?P<year>(?:19|20)\d{2})?\b")),
-    ("month_year", re.compile(rf"\b{_MON}\s+{_YEAR}\b", re.I)),
+    ("half", lazy(r"\bH(?P<h>[12])\s*(?P<year>(?:19|20)\d{2})?\b")),
+    ("month_year", lazy(rf"\b{_MON}\s+{_YEAR}\b", re.I)),
     # A bare month name needs a preposition: "May I ...", "march on" are not dates.
-    ("month", re.compile(rf"\b(?:in|during|since|until|by|early|late|mid|of|last|next|this)[\s-]+{_MON}(?!\w)", re.I)),
-    ("year", re.compile(rf"\b(?:in|during|since|until|by)\s+{_YEAR}\b", re.I)),
-    ("ago", re.compile(rf"\b(?P<n>\d+|a|an|one|two|three)\s+{_UNIT}\s+ago\b", re.I)),
-    ("past", re.compile(rf"\b(?:past|last)\s+(?P<n>\d+)\s+{_UNIT}\b", re.I)),
-    ("rel_unit", re.compile(rf"\b(?P<rel>last|this|next|previous|coming)\s+{_UNIT}\b", re.I)),
-    ("rel_wd", re.compile(rf"\b(?P<rel>last|this|next|previous|coming)\s+{_WD}\b", re.I)),
-    ("on_wd", re.compile(rf"\b(?:on|since|by)\s+{_WD}\b", re.I)),
-    ("word", re.compile(r"\b(?P<w>today|yesterday|tomorrow|tonight)\b", re.I)),
+    ("month", lazy(rf"\b(?:in|during|since|until|by|early|late|mid|of|last|next|this)[\s-]+{_MON}(?!\w)", re.I)),
+    ("year", lazy(rf"\b(?:in|during|since|until|by)\s+{_YEAR}\b", re.I)),
+    ("ago", lazy(rf"\b(?P<n>\d+|a|an|one|two|three)\s+{_UNIT}\s+ago\b", re.I)),
+    ("past", lazy(rf"\b(?:past|last)\s+(?P<n>\d+)\s+{_UNIT}\b", re.I)),
+    ("rel_unit", lazy(rf"\b(?P<rel>last|this|next|previous|coming)\s+{_UNIT}\b", re.I)),
+    ("rel_wd", lazy(rf"\b(?P<rel>last|this|next|previous|coming)\s+{_WD}\b", re.I)),
+    ("on_wd", lazy(rf"\b(?:on|since|by)\s+{_WD}\b", re.I)),
+    ("word", lazy(r"\b(?P<w>today|yesterday|tomorrow|tonight)\b", re.I)),
 ]
 _SMALL_NUMBERS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3}
 
 # Cheap pre-checks: a pattern only runs when the text has the words it needs
 # (most memories hold no date at all, and this runs on every candidate).
-_WORD_RE = re.compile(r"[a-z0-9]+")
+_WORD_RE = lazy(r"[a-z0-9]+")
 _NEED_WORDS = {
     "month": frozenset(_MONTHS),
     "weekday": frozenset(_WEEKDAYS),
