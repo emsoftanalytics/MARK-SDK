@@ -4,14 +4,15 @@ Quickstart::
 
     from mark import Mark
 
-    mark = Mark.local("./.mark")          # a folder, or a file such as "notes.db"
+    mark = Mark.local("./.mark")          # ./.mark/memory.db (as `mark --db .mark`)
     mark.memory.remember("We chose SQLite for storage.", kind="decision")
     print(mark.memory.recall("which database?").as_context())
 
 Every memory object (``mark.memory`` and ``mark.runtime.memory("agent-id")``)
-has the same verbs: remember, recall, forget, get, list, count, update,
-supersede, resolve, facts, timeline, export_jsonl, import_jsonl; plain names
-are synchronous and an ``a`` prefix marks the async twin (``arecall``).
+has the same verbs: remember, remember_many, recall, forget, get, list, count,
+update, supersede, resolve, facts, timeline, brief, store_document,
+remember_file, documents, images, export_jsonl, import_jsonl; plain names are
+synchronous and an ``a`` prefix marks the async twin (``arecall``).
 
 The top level exports only the curated names in ``__all__``. Every other name
 that used to live here still works but emits a ``DeprecationWarning`` naming
@@ -48,6 +49,10 @@ _LAZY_EXPORTS = {
     "InvalidInputError": "mark.errors",
     "MemoryNotFoundError": "mark.errors",
     "UnknownBlockError": "mark.errors",
+    "InvalidMemoryError": "mark.errors",
+    "MemoryTooLargeError": "mark.errors",
+    "StoreClosedError": "mark.errors",
+    "StoreVersionError": "mark.errors",
 }
 
 # Former top-level names, kept importable for compatibility (deprecated here).
@@ -215,6 +220,10 @@ __all__ = [
     "InvalidInputError",
     "MemoryNotFoundError",
     "UnknownBlockError",
+    "InvalidMemoryError",
+    "MemoryTooLargeError",
+    "StoreClosedError",
+    "StoreVersionError",
     "__version__",
 ]
 

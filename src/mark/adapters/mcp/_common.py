@@ -7,10 +7,21 @@ the client gets ``isError=True`` and one clear sentence instead of a
 here rather than by pydantic constraints for the same reason; the bounds
 are still advertised in each tool's JSON schema (``bounded``).
 
+Arguments that fail the SDK's own schema validation (a string for an
+integer...) are reported the same way: :func:`install_error_cleaner` turns
+the pydantic dump (with its URL) into one MARK-style sentence.
+
 **Output.** Tool results are plain text for a model to read. Memory content
 is not HTML-escaped ("->" stays "->", agent report #14); only text that
 could forge a context boundary (``<memory_context>``, ``<mark_briefing>``)
-is neutralised, so stored text can never close the block it is shown in.
+is neutralised, so stored text can never close the block it is shown in,
+and NUL/control characters are dropped. Ids are the 8-character short ids
+the CLI prints; every tool that takes an id accepts them.
+
+**Size.** ``render_retrieval`` is bounded: each memory shows its best
+passage within ``max_item_chars``, the whole reply fits ``budget_tokens``
+(the first item is cut, never dropped), and when the gap report says memory
+does not hold the answer, results below the relevance floor are left out.
 """
 from __future__ import annotations
 
@@ -25,8 +36,16 @@ from mark.context.provenance import UNTRUSTED_TAG, is_assistant
 _BOUNDARY = re.compile(r"<(/?)(memory_context|mark_briefing|mark_memory)", re.IGNORECASE)
 _PYDANTIC = re.compile(r"validation error", re.IGNORECASE)
 _LEADING_DATE = re.compile(r"^\s*\[?\d{4}-\d{2}-\d{2}")
+# Control characters other than newline/tab (NUL included): never sent to a client.
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 MAX_QUERY = 2000
 MAX_CONTENT = 16000
+#: Characters of an id shown in tool output (the CLI's short id).
+SHORT_ID = 8
+#: Default per-memory cap in mark_retrieve: a long memory shows its best passage.
+ITEM_CHARS = 600
+#: Calibrated relevance below which results are dropped when memory lacks the answer.
+RELEVANCE_FLOOR = 0.35
 
 
 def tool_error_class() -> type[Exception]:
@@ -82,8 +101,13 @@ def require_range(name: str, value: float, low: float, high: float) -> float:
 
 
 def guard(text: str) -> str:
-    """*text* with boundary-tag look-alikes neutralised (the only escaping done)."""
-    return _BOUNDARY.sub(lambda m: f"&lt;{m.group(1)}{m.group(2)}", text or "")
+    """*text* with boundary-tag look-alikes neutralised and control characters removed."""
+    return _BOUNDARY.sub(lambda m: f"&lt;{m.group(1)}{m.group(2)}", _CONTROL.sub("", text or ""))
+
+
+def short(fragment_id: str) -> str:
+    """The 8-character id shown to clients (any unambiguous prefix is accepted back)."""
+    return str(fragment_id or "")[:SHORT_ID]
 
 
 def _label(fragment: Any) -> str:
@@ -105,44 +129,107 @@ def _date(fragment: Any) -> str:
     return f"{when.date().isoformat()} " if when is not None else ""
 
 
-def render_retrieval(result: Any, *, max_results: int, budget_tokens: int = 0) -> str:
-    """A retrieval result as plain text: facts, then memories with date and short id.
+def render_retrieval(result: Any, *, max_results: int, budget_tokens: int = 0,
+                     max_item_chars: int = ITEM_CHARS) -> str:
+    """A retrieval result as bounded plain text: facts, then memories with date and short id.
 
-    ``budget_tokens`` > 0 caps the output (estimated as characters / 4); what
-    did not fit is counted in a final line instead of disappearing silently.
+    Each memory is cut to its best passage (``passage_window``, as
+    ``RetrievalResult.as_context`` does) within ``max_item_chars``.
+    ``budget_tokens`` > 0 caps the reply (characters / 4): the first line
+    that does not fit is cut to the remaining room, later ones are counted
+    in a final line. When the gap report is high/critical, memories below
+    :data:`RELEVANCE_FLOOR` are left out (they are not the answer).
     """
-    query = guard(" ".join(str(getattr(result, "query", "")).split()))[:200].replace('"', "'")
+    from mark.intelligence.passage_window import window
+
+    query_text = str(getattr(result, "query", ""))
+    query = guard(" ".join(query_text.split()))[:200].replace('"', "'")
     head, tail = f'<memory_context query="{query}">', "</memory_context>"
     lines: list[str] = []
     facts = [f for f in getattr(result, "facts", None) or [] if getattr(f, "is_current", True)]
     if facts:
         lines.append("Known facts (current):")
         lines += [f"- {guard(f.as_text())}" for f in facts]
-    fragments = list(getattr(result, "fragments", None) or [])[:max_results]
-    if fragments:
-        lines.append("Memories (most relevant first):")
-        lines += [f"- {_date(f)}[{f.id}] {_label(f)}{guard(' '.join(f.content.split()))}"
-                  for f in fragments]
-    if not lines:
-        lines.append("Nothing in memory matches this query.")
     gap = getattr(result, "gap_report", None)
     severity = getattr(getattr(gap, "severity", None), "value", "none")
+    fragments = _relevant(result, severity)[:max_results]
+    if fragments:
+        lines.append("Memories (most relevant first):")
+        for fragment in fragments:
+            text, _ = window(" ".join(guard(fragment.content).split()), query_text, max_item_chars)
+            lines.append(f"- {_date(fragment)}[{short(fragment.id)}] {_label(fragment)}{text}")
+    if not lines:
+        lines.append("Nothing in memory matches this query.")
     if severity in ("high", "critical"):
         lines.append(f"Memory gap ({severity}): {guard(gap.reason)}")
     if budget_tokens <= 0:
         return "\n".join([head, *lines, tail])
+    return "\n".join([head, *_fit(lines, budget_tokens - estimate_tokens(head + tail) - 2, budget_tokens), tail])
+
+
+def _relevant(result: Any, severity: str) -> list[Any]:
+    """Fragments to show: all, or (memory lacks the answer) only those above the floor."""
+    fragments = list(getattr(result, "fragments", None) or [])
+    relevance = list(getattr(result, "relevance", None) or [])
+    if severity not in ("high", "critical") or len(relevance) != len(fragments):
+        return fragments
+    return [f for f, score in zip(fragments, relevance) if score >= RELEVANCE_FLOOR]
+
+
+def _fit(lines: list[str], room: int, budget_tokens: int) -> list[str]:
+    """The lines that fit *room* tokens; a line that does not fit is cut, never silently dropped."""
     kept: list[str] = []
-    used = estimate_tokens(head + tail) + 2
-    for line in lines:
+    used = 0
+    for index, line in enumerate(lines):
         cost = estimate_tokens(line) + 1
-        if used + cost > budget_tokens:
-            break
-        kept.append(line)
-        used += cost
-    dropped = len(lines) - len(kept)
-    if dropped:
-        kept.append(f"[{dropped} more line(s) not shown: budget_tokens={budget_tokens}]")
-    return "\n".join([head, *kept, tail])
+        if used + cost <= room:
+            kept.append(line)
+            used += cost
+            continue
+        left_chars = (room - used - 1) * 4
+        if left_chars >= 80:  # worth showing a cut line (e.g. one huge first memory)
+            kept.append(line[: left_chars - 1].rstrip() + "…")
+            index += 1
+        dropped = len(lines) - index
+        if dropped:
+            kept.append(f"[{dropped} more line(s) not shown: budget_tokens={budget_tokens}]")
+        break
+    return kept
+
+
+def validation_sentence(tool: str, exc: BaseException) -> str | None:
+    """One MARK-style sentence for an SDK schema-validation failure, else None."""
+    cause = exc.__cause__ if exc.__cause__ is not None else exc
+    errors = getattr(cause, "errors", None)
+    if not callable(errors) or type(cause).__name__ != "ValidationError":
+        return None
+    parts = []
+    for item in errors():
+        field = ".".join(str(loc) for loc in item.get("loc", ()) if loc != f"{tool}Arguments") or "arguments"
+        parts.append(f"{field}: {str(item.get('msg', 'invalid value')).lower()}")
+    return f"{tool} got invalid arguments: " + "; ".join(parts) + "."
+
+
+def install_error_cleaner(server: Any) -> None:
+    """Report argument-validation failures as one sentence, not a pydantic dump with a URL.
+
+    The SDK validates arguments against the schema before a tool runs and
+    returns ``str(ValidationError)``; wrapping ``call_tool`` (which the
+    protocol handler calls) rewrites only those errors.
+    """
+    original = server.call_tool
+    error_class = tool_error_class()
+
+    async def call_tool(name: str, arguments: dict[str, Any], *args: Any, **kwargs: Any) -> Any:
+        try:
+            return await original(name, arguments, *args, **kwargs)
+        except error_class as exc:
+            sentence = validation_sentence(name, exc)
+            if sentence is None:
+                raise
+            raise error_class(sentence) from None
+
+    server.call_tool = call_tool
 
 
 #: Parameter annotations shared by several tools.

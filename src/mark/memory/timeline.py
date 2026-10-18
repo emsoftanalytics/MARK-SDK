@@ -23,7 +23,7 @@ from typing import Any, Iterator
 from xml.sax.saxutils import escape as _xml_escape
 from xml.sax.saxutils import quoteattr as _xml_quoteattr
 
-from mark.memory.timeline_order import BASIS_AFTER_DATED, BASIS_STORED, BASIS_UNKNOWN
+from mark.memory.timeline_order import BASIS_UNKNOWN
 
 # A leading date stamp duplicates the event's date column in as_text().
 _LEADING_STAMP_RE = re.compile(r"^\s*\[\d{4}-\d{2}-\d{2}(?:[T ][\d:]+Z?)?\]\s*")
@@ -56,20 +56,17 @@ class TimelineEvent:
         return self.fragment_id or self.fact_id or ""
 
     def label(self) -> str:
-        """Date label: '2026-04-07', '2026-04-07 same day 2/3', or an undated label.
+        """Date label: the event date ('2026-04-07'), else 'stored 2026-05-01'.
 
-        Undated events say how they were placed: 'undated, stored later'
-        (stored after every dated event), 'stored 2026-05-01' (no dated
-        events at all, storage order only) or plain 'undated' (unplaceable).
+        A memory without a declared time shows the day it was stored, never
+        "undated" (list and recall show that date too). Same-day events keep
+        their order without a "same day k/m" marker (it stays in ``to_dict``).
+        Only an event with no time at all reads 'undated'.
         """
-        if not self.dated or self.when is None:
-            if self.basis == BASIS_AFTER_DATED:
-                return "undated, stored later"
-            if self.basis == BASIS_STORED and self.when is not None:
-                return f"stored {self.when.date().isoformat()}"
-            return "undated"
-        day = self.when.date().isoformat()
-        return f"{day} same day {self.same_day[0]}/{self.same_day[1]}" if self.same_day else day
+        if self.dated and self.when is not None:
+            return self.when.date().isoformat()
+        stored = self.stored_at or self.when
+        return f"stored {stored.date().isoformat()}" if stored is not None else "undated"
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-ready rendering (ISO times, 'k/m' same-day label)."""
@@ -115,8 +112,8 @@ class Timeline:
     def as_text(self, *, max_chars: int = 240) -> str:
         """Compact rendering: a header, then one line per event.
 
-        Lines look like ``2026-04-07 same day 2/2 · HR: ... Platform team.``;
-        a fact line is prefixed ``fact:``. Long texts are cut at *max_chars*.
+        Lines look like ``2026-04-07 · HR: ... Platform team.`` (``stored
+        2026-05-01 · ...`` for undated memories); a fact line is prefixed ``fact:``. Long texts are cut at *max_chars*.
         """
         scope = f" · {self.attribute}" if self.attribute else ""
         dropped = f" (+{self.truncated} earlier)" if self.truncated else ""
