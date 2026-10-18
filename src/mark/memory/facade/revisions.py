@@ -111,7 +111,7 @@ class RevisionsMixin(MemoryCore):
         if kind not in RESOLVABLE_KINDS:
             from mark.errors import InvalidInputError
 
-            what = f"a {kind}" if kind else "a note without a kind"
+            what = (f"{'an' if kind[0] in 'aeiou' else 'a'} {kind}") if kind else "a note without a kind"
             raise InvalidInputError(
                 f"memory {fragment.id[:8]} is {what}; resolve() closes TODOs and bugs only. "
                 "Use supersede() to replace it with the current text, or forget() to delete it")

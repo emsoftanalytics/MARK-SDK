@@ -126,3 +126,16 @@ def test_mcp_resolve_and_supersede_messages(tmp_path: Path) -> None:
     assert not again[0] and "already resolved" in again[1]
     assert plain[0] and "mark_supersede" in plain[1]
     assert not chained[0] and "already superseded" in chained[1]
+
+
+def test_get_accepts_unique_short_ids(mem) -> None:
+    fid = mem.remember("Short ids work in get().")
+    assert mem.get(fid[:8]).id == fid and mem.get(fid[:4]).id == fid
+    assert mem.get(fid[:3]) is None
+    other = mem._runtime.memory("other").remember("not mine")
+    assert mem.get(other[:8]) is None
+
+
+def test_date_errors_use_the_right_article(mem) -> None:
+    with pytest.raises(InvalidInputError, match="could not read an occurred_at"):
+        mem.remember("x happened", occurred_at="not a date at all")

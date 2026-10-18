@@ -72,3 +72,12 @@ def test_simple_memory_forwards_the_runtime_read_and_write_verbs(mark) -> None:
     assert memory.retrieve_sync("release train").fragments[0].id == fid
     results = memory.retrieve_many_sync(["release train", "fridays"])
     assert [r.fragments[0].id for r in results] == [fid, fid]
+
+
+def test_documented_parameters_are_in_the_signatures(mark) -> None:
+    import inspect
+
+    recall = inspect.signature(mark.memory.recall).parameters
+    remember = inspect.signature(mark.memory.remember).parameters
+    assert {"k", "kind", "tags", "session_id", "since", "until", "order", "open", "blocks"} <= set(recall)
+    assert {"kind", "tags", "session_id", "occurred_at", "source", "metadata", "extract_facts"} <= set(remember)

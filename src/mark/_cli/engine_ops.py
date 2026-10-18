@@ -145,8 +145,12 @@ class EngineOpsMixin:
             return {"text": fallback_brief(memory, int(budget)), "source": "fallback"}
         result = brief(memory, budget_tokens=int(budget))
         payload = {**result.to_dict(), "source": "brief"}
-        if not str(payload.get("text") or "").strip():
-            payload["text"] = "(memory is empty)"  # say so rather than print nothing
+        if str(payload.get("text") or "").strip() in ("", "(memory is empty)"):
+            # Say so rather than print nothing, and never call a non-empty store empty.
+            stored = memory.count()
+            payload["text"] = "(memory is empty)" if not stored else (
+                f"(nothing to brief within --budget {int(budget)}: {stored} "
+                f"memor{'y' if stored == 1 else 'ies'} stored; raise --budget or use `mark list`)")
         return payload
 
 

@@ -250,6 +250,6 @@ def parse_time(value: Any, what: str = "date") -> datetime:
             parsed = None
     if parsed is None:
         raise InvalidInputError(
-            f"could not read a {what} from {value!r}; use an ISO date such as 2026-10-01 "
+            f"could not read {'an' if str(what)[:1].lower() in 'aeiou' else 'a'} {what} from {value!r}; use an ISO date such as 2026-10-01 "
             "(or 2026-10-01T14:30) or words such as 'yesterday', '3 May 2026', 'last tuesday'")
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)

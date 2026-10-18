@@ -125,3 +125,12 @@ def test_serve_client_never_imports_ssl_or_urllib(tmp_path: Path) -> None:
     out = subprocess.run([sys.executable, "-c", code, str(tmp_path / "x.db.server.json")],
                          capture_output=True, text=True, check=True).stdout
     assert out.strip() == "[]"
+
+
+def test_brief_never_calls_a_non_empty_store_empty(db: str, capsys) -> None:
+    for i in range(30):
+        assert run(db, "remember", f"Plain note number {i} about the garden shed.") == 0
+    capsys.readouterr()
+    assert run(db, "brief", "--budget", "10") == 0
+    out = capsys.readouterr().out
+    assert "(memory is empty)" not in out and out.strip()

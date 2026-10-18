@@ -36,8 +36,15 @@ class LifecycleMixin(MemoryCore):
     """Inspection and maintenance of this agent's stored fragments."""
 
     def get(self, memory_id: str) -> MemoryFragment | None:
-        """The memory with this id (any state), or None when it does not exist here."""
+        """The memory with this id (any state), or None when it does not exist here.
+
+        The 8-character short id the CLI and MCP print (any unambiguous
+        prefix of at least 4 characters) works too; an ambiguous one is None.
+        """
         fragment = self._store.get(memory_id)
+        if fragment is None and isinstance(memory_id, str) and 4 <= len(memory_id.strip()) < 36:
+            matches = self._store.ids_with_prefix(self.agent_id, memory_id.strip(), limit=2)
+            fragment = self._store.get(matches[0]) if len(matches) == 1 else None
         if fragment is None or fragment.agent_id != self.agent_id:
             return None
         return fragment
