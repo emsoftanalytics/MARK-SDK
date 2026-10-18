@@ -1,10 +1,9 @@
 """MarkRuntime: wiring and lifecycle for the local memory engine.
 
-Lifecycle: :meth:`MarkRuntime.shutdown` is bounded and final. It stops the
-background fact worker (the job in flight may finish within the timeout;
-everything it claimed but did not finish goes back to the durable queue),
-drains the executor, retires MARK's adapter offload pool and closes the
-store, which then refuses further use with ``StoreClosedError``.
+Lifecycle: :meth:`MarkRuntime.shutdown` is bounded and final. It runs the
+registered closers (``register_closer``), stops the background fact worker
+(unfinished jobs go back to the durable queue), drains the executor, retires
+the adapter offload pool and closes the store (then ``StoreClosedError``).
 """
 from __future__ import annotations
 
@@ -14,7 +13,7 @@ from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from mark.embeddings import EmbeddingProvider, resolve_embedder
+from mark.embeddings import EmbeddingProvider
 from mark.index import VectorIndex
 from mark.intelligence.retrieval import GraphExpander, RetrievalPipeline
 from mark.intelligence.compressor import ContextualCompressor
@@ -30,6 +29,7 @@ from mark.memory.facade.write_validation import DEFAULT_MAX_MEMORY_BYTES
 from mark.memory.global_bus import GlobalMemoryBus
 from mark.memory.mark_memory import MarkMemory
 from mark.memory.runtime_closers import ClosersMixin
+from mark.runtime_embedder import open_store, quiet_unavailable
 from mark.memory.runtime_maintenance import MaintenanceMixin
 
 
@@ -129,7 +129,8 @@ class MarkRuntime(ClosersMixin, MaintenanceMixin):
         """Construct a local instance.
 
         ``embedder``: a provider, a spec such as ``"auto"`` (see ``mark.embeddings.auto``)
-        or None (hash, or ``MARK_EMBEDDER``). ``fact_extractor``: None (off),
+        or None: the store's own embedder (``mark.runtime_embedder``), else hash
+        or ``MARK_EMBEDDER``; an explicit other one re-embeds. ``fact_extractor``: None (off),
         ``"patterns"`` or a FactExtractor. ``fact_job_lease``: seconds a
         background extraction job may run before another worker may take it
         over (jobs of a crashed process on this host are reclaimed at once).
@@ -139,9 +140,10 @@ class MarkRuntime(ClosersMixin, MaintenanceMixin):
         a WritePolicy. ``injection``: "tag" (default), "quarantine" or "off".
         """
         registry = PluginRegistry()
+        store, provider = open_store(store_path, encryption or NoOpEncryptionProvider(), embedder)
         runtime = cls(
-            store=LocalMemoryStore(store_path, encryption=encryption or NoOpEncryptionProvider()),
-            embedder=resolve_embedder(embedder),
+            store=store,
+            embedder=provider,
             plugins=registry,
             workers=workers,
             llm=llm,
@@ -164,7 +166,7 @@ class MarkRuntime(ClosersMixin, MaintenanceMixin):
         from mark.runtime_config import apply_user_subject
 
         apply_user_subject(runtime)
-        return runtime
+        return quiet_unavailable(runtime)  # the stored-embedder warning was already given
 
     def configure_llm(self, llm: LLMProvider) -> None:
         """Bind an LLM provider at runtime (late-binding; overrides constructor value)."""
