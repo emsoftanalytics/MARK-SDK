@@ -61,8 +61,10 @@ Known gaps to close before or soon after 1.0:
 - **Multi-hop questions for small models.** Chains that combine two facts
   about the user (a visitor coming to "my" city after a move) still fail
   with 1-3B models.
-- **Facts from developer notes.** `TODO:` and `DECISION:` notes set a
-  memory's kind but do not yet become facts.
+- **Facts from developer notes.** `TODO:` and `DECISION:` notes always set
+  a memory's kind, but become facts only when they state a value in a
+  recognised pattern ("the job queue uses SQLite"); open TODOs and decisions
+  such as "we use Postgres for billing-api" yield no fact yet.
 - **Encryption support in the command line**, and alias resolution in
   timelines (one subject under several names).
 
