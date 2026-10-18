@@ -196,3 +196,27 @@ def test_identifiers_are_still_anchors() -> None:
 ])
 def test_whole_name_matching(content: str, name: str, expected: bool) -> None:
     assert name_mentioned(content, name) is expected
+
+
+CHAT = [
+    "Hi! I'm Marta. Quick intro: I live in Porto and I work as a nurse at Sao Joao hospital.",
+    "I take my coffee black with no sugar.", "My sister is Ana. She lives in Lisbon.",
+    "Can you suggest a quick dinner idea for tonight?", "Thanks, that's all for today.",
+    "Actually my sister is Ines, not Ana. Ana is my cousin.", "Bye for now.",
+    "Big news: I moved from Porto to Braga last weekend.", "Ok, that's the plan for now.",
+    "I'm flying with TAP from Lisbon on April 3.",
+]
+
+
+def test_update_of_a_tied_best_match_is_pulled_in(mem) -> None:
+    for day, text in enumerate(CHAT, 1):
+        mem.remember(text, occurred_at=f"2026-10-{10 + day:02d}")
+    top = [f.content for f in mem.recall("Which city do I live in now?").fragments[:2]]
+    assert any("Braga" in text for text in top)
+
+
+def test_camel_case_error_names_match_their_words(mem) -> None:
+    bug = mem.remember("BUG: load_config raised TypeError when the file was opened in text mode.")
+    mem.remember("load_config raised a warning about the file type.")
+    _fill(mem)
+    assert mem.recall("What type error did load_config raise?").fragments[0].id == bug

@@ -18,6 +18,7 @@ import re
 from enum import Enum
 from functools import lru_cache
 
+from mark.intelligence._lazy_re import lazy
 from mark.intelligence.classifier import _STOP_WORDS
 from mark.intelligence.date_parsing import find_dates
 from mark.intelligence.query_anchors import (  # noqa: F401  (historical import location)
@@ -106,6 +107,8 @@ def is_blank_query(query: str) -> bool:
     return not any(is_symbol(char) for char in text)
 
 
+_CAMEL_WORD_RE = lazy(r"\b[A-Za-z]*[a-z][A-Z][A-Za-z]*\b")
+_CAMEL_PART_RE = lazy(r"[A-Z]?[a-z]{2,}")
 # Everyday irregular past forms, so "How much rent do I pay?" matches "paid on the 1st".
 _IRREGULAR = {"paid": "pay", "bought": "buy", "sold": "sell", "met": "meet", "went": "go", "gone": "go",
               "ran": "run", "taught": "teach", "brought": "bring", "kept": "keep",
@@ -185,7 +188,16 @@ def _content_stems(content: str) -> frozenset[str]:
     tokens = set(_TOKEN_RE.findall(content.lower()))
     # snake_case identifiers also count as their words: "code_length" answers "code length".
     tokens |= {part for token in tokens if "_" in token for part in token.split("_") if len(part) > 1}
+    # So do CamelCase ones: "TypeError" answers "what error ...".
+    tokens |= {part.lower() for part in _camel_parts(content)}
     return frozenset(_stem(token) for token in tokens)
+
+
+def _camel_parts(content: str) -> list[str]:
+    """Words inside CamelCase identifiers ("OperationalError" -> Operational, Error)."""
+    if content.islower():
+        return []
+    return [part for word in _CAMEL_WORD_RE.findall(content) for part in _CAMEL_PART_RE.findall(word)]
 
 
 def _coverage(query_terms: list[str], content: str) -> float:
