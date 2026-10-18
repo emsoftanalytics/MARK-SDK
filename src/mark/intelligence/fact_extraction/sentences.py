@@ -55,6 +55,8 @@ class Sentence:
     record_subject: str | None = None
     #: The body after a TODO/DONE/FIX label, for ticket status facts.
     labelled_body: str | None = None
+    #: A ticket id written inside a kind label ("TODO HAL-12: ..." -> "HAL-12").
+    label_id: str | None = None
 
 
 def iter_sentences(text: str, occurred_at: datetime | None) -> Iterator[Sentence]:
@@ -70,6 +72,7 @@ def iter_sentences(text: str, occurred_at: datetime | None) -> Iterator[Sentence
         kinds: list[str] = []
         record: str | None = None
         body: str | None = None
+        label_id: str | None = None
         for index, raw in enumerate(_SENTENCE_SPLIT.split(line)):
             sentence = raw.strip()
             if not sentence:
@@ -86,10 +89,13 @@ def iter_sentences(text: str, occurred_at: datetime | None) -> Iterator[Sentence
                 if kind and kind not in kinds:
                     kinds.append(kind)
                     body = sentence[label.end():]
+                    rest = name.split(None, 1)[1] if len(name.split()) > 1 else ""
+                    label_id = rest if rest and is_id_label(rest) else label_id
                 if is_id_label(name):
                     record = name
                 sentence = sentence[label.end():]
-            yield Sentence(sentence, when, list(kinds), record, body if index == 0 else None)
+            yield Sentence(sentence, when, list(kinds), record, body if index == 0 else None,
+                           label_id if index == 0 else None)
 
 
 def is_question(sentence: str) -> bool:

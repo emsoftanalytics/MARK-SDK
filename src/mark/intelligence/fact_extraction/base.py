@@ -14,9 +14,10 @@ Invariants shared by every extractor:
   - ``valid_from`` is only set when the text itself says when the change
     happened; otherwise the service uses the memory's event time;
   - ``extract`` returns assertions only (values that hold). Extractors that
-    also understand retractions ("no longer runs on port 8080") offer
-    ``extract_changes``, which interleaves ``retract=True`` candidates; a
-    consumer that cannot apply them simply keeps calling ``extract``.
+    also understand retractions ("no longer runs on port 8080") and earlier
+    values ("from A to B", "used to") offer ``extract_changes``, which
+    interleaves ``retract=True`` / ``previous=True`` candidates; a consumer
+    that cannot apply them simply keeps calling ``extract``.
 """
 from __future__ import annotations
 
@@ -46,6 +47,18 @@ class FactCandidate:
     #: Kinds of note the value came from ("decision", "todo", "bug", ...),
     #: read from line labels such as "DECISION:"; for memory kinds and audit.
     tags: tuple[str, ...] = ()
+    #: One of several current values ("likes", "language", "email" lists):
+    #: recorded with ``facts.add`` so it never replaces its siblings.
+    multi: bool = False
+    #: The "A" of "from A to B": the value held just *before* ``valid_from``.
+    #: Recorded as history (never current) so the timeline reads A -> B.
+    previous: bool = False
+    #: With ``retract``: "used to ..." - the value held in the past and has
+    #: ended by ``valid_from``; kept in history instead of being withdrawn.
+    historical: bool = False
+    #: The text states a change ("moved to", "switched"), so a value of the
+    #: same slot that was only stamped later because it was undated is older.
+    change: bool = False
 
     def with_source(self, fragment_id: str) -> "FactCandidate":
         """Copy linked to the memory it was extracted from."""

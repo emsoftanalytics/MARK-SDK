@@ -9,17 +9,27 @@ The extraction service records every candidate through
     longer shows up in history either;
   - ``retract=True`` -> the text denies the value ("no longer runs on port
     8080"): it is retracted only if it is the current value and was not
-    asserted *after* the denial, so an old note can never undo a newer fact.
+    asserted *after* the denial, so an old note can never undo a newer fact;
+    a multi-valued value is *ended* instead, so history keeps it;
+  - ``previous`` / ``historical`` / ``change`` / ``multi`` -> the timeline
+    rules in :mod:`.apply_history` (earlier values, "used to", misdated
+    undated values, ``facts.add``);
+  - a long subject that starts with a subject the store already knows is
+    re-split ("kestrel default" + "database" -> "kestrel" + "default
+    database"), see :mod:`.subjects`.
 
 Every operation is safe to repeat: re-running a job finds nothing left to
-withdraw and the ledger skips the assertion.
+withdraw, the ledger skips the assertion, and ``facts.add`` of a value that
+is already current is a no-op.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
 
+from mark.intelligence.fact_extraction import apply_history as timeline
 from mark.intelligence.fact_extraction.base import FactCandidate
+from mark.intelligence.fact_extraction.subjects import split_known
 
 
 def candidates_for(extractor: Any, text: str, *, occurred_at: datetime | None) -> list[FactCandidate]:
@@ -58,11 +68,23 @@ def record_candidate(
     metadata = dict(metadata)
     if candidate.tags:
         metadata["tags"] = list(candidate.tags)
+    candidate = _split_on_store_subjects(store, agent_id, candidate)
+    rich = timeline.supports_multi(store)
+    if candidate.previous:
+        return timeline.record_previous(store, agent_id, candidate, valid_from, source_fragment_id, metadata) \
+            if rich else None
     if candidate.retract:
+        if candidate.historical and rich:
+            return timeline.record_past(store, agent_id, candidate, valid_from, source_fragment_id, metadata)
         return _retract_current(store, agent_id, candidate, valid_from)
     if candidate.correction:
         metadata["correction"] = True
-        _withdraw_replaced(store, agent_id, candidate, valid_from)
+        if not candidate.multi:  # a corrected list value does not make its siblings wrong
+            _withdraw_replaced(store, agent_id, candidate, valid_from)
+    if candidate.change and rich:
+        timeline.demote_misdated(store, agent_id, candidate, valid_from)
+    if candidate.multi and rich:
+        return timeline.add_multi(store, agent_id, candidate, valid_from, source_fragment_id, metadata)
     return store.fact_set_extracted(
         agent_id, key, candidate.subject, candidate.attribute, candidate.value,
         valid_from=valid_from, source_fragment_id=source_fragment_id, metadata=metadata,
@@ -88,8 +110,26 @@ def _retract_current(store: Any, agent_id: str, candidate: FactCandidate, when: 
     match = next((f for f in current if _same(f["value"], candidate.value) and _not_newer(f, when)), None)
     if match is None:
         return None
+    if timeline.is_multi(match) and callable(getattr(store, "fact_remove", None)):
+        # "I no longer drink coffee": an added value ends here; history keeps it.
+        store.fact_remove(agent_id, candidate.subject, candidate.attribute, match["value"],
+                          valid_to=timeline.aware(when))
+        return {**match, "ended": True}
     store.fact_retract(agent_id, candidate.subject, candidate.attribute, value=match["value"])
     return {**match, "retracted": True}
+
+
+def _split_on_store_subjects(store: Any, agent_id: str, candidate: FactCandidate) -> FactCandidate:
+    """Re-split a multi-word subject on a subject the store already has facts about."""
+    current = getattr(store, "fact_current", None)
+    words = candidate.subject.split()
+    # Cheap exits first: only "<name> <lower-case words>" can be re-split ("Hana Sato" never is).
+    if len(words) < 2 or not words[-1][:1].islower() or not callable(current):
+        return candidate
+    if current(agent_id, candidate.subject):
+        return candidate  # the long subject itself is known: keep using it
+    # One indexed lookup per possible prefix (split_known only asks for plausible ones).
+    return split_known(candidate, lambda prefix: bool(current(agent_id, prefix)))
 
 
 def _withdraw_replaced(store: Any, agent_id: str, candidate: FactCandidate, when: datetime) -> None:

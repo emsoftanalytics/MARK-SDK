@@ -10,6 +10,7 @@ Modules:
   - ``packs``     the built-in generic packs (pure data)
   - ``clauses``   clause splitting with subject carry-over
   - ``packs_people`` personal details, preferences, prices, measurements
+  - ``packs_more`` drinks, counts ("has 6 replicas"), tools ("uses pnpm"), project settings
   - ``vocab``     closed vocabularies (personal/dev attribute nouns, product kinds)
   - ``personal``  first-person rewriting ("I"/"my"/"me" -> the user subject)
   - ``negation``  negations as retractions, corrections
@@ -18,14 +19,31 @@ Modules:
   - ``numbers``   number words and ordinals ("step four" -> "step 4")
   - ``sentences`` sentence splitting, stamps, labels and guards
   - ``normalise`` regex match -> validated candidate
+  - ``config_lists`` KEY: value config blocks and "Ports:" attribute lists
+  - ``lists``     "My emails are A and B", "I speak X, Y and Z" (multi-valued)
+  - ``dates``     "Starting 2027-01-01," and "moved ... in September"
+  - ``subjects``  known subjects ("shorty plugin group" -> shorty + "plugin group")
+  - ``candidates`` candidate builders and the first-person placeholder rules
   - ``patterns``  PatternFactExtractor (regex packs; fast, runs inline)
   - ``apply``     record candidates: assertions, corrections, retractions
+  - ``apply_history`` earlier/past/misdated values and multi-valued values
   - ``llm``       LLMFactExtractor (OpenAI-compatible server; runs in background)
   - ``service``   FactExtractionService: inline/queued extraction into the store
   - ``worker``    the background thread that drains the durable job queue
 
 Wiring: ``MarkRuntime.local(fact_extractor="patterns")`` or
 ``memory.store_sync(..., extract_facts=True)``.
+
+Fact shapes worth knowing (0.2.0a10):
+  - preferences: the verb is the attribute, the thing the value, comparisons
+    kept: ``user.likes = tea without sugar``, ``user.prefers = tea over coffee``;
+    likes/loves/prefers/dislikes/hates and drinks are multi-valued;
+  - "I love my dog Rex" -> ``user.dog = Rex``; the internal first-person
+    placeholder never appears in a subject, attribute or value;
+  - "from A to B" records A as the value held before B (history A -> B);
+    "used to" records a past value that is not current;
+  - a developer setting without a subject ("The test command is `make test`")
+    belongs to ``project``; config keys without one (``MAX_UPLOAD_MB: 250``) to ``config``.
 """
 from mark.intelligence.fact_extraction.base import FactCandidate, FactExtractor
 from mark.intelligence.fact_extraction.labels import note_kinds

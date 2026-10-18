@@ -53,6 +53,27 @@ def positive_form(clause: str) -> str | None:
     return re.sub(r"\s+", " ", rewritten).strip()
 
 
+_STOPPED = re.compile(r"\b(?:has\s+|have\s+|had\s+)?(?:stopped|quit|gave\s+up)\s+(?P<verb>drinking|using)\b",
+                      re.IGNORECASE)
+
+
+_CANT_STAND = re.compile(r"\b(?:can['’]t|cannot|can\s+not)\s+stand\b", re.IGNORECASE)
+
+
+def rewrite_stopped(clause: str) -> str:
+    """Idioms whose negation is not a retraction.
+
+    "<who> stopped drinking beer" -> "<who> no longer drinks beer" (then read as
+    a negation); "<who> can't stand X" -> "<who> hates X" (a preference, not a denial).
+    """
+    low = clause.lower()
+    if "stand" not in low and "stopped" not in low and "quit" not in low and "gave" not in low:
+        return clause  # the common case: no idiom, no regex work
+    clause = _CANT_STAND.sub("hates", clause)
+    return _STOPPED.sub(lambda m: "no longer " + ("drinks" if m.group("verb").lower() == "drinking" else "uses"),
+                        clause)
+
+
 def is_cessation(clause: str) -> bool:
     """True for "used to ..." (a past state that no longer holds, without a negation word)."""
     return bool(_USED_TO.search(clause))
