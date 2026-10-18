@@ -39,6 +39,7 @@ from mark.context.relevance import content_words
 from mark.context.watch_kinds import closed_todos, kind_of, recent_first
 from mark.context.watch_lines import Deduper, current_facts, fact_key, fact_line, trusted
 from mark.context.watch_render import FACTS_HEADER, RELATED_HEADER, render_briefing
+from mark.security.boundary import defuse_boundaries
 from mark.context.watch_support import Briefing
 
 TODO_HEADER = "Open TODOs:"
@@ -87,7 +88,8 @@ def brief(memory: Any, *, budget_tokens: int | ContextBudget = 400, focus: str |
             return False
         if ref:
             shown.add(ref)
-        items.append(BudgetItem(section, text, header, ref))
+        # Every line (records, facts, fact changes) has boundary-tag lookalikes defused.
+        items.append(BudgetItem(section, defuse_boundaries(text), header, ref))
         return True
 
     # Facts block: facts about the focus first (highest priority), then the rest.

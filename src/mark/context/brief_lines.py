@@ -25,6 +25,7 @@ from mark.context.outdated import replaced_by, resolved, retired
 from mark.context.relevance import content_words
 from mark.context.watch_kinds import kind_of, when_of
 from mark.context.watch_lines import escape_tags, is_untrusted
+from mark.security.boundary import defuse_boundaries
 from mark.context.watch_support import _one_line
 
 _LEADING_DATE = re.compile(r"^\s*\[?\d{4}-\d{2}-\d{2}\]?\s*")
@@ -100,4 +101,4 @@ def record_line(fragment: Any, line_chars: int, *, with_id: bool = False, fix: A
     elif _meta(fragment).get("resolution"):
         body = f"{body.rstrip()} -> fix: {escape_tags(str(_meta(fragment)['resolution']))}"
     suffix = f" (id {fragment.id[:8]})" if with_id and fragment.id else ""
-    return f"- {label}{date}{_one_line(body, line_chars)}{suffix}"
+    return f"- {label}{date}{_one_line(defuse_boundaries(body), line_chars)}{suffix}"

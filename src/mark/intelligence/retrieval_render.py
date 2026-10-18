@@ -25,6 +25,7 @@ from xml.sax.saxutils import escape as _xml_escape
 from xml.sax.saxutils import quoteattr as _xml_quoteattr
 
 from mark.intelligence.passage_window import window
+from mark.security.boundary import defuse_boundaries
 from mark.types import GapSeverity
 
 UNTRUSTED_TAG = "mark:untrusted"
@@ -164,10 +165,12 @@ def _fmt_xml(result, items: list[dict], omitted: int, *, facts: bool) -> str:
 
 
 def _fmt_numbered(result, items: list[dict], omitted: int, *, facts: bool) -> str:
-    lines = [f"F. {fact.as_text()}" for fact in (result.facts if facts else ())]
+    # Plain text keeps ordinary markup but defuses boundary/role-tag lookalikes,
+    # so a memory cannot close a wrapper the caller puts this text in.
+    lines = [f"F. {defuse_boundaries(fact.as_text())}" for fact in (result.facts if facts else ())]
     for item in items:
-        extras = "".join(f", {label}" for label in _labels(item))
-        lines.append(f"[{item['rank']}] (score={item['score']:.3f}{extras}) {item['text']}")
+        extras = "".join(f", {defuse_boundaries(label)}" for label in _labels(item))
+        lines.append(f"[{item['rank']}] (score={item['score']:.3f}{extras}) {defuse_boundaries(item['text'])}")
     if omitted:
         lines.append(f"[... {omitted} more omitted]")
     gap = f" | gap: {result.gap_report.severity.value}" if _shows_gap(result) else ""

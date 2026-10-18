@@ -36,6 +36,7 @@ from mark.errors import InvalidMemoryError
 from mark.media.errors import TranscriberRequiredError, UnsupportedFileError
 from mark.media.files import reject_binary, sha256_file, sniff
 from mark.media.transcribers import run_transcriber
+from mark.security.injection import UNTRUSTED_TAG
 from mark.security.write_policy import DEFAULT_WRITE_POLICY, WritePolicy
 
 DOCUMENT_TAG = "mark:document"
@@ -98,8 +99,12 @@ def store_document(
                         chunk_tokens=chunk_tokens, overlap=overlap)
     document_id = str(uuid.uuid4())
     chunk_meta = {**extra, "source": "document", "document_id": document_id, "document_title": title}
+    # A chunk of a flagged document stays untrusted even when its own text screens clean:
+    # the planted instruction may sit in another chunk that is recalled alongside it.
+    inherited = [UNTRUSTED_TAG] if UNTRUSTED_TAG in (decision.tags or ()) else []
     ids = memory.store_many_sync(
-        [chunk.text for chunk in chunks], metadata=chunk_meta, tags=[DOCUMENT_TAG, *tags], source="document",
+        [chunk.text for chunk in chunks], metadata=chunk_meta, tags=[DOCUMENT_TAG, *tags, *inherited],
+        source="document",
         session_id=session_id, occurred_at=[occurred_at] * len(chunks) if occurred_at is not None else None,
         extract_facts=extract_facts,
     )
