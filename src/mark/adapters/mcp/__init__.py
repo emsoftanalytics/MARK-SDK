@@ -40,7 +40,8 @@ if TYPE_CHECKING:
 
 #: Every tool the server can expose (``tools=`` selects a subset).
 CORE_TOOLS = ("mark_retrieve", "mark_observe", "mark_write")
-MEMORY_TOOLS = ("mark_fact", "mark_timeline", "mark_brief", "mark_forget")
+MEMORY_TOOLS = ("mark_fact", "mark_timeline", "mark_brief", "mark_list", "mark_resolve",
+                "mark_supersede", "mark_forget")
 ALL_TOOLS = CORE_TOOLS + MEMORY_TOOLS
 
 
@@ -83,19 +84,23 @@ def create_mark_mcp_server(
 
     Tools (``tools=`` limits the set; default all):
 
-    - ``mark_retrieve(query)`` — search memory (facts + memories, plain text).
-    - ``mark_observe(content)`` / ``mark_write(content)`` — store an event /
-      durable reference knowledge.
-    - ``mark_fact(action, subject, ...)`` — get / set / history of facts.
+    - ``mark_retrieve(query)`` — search memory (facts + memories, bounded plain text).
+    - ``mark_observe(content)`` / ``mark_write(content, kind=...)`` — store an
+      event / durable reference knowledge (kind also from a "TODO:" label).
+    - ``mark_fact(action, subject, ...)`` — get / set / history / list of facts.
     - ``mark_timeline(subject)`` — every event about a subject, oldest first.
     - ``mark_brief()`` — one-call session brief (facts, TODOs, decisions, bugs).
-    - ``mark_forget(memory_id)`` — delete one memory of the namespace.
+    - ``mark_list(kind, open)`` — memories by kind (e.g. open TODOs) with short ids.
+    - ``mark_resolve(id)`` / ``mark_supersede(id, content)`` — close or replace one.
+    - ``mark_forget(memory_id | match, secure)`` — delete memories.
     - ``mark_briefing`` (opt-in, ``briefing=True``) — push context per session.
+
+    Ids in every output are 8-character short ids, accepted back as input.
 
     Failures the caller can act on (empty query, unknown id, out-of-range
     value, denied namespace, store error) come back as ``isError=True``
-    results with one clear sentence. The fact/timeline/brief/forget tools
-    need a backend with ``memory_for`` (``LocalMarkBackend``).
+    results with one clear sentence. The fact/timeline/brief/list/resolve/
+    supersede/forget tools need a backend with ``memory_for`` (``LocalMarkBackend``).
 
     Args:
         backend:          A :class:`~mark.adapters.backend.MarkBackend` instance.
@@ -141,8 +146,11 @@ def create_mark_mcp_server(
             fail(denied)
         return resolved
 
+    from mark.adapters.mcp._common import install_error_cleaner
     from mark.adapters.mcp._tools import register_core_tools
     from mark.adapters.mcp._tools_more import register_memory_tools
+
+    install_error_cleaner(server)  # schema errors: one sentence, no pydantic dump
 
     register_core_tools(server, backend, resolve, default_blocks=default_blocks, compress=compress,
                         enabled=enabled)

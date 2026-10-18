@@ -4,18 +4,22 @@
 
 Write and revise
     remember TEXT [--kind K] [--tag T ...] [--importance X] [--extract-facts]
-                  [--session S] [--occurred-at T]
-                                                 store one memory (`store` is an alias)
+                  [--session S] [--occurred-at T] [--json]
+                                                 store one memory; prints its short id
+                                                 (`store` is an alias)
     ingest FILE [--session S] [--tag T ...] [--kind K] [--extract-facts]
                                                  store each non-empty line as a memory
+                                                 (safe to repeat: counts new vs present)
     forget ID [--secure] | forget --match TEXT   forget memories and the facts taken from
                                                  them (--secure erases the text from disk)
     resolve ID [--note TEXT]                     mark a TODO/bug as done
     supersede ID TEXT                            replace a memory, keeping its history
 Read
     recall QUERY [-k N] [--chronological] [--json] [--session S] [--since T]
-                 [--until T] [--tag T ...] [--kind K]
-                                                 hybrid recall (facts first, then memories)
+                 [--until T] [--tag T ...] [--kind K [--all]] [--open]
+                                                 hybrid recall (facts first, then memories;
+                                                 --kind/--open hide resolved/superseded
+                                                 memories, --all keeps them)
     recall-many [FILE|-] [-k N] [--chronological] [--json]
                                                  one query per line (or a JSON list)
     list [--kind K] [--tag T ...] [--open] [--limit N] [--offset N] [--json]
@@ -31,6 +35,7 @@ Facts
                                                  the value(s) recorded for that time)
     fact get SUBJECT [ATTRIBUTE]                 current value(s)
     fact history SUBJECT ATTRIBUTE               every value over time
+    fact list [SUBJECT]                          every current fact (of SUBJECT)
     fact retract SUBJECT [ATTRIBUTE] [--value V] withdraw facts recorded by mistake
                                                  (kept for audit)
 Data and processes
@@ -41,14 +46,25 @@ Data and processes
     stats                                        number of memories and current facts,
                                                  and which embedder is active
     serve [start|stop] [--host H] [--port N]     keep MARK warm (loopback only)
-    mcp [--briefing]                             run the MCP server (stdio) on this store
+    mcp [--db P] [--agent ID] [--briefing] [--preset default|small|tiny]
+        [--tools T,...] [--allow-agent ID ...] [--user-subject NAME]
+                                                 run the MCP server (stdio) on this store
+    config show [--json] | config user-subject NAME
+                                                 store settings; the user subject (who
+                                                 "I"/"my" is) is stored with the store
 
-KINDS for --kind: decision, todo, bug, fix, preference, snippet, api, note.
+KINDS for --kind: decision, todo, bug, fix, preference, snippet, api, note. Without
+--kind, a leading "TODO:", "DECISION:"/"ADR:", "BUG:", "FIX:", "DONE:"/"NOTE:", "API:"
+or "SNIPPET:" label sets it. Times (--occurred-at, --valid-from, --since, --until)
+are ISO dates or words such as "yesterday" or "3 May 2026". Fact commands take
+--json too. Read commands on a missing store say "no store at PATH" and create
+nothing.
 IDs: recall and list print 8-character short ids; any unambiguous prefix works.
 
-The database comes from ``--db`` or ``$MARK_DB`` (default ``./.mark/memory.db``),
-the agent namespace from ``--agent`` or ``$MARK_AGENT`` (default ``__mark__``).
-``Mark.local(path)`` accepts the same database file.
+The database comes from ``--db`` or ``$MARK_DB`` (default ``./.mark/memory.db``):
+a ``.db`` file, a ``.mark`` folder (its ``memory.db``) or a project folder (its
+``.mark/memory.db``) -- the same rule as ``Mark.local(path)`` and ``mark mcp``.
+The agent namespace comes from ``--agent`` or ``$MARK_AGENT`` (default ``__mark__``).
 
 When ``mark serve`` is running for the same database, every other command is
 sent to it over loopback HTTP instead of loading MARK in-process (``--no-server``
@@ -94,16 +110,25 @@ from mark._cli.engine import _Engine, _fact_json, _result_json  # noqa: F401
 from mark._cli.output import print_recall as _print_recall  # noqa: F401
 from mark._cli.output import print_result as _print_result
 from mark._cli.parser import build_parser as _parser
-from mark._cli.server import (  # noqa: F401
-    _acquire_lock,
-    _pid_alive,
-    _release_lock,
-    _write_state,
-    serve,
-)
+
+# The server module imports http.server (and with it http.client, ssl and the
+# email parser): ~50 ms that a served `mark recall` must not pay. Its names
+# stay importable from here, loaded on first use (PEP 562).
+_SERVER_NAMES = {"_acquire_lock", "_pid_alive", "_release_lock", "_write_state", "serve"}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _SERVER_NAMES:
+        from mark._cli import server
+
+        return getattr(server, name)
+    raise AttributeError(f"module 'mark.cli' has no attribute {name!r}")
 
 # Errors a command may raise that are the user's to fix: print, exit 1.
 _USER_ERRORS = (RuntimeError, ValueError, OSError, KeyError, TypeError)
+# Commands that only read: on a missing store they say so instead of creating it.
+_READ_ONLY = {"recall", "recall-many", "list", "brief", "stats", "timeline", "agents", "export",
+              "config-show", "fact-get", "fact-history", "fact-list"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -117,9 +142,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "mcp":
             from mark._cli.extras import run_mcp
 
-            run_mcp(db, agent, briefing=args.briefing)
+            run_mcp(_db_path(args.mcp_db) if args.mcp_db else db, args.mcp_agent or agent, args)
             return 0
         cmd, payload = _request(args, agent)
+        if cmd in _READ_ONLY and not db.exists():
+            raise FileNotFoundError(f"no store at {db} (`mark remember TEXT` creates one; "
+                                    "--db or $MARK_DB picks another)")
         result = execute(db, cmd, payload, use_server=not args.no_server)
     except _USER_ERRORS as exc:  # MARK errors subclass these builtins too
         print(f"mark: {_message(exc)}", file=sys.stderr)
@@ -129,16 +157,25 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _message(exc: BaseException) -> str:
-    # KeyError's str() is the repr of its key; MARK errors define their own text.
-    return exc.args[0] if isinstance(exc, KeyError) and type(exc) is KeyError and exc.args else str(exc)
+    # KeyError's str() is the repr of its key, FileNotFoundError's carries an
+    # errno prefix; MARK errors define their own text.
+    if type(exc) in (KeyError, FileNotFoundError) and len(exc.args) == 1:
+        return str(exc.args[0])
+    return str(exc)
 
 
 def _serve(args: argparse.Namespace, db: Path) -> int:
     if args.action == "stop":
         from mark._cli.extras import stop_server
 
-        print(stop_server(db))
+        message = stop_server(db)
+        if message.startswith("no mark serve running"):
+            print(f"mark: {message}", file=sys.stderr)  # nothing was stopped: exit 1
+            return 1
+        print(message)
         return 0
+    from mark._cli.server import serve
+
     serve(db, args.host, args.port)  # RuntimeError (e.g. encrypted store) is reported by main
     return 0
 
@@ -160,8 +197,10 @@ def _request(args: argparse.Namespace, agent: str) -> tuple[str, dict[str, Any]]
         if cmd == "recall-many":
             return cmd, {**payload, "queries": _read_queries(args.file)}
         payload["query"] = args.query
+        # A kind filter means "open ones" (a resolved TODO is not a TODO) unless --all.
+        open_only = args.open or (bool(args.kind) and not args.all)
         filters = {"session": args.session, "since": args.since, "until": args.until,
-                   "tags": args.tags, "kind": args.kind}
+                   "tags": args.tags, "kind": args.kind, "open": open_only}
         return cmd, {**payload, **{k: v for k, v in filters.items() if v}}
     if cmd == "forget":
         if (args.id is None) == (args.match is None):
@@ -184,6 +223,10 @@ def _request(args: argparse.Namespace, agent: str) -> tuple[str, dict[str, Any]]
         return cmd, payload
     if cmd == "agents":
         return cmd, {}
+    if cmd == "config":
+        if args.config_cmd == "show":
+            return "config-show", {}
+        return "config-user-subject", {"name": args.name}
     if cmd == "timeline":
         return cmd, {"agent": agent, "subject": args.subject, "attribute": args.attribute,
                      "limit": args.limit, "since": args.since, "until": args.until}
@@ -192,7 +235,7 @@ def _request(args: argparse.Namespace, agent: str) -> tuple[str, dict[str, Any]]
         if args.fact_cmd == "set":
             payload.update(attribute=args.attribute, value=args.value, valid_from=args.valid_from,
                            correction=args.correction)
-        else:
+        elif args.fact_cmd != "list":
             payload["attribute"] = args.attribute
             if args.fact_cmd == "retract":
                 payload["value"] = args.value

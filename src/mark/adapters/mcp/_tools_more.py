@@ -1,4 +1,4 @@
-"""MCP tools over local memory: ``mark_fact``, ``mark_timeline``, ``mark_brief``, ``mark_forget``.
+"""MCP tools over local memory: ``mark_fact``, ``mark_timeline``, ``mark_brief`` (+ lifecycle tools).
 
 They need direct memory access (``backend.memory_for(agent_id)``, which
 ``LocalMarkBackend`` provides); with another backend they fail with a clear
@@ -8,8 +8,8 @@ tool error. All blocking work runs off the event loop.
   right tool for values that change ("deploy port", "user city").
 * ``mark_timeline``  every event about one subject, oldest first.
 * ``mark_brief``     the one-call session brief (``mark.context.brief``).
-* ``mark_forget``    delete one memory by id (the facade's ``forget``; its
-  cascade to derived facts is the facade's job).
+* ``mark_list`` / ``mark_resolve`` / ``mark_supersede`` / ``mark_forget``
+  live in :mod:`mark.adapters.mcp._tools_lifecycle` and share ``run``.
 """
 from __future__ import annotations
 
@@ -48,8 +48,9 @@ def register_memory_tools(server: Any, backend: Any, resolve: Callable[[str], st
             subject: Annotated[str, bounded("What the fact is about (not needed for list).", maxLength=200)] = "",
             attribute: Attribute = "",
             value: Annotated[str, bounded("New value (set only).", maxLength=2000)] = "",
-            valid_from: Annotated[str, bounded("When the value became true, ISO date (set only; "
-                                               "default now).", maxLength=40)] = "",
+            valid_from: Annotated[str, bounded("When the value became true (set only; default now): "
+                                               "ISO date or words such as 'yesterday'. A future "
+                                               "date schedules the value.", maxLength=40)] = "",
             agent_id: AgentId = "",
         ) -> str:
             """Read or record facts: values that change over time, with full history.
@@ -67,12 +68,14 @@ def register_memory_tools(server: Any, backend: Any, resolve: Callable[[str], st
             def work(memory: Any) -> str:
                 facts = memory.facts
                 if action == "list":
-                    subjects = facts.subjects()
-                    return "Subjects with facts: " + (", ".join(subjects) if subjects else "none")
+                    # Subjects as written (not the normalised lookup keys).
+                    subjects = sorted({f.subject for f in facts.current()}, key=str.casefold)
+                    return "Subjects with facts: " + (guard(", ".join(subjects)) if subjects else "none")
                 if action == "set":
                     fact = facts.set(subject.strip(), attribute.strip(), value.strip(),
                                      valid_from=valid_from.strip() or None)
-                    return f"Recorded: {guard(fact.as_text())}"
+                    verb = "Scheduled (not current until then)" if fact.is_scheduled else "Recorded"
+                    return f"{verb}: {guard(fact.as_text())}"
                 if action == "history":
                     rows = facts.history(subject.strip(), attribute.strip())
                     if not rows:
@@ -129,44 +132,9 @@ def register_memory_tools(server: Any, backend: Any, resolve: Callable[[str], st
 
             return await run("mark_brief", agent_id, work)
 
-    if "mark_forget" in enabled:
-        @server.tool()
-        async def mark_forget(
-            memory_id: Annotated[str, bounded("Full id of the memory to delete (as shown by "
-                                              "mark_retrieve / mark_write).", minLength=1, maxLength=100)],
-            agent_id: AgentId = "",
-        ) -> str:
-            """Delete one memory by id (for stale or wrong memories). Cannot be undone."""
-            target = require_text("memory_id", memory_id, 100)
+    from mark.adapters.mcp._tools_lifecycle import register_lifecycle_tools
 
-            def work(memory: Any) -> str:
-                full = _own_id(memory, target)
-                if full is None or not memory.forget(full):
-                    fail(f"no memory with id {target!r} in this namespace")
-                return f"Forgot memory {full}."
-
-            return await run("mark_forget", agent_id, work)
-
-
-#: Memories scanned to resolve a short id prefix (ids are shown in full by mark_retrieve).
-_PREFIX_SCAN = 5000
-
-
-def _own_id(memory: Any, target: str) -> str | None:
-    """The full id of *target* (an id or a unique prefix of >= 8 chars) in this namespace.
-
-    The store deletes by id alone, so ownership is checked here: an MCP
-    client limited by ``allowed_agent_ids`` must not delete another
-    namespace's memory by guessing its id.
-    """
-    store = getattr(memory, "_store", None)
-    fragment = store.get(target) if store is not None else None
-    if fragment is not None:
-        return target if getattr(fragment, "agent_id", None) == memory.agent_id else None
-    if len(target) < 8:
-        return None
-    matches = [f.id for f in memory.list(limit=_PREFIX_SCAN) if str(f.id).startswith(target)]
-    return matches[0] if len(matches) == 1 else None
+    register_lifecycle_tools(server, run, enabled=enabled)
 
 
 def _tool_error() -> type[Exception]:

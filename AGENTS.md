@@ -30,7 +30,9 @@ lookup step:
    Live evidence wins; then fix memory.
 4. **Act** with the remembered context.
 5. **Remember** verified outcomes with a kind:
-   `remember(text, kind="decision" | "todo" | "bug" | "fix" | "preference" | "snippet" | "api" | "note")`.
+   `remember(text, kind="decision" | "todo" | "bug" | "fix" | "preference" | "snippet" | "api" | "note")`,
+   or start the text with a label (`TODO:`, `DECISION:`, `BUG:`, `FIX:`, ...),
+   which sets the same kind in Python, the CLI and MCP.
 6. **Close the loop.** `resolve(id)` a TODO or bug when it is done;
    `supersede(id, new_text)` a note that changed instead of adding a second
    version; record values that change (ports, owners, versions, test
@@ -57,13 +59,18 @@ When demonstrating MARK, show the same task without MARK and with MARK.
 | Context window | `MarkChat(memory, model=..., base_url=..., keep_last=..., preset="small")` | MARK should hold the conversation and the model see only recent messages plus a briefing. |
 | Middleware | `MarkAgentMiddleware` (LangChain, `anticipate=True` by default; `budget_tokens=`, `history="mark"`, `preset=`); `mark.middlewares` for runtime operations | Memory should be injected and recorded automatically. |
 | Tools | `create_mark_tools(...)`: `mark_retrieve`, `mark_write`, `mark_observe` | The model should decide when to read or write memory. |
-| MCP | `mark mcp` or `python -m mark.adapters.mcp --db PATH`; `create_mark_mcp_server(...)`: `mark_brief`, `mark_retrieve`, `mark_write`, `mark_observe`, `mark_fact`, `mark_timeline`, `mark_forget`; `--briefing` adds `mark_briefing` | External MCP clients need memory. |
-| CLI | `mark remember --kind`, `recall`, `brief`, `resolve`, `supersede`, `forget [--secure]`, `list --kind --open`, `fact set/get/history/retract`, `timeline`, `ingest [--extract-facts]`, `export`/`import`, `stats`, `serve` | Scripts, shells, and agents that run commands. |
+| MCP | `mark mcp` or `python -m mark.adapters.mcp` (same options: `--db`, `--agent`, `--briefing`, `--preset`, `--tools`, `--allow-agent`, `--user-subject`); `create_mark_mcp_server(...)`: `mark_brief`, `mark_retrieve`, `mark_write` (`kind`), `mark_observe`, `mark_fact`, `mark_timeline`, `mark_list`, `mark_resolve`, `mark_supersede`, `mark_forget` (id or `match`, `secure`); `--briefing` adds `mark_briefing` | External MCP clients need memory. |
+| CLI | `mark remember --kind`, `recall [--kind K [--all]] [--open]`, `brief`, `resolve`, `supersede`, `forget [--secure]`, `list --kind --open`, `fact set/get/history/list/retract`, `timeline`, `ingest [--extract-facts]`, `export`/`import`, `stats`, `config show` / `config user-subject NAME`, `serve`, `mcp` | Scripts, shells, and agents that run commands. |
 | Skill | `src/mark/middlewares/skills/mark-usage/SKILL.md` (opt-in `mark-memory-compact` for small models) | An agent loads portable `SKILL.md` instructions. |
 
 `mark.memory`, the LangChain and MCP adapters, and the CLI all default to the
 agent namespace `"__mark__"`, so memory written through one is visible to the
-others. Prefer middleware or briefings for
+others. They also find the store by one rule: a project folder keeps it in
+`<folder>/.mark/memory.db`, a `.mark` folder is the store folder and a `.db`
+file is the database (`Mark.local("./.mark")` and `mark --db .mark` open the
+same file). The user subject (who "I" is) is stored with the store
+(`Mark.local(user_subject=...)`, `mark config user-subject NAME`). IDs in CLI
+and MCP output are 8-character short ids, accepted back as input. Prefer middleware or briefings for
 automatic context, and the direct runtime when the application controls each
 step.
 

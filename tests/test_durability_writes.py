@@ -159,6 +159,7 @@ def test_cli_ingest_retry_never_duplicates(tmp_path: Path) -> None:
     lines = [f"deploy step {i}" for i in range(30)]
     engine = _Engine(db)
     assert engine.run("ingest", {"agent": "cli", "lines": lines})["stored"] == 30
-    assert engine.run("ingest", {"agent": "cli", "lines": lines})["stored"] == 30  # retry
+    retry = engine.run("ingest", {"agent": "cli", "lines": lines})        # a10: new vs present
+    assert (retry["stored"], retry["existing"]) == (0, 30)
     assert engine.runtime.store.count("cli") == 30
     engine.close()

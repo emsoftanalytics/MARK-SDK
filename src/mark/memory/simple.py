@@ -8,11 +8,15 @@ update / supersede / resolve / facts / timeline / export ...) come from
 :mod:`mark.memory.simple_verbs` and match ``runtime.memory(id)`` exactly;
 blocks are tag scopes (see :mod:`mark.memory.simple_block`) and graph helpers
 are forwarded by :mod:`mark.memory.simple_graph`. ``retrieve`` (returning a
-:class:`ContextBundle`) is the historical read and keeps working.
+:class:`ContextBundle`) is the historical read: it keeps working but is
+deprecated for application code in favour of ``recall`` (one read verb on
+both memories; ``runtime.memory(id).retrieve`` is a different, async call).
 ``SimpleBlock`` and ``_fragment_to_record`` are re-exported for compatibility.
 """
 from __future__ import annotations
 
+import sys
+import warnings
 from typing import Any
 
 from mark.context.builder import ContextBundle
@@ -110,8 +114,16 @@ class SimpleMemory(SimpleVerbsMixin, SimpleGraphMixin):
         expand          — apply query expansion for improved recall
 
         Unknown block names raise :class:`mark.errors.UnknownBlockError`.
-        Prefer :meth:`recall` (same filters, returns a RetrievalResult).
+
+        .. deprecated:: 0.2.0a10
+           Use :meth:`recall` (same filters; returns a RetrievalResult whose
+           ``as_context()`` is the LLM-ready text). Calls from application
+           code warn; MARK's own agent and skills still use this method.
         """
+        if _called_by_application():
+            warnings.warn(
+                "mark.memory.retrieve() is deprecated; use mark.memory.recall(query, ...).as_context() "
+                "(the same verb as runtime.memory(id).recall)", DeprecationWarning, stacklevel=2)
         if blocks:
             self._check_blocks(blocks)
 
@@ -259,3 +271,14 @@ class SimpleMemory(SimpleVerbsMixin, SimpleGraphMixin):
 
     # Graph API (node / attach_node / link_nodes / unlink / neighborhood) is
     # inherited from SimpleGraphMixin and forwards to the underlying MarkMemory.
+
+
+#: Callers that are not "application code": MARK itself, and the executors
+#: MARK's agent uses to run retrieve() off the event loop (asyncio.to_thread).
+_INTERNAL_CALLERS = ("mark.", "concurrent.", "asyncio.", "threading", "functools", "contextvars")
+
+
+def _called_by_application() -> bool:
+    """True when ``SimpleMemory.retrieve`` was called from outside MARK (warn only there)."""
+    caller = sys._getframe(2).f_globals.get("__name__", "")
+    return caller != "mark" and not caller.startswith(_INTERNAL_CALLERS)

@@ -16,8 +16,9 @@ Invariants:
   thread stopped) outside the LRU lock. Session ids and input text are
   length-capped.
 * **Never blocks the event loop, never waits long.** All watch work runs on
-  MARK's shared worker pool (``run_off_loop``); the prefetch wait is clamped
-  to ``_MAX_WAIT_S``.
+  MARK's shared worker pool (``run_off_loop``); ``wait`` is 0-``_MAX_WAIT_S``
+  seconds. A session's first call waits at least ``_FIRST_WAIT_S`` so a cold
+  call does not answer "Nothing relevant" before its lookups ran.
 * **Clear failures.** A denied namespace, a bad role, a backend without
   local memory or an internal error comes back as an ``isError=True``
   result with one sentence (never a traceback, never a "success" text).
@@ -34,14 +35,16 @@ import logging
 import threading
 from collections import OrderedDict
 from collections.abc import Callable
-from typing import Any
+from typing import Annotated, Any
 
 from mark.adapters.backend import run_off_loop
-from mark.adapters.mcp._common import fail, tool_error_class
+from mark.adapters.mcp._common import AgentId, bounded, fail, tool_error_class
 
 logger = logging.getLogger("mark.adapters.mcp")
 
-_MAX_WAIT_S = 2.0            # upper bound on how long one call waits for prefetches
+_MAX_WAIT_S = 10.0           # upper bound on how long one call waits for prefetches
+_FIRST_WAIT_S = 2.0          # a new session's first call waits at least this long
+_BUDGET = (50, 4000)         # budget_tokens bounds (0 = the preset's own size)
 _MAX_TEXT = 8000             # only the tail of very long conversation text is scanned
 _MAX_SESSION_ID = 200
 _UNAVAILABLE = "MARK briefing unavailable: this backend has no local memory."
@@ -147,9 +150,12 @@ def _briefing_sync(
     budget_tokens: int | None = None,
 ) -> str:
     """Observe the new input and render the session's briefing (blocking; run off-loop)."""
+    fresh = (agent_id, session_id) not in sessions.keys()
     watch = sessions.get(agent_id, session_id)
     if watch is None:
         fail(_UNAVAILABLE)
+    if fresh:
+        wait = max(wait, _FIRST_WAIT_S)  # first call: let the session's lookups finish
     if messages:
         watch.observe_messages(messages)
     text = text.strip()[-_MAX_TEXT:]
@@ -175,13 +181,18 @@ def register_briefing(
 
     @server.tool()
     async def mark_briefing(
-        text: str = "",
-        session_id: str = "default",
-        role: str = "user",
-        messages: list[dict[str, Any]] | None = None,
-        agent_id: str = "",
-        wait: float = 0.5,
-        budget_tokens: int = 0,
+        text: Annotated[str, bounded("The latest message (user, assistant or tool text).")] = "",
+        session_id: Annotated[str, bounded("Stable id of this conversation; one briefing state per id.",
+                                           maxLength=_MAX_SESSION_ID)] = "default",
+        role: Annotated[str, bounded("Who wrote text: user, assistant or tool.",
+                                     enum=["user", "assistant", "tool"])] = "user",
+        messages: Annotated[list[dict[str, Any]] | None,
+                            bounded("Recent chat as [{role, content}] instead of text.")] = None,
+        agent_id: AgentId = "",
+        wait: Annotated[float, bounded("Seconds (0-10) to let running lookups finish; a session's "
+                                       "first call waits at least 2.", minimum=0, maximum=_MAX_WAIT_S)] = 0.5,
+        budget_tokens: Annotated[int, bounded("Size cap in tokens (chars/4), 50-4000; 0 = the preset's "
+                                              "size.", minimum=0, maximum=_BUDGET[1])] = 0,
     ) -> str:
         """Memory briefing for an ongoing conversation, meant for the context window.
 
@@ -191,9 +202,13 @@ def register_briefing(
         subjects being discussed, related notes, corrections of outdated
         values and the subjects memory knows nothing about. ``budget_tokens``
         > 0 caps the briefing (tokens estimated as characters / 4), keeping
-        corrections and unknowns first. ``wait`` (0-2 s) lets running
+        corrections and unknowns first. ``wait`` (0-10 s) lets running
         lookups finish.
         """
+        if isinstance(wait, bool) or not 0 <= wait <= _MAX_WAIT_S:
+            fail(f"wait must be between 0 and {_MAX_WAIT_S:g} seconds (got {wait!r})")
+        if budget_tokens and not _BUDGET[0] <= budget_tokens <= _BUDGET[1]:
+            fail(f"budget_tokens must be 0 (preset size) or between {_BUDGET[0]} and {_BUDGET[1]}")
         resolved, denied = resolve_agent(agent_id)
         if denied:
             fail(f"MARK briefing failed: {denied}")
@@ -203,8 +218,7 @@ def register_briefing(
         try:
             return await run_off_loop(
                 _briefing_sync, sessions, resolved, session, text or "", role, messages,
-                min(max(float(wait), 0.0), _MAX_WAIT_S),
-                int(budget_tokens) if budget_tokens and int(budget_tokens) > 0 else None,
+                float(wait), int(budget_tokens) or None,
             )
         except tool_error_class():
             raise

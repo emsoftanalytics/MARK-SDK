@@ -1,26 +1,24 @@
 """CLI client: find a live ``mark serve`` process and talk to it, else run in-process.
 
-Standard library only: when a server answers, the client never imports MARK.
+Standard library only: when a server answers, the client never imports MARK,
+and it speaks HTTP through :mod:`mark._cli.wire` (a raw loopback socket), so
+it never imports ``urllib``/``http.client``/``ssl`` either (start-up time).
 
 A server that dies while a request is in flight (killed, crashed, stopped)
 never surfaces as an error: the command is finished in-process instead.
 Reads simply run again. Writes are retried without duplicating: ``ingest``
-chunks carry their idempotency key; a ``store``/``supersede`` first looks
-for the memory the server may already have written (same text, written
-since the request was sent); ``forget``/``resolve`` of an id the server
-already removed report success.
+chunks carry their idempotency key (in-process ingests use the same
+chunks); a ``store``/``supersede`` first looks for the memory the server
+may already have written (same text, written since the request was sent);
+``forget``/``resolve`` of an id the server already removed report success.
 """
 from __future__ import annotations
 
 import hmac
-import http.client
 import json
-import secrets
+import os
 import sys
 import time
-import urllib.error
-import urllib.request
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -37,11 +35,15 @@ def _live_server(state: Path) -> dict[str, Any] | None:
     """
     try:
         data = json.loads(state.read_text())
-        nonce = secrets.token_hex(16)
-        url = f"{_base_url(data)}/hello?nonce={nonce}"
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open(url, timeout=1.0) as response:
-            hello = json.loads(response.read())
+    except (OSError, ValueError):
+        return None  # no state file: no server (the common, cold case)
+    try:
+        from mark._cli.wire import call_json
+
+        nonce = os.urandom(16).hex()  # what secrets.token_hex does, without importing random
+        status, hello = call_json(data["host"], int(data["port"]), "GET", f"/hello?nonce={nonce}", timeout=1.0)
+        if status != 200:
+            return None
         if not hmac.compare_digest(str(hello.get("proof", "")), _proof(data["token"], nonce)):
             return None
         if hello.get("protocol") != protocol_fingerprint():
@@ -72,25 +74,16 @@ def _call_server(server: dict[str, Any], cmd: str, args: dict[str, Any]) -> dict
     Raises ``RuntimeError`` when the command failed on the server and
     ``_ServerGone`` when the server itself went away (the outcome is unknown).
     """
-    request = urllib.request.Request(
-        f"{_base_url(server)}/",
-        data=json.dumps({"cmd": cmd, "args": args}, ensure_ascii=False).encode("utf-8"),
-        headers={"Authorization": f"Bearer {server['token']}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # never via a proxy
+    from mark._cli.wire import call_json
+
+    # Loopback socket: never via a proxy, never TLS (see mark._cli.wire).
     try:
-        with opener.open(request, timeout=300) as response:
-            payload = json.loads(response.read())
-    except urllib.error.HTTPError as exc:
-        try:
-            payload = json.loads(exc.read() or b"{}")
-        except (OSError, ValueError, http.client.HTTPException) as gone:
-            raise _ServerGone(str(gone)) from None
-    except (OSError, ValueError, http.client.HTTPException) as exc:  # reset, refused, cut short
+        _status, payload = call_json(server["host"], int(server["port"]), "POST", "/",
+                                     {"cmd": cmd, "args": args}, token=server["token"], timeout=300)
+    except (OSError, ValueError) as exc:  # reset, refused, cut short, half a reply
         raise _ServerGone(str(exc)) from None
-    if not payload.get("ok"):
-        raise RuntimeError(payload.get("error", "server error"))
+    if not isinstance(payload, dict) or not payload.get("ok"):
+        raise RuntimeError(payload.get("error", "server error") if isinstance(payload, dict) else "server error")
     return payload["result"]
 
 
@@ -98,8 +91,7 @@ def execute(db: Path, cmd: str, args: dict[str, Any], *, use_server: bool = True
     """Run a command via a live server for *db*, else in-process."""
     server = _live_server(_state_path(db)) if use_server else None
     if server is not None:
-        # Anything the server may have written for this request is at least this new.
-        sent = (datetime.now(timezone.utc) - timedelta(seconds=2)).isoformat()
+        sent = time.time() - 2.0  # anything the server wrote for this request is at least this new
         try:
             if cmd == "ingest":
                 return _ingest_in_chunks(server, args, db)
@@ -112,7 +104,7 @@ def execute(db: Path, cmd: str, args: dict[str, Any], *, use_server: bool = True
     return _run_local(db, cmd, args)
 
 
-def _run_local(db: Path, cmd: str, args: dict[str, Any], *, retry_since: str | None = None) -> dict[str, Any]:
+def _run_local(db: Path, cmd: str, args: dict[str, Any], *, retry_since: float | None = None) -> dict[str, Any]:
     """Run *cmd* in this process; ``retry_since`` marks a retry after the server died mid-request."""
     engine = _Engine(db)
     try:
@@ -131,11 +123,14 @@ def _run_local(db: Path, cmd: str, args: dict[str, Any], *, retry_since: str | N
         engine.close()
 
 
-def _already_applied(engine: Any, cmd: str, args: dict[str, Any], since: str) -> dict[str, Any] | None:
+def _already_applied(engine: Any, cmd: str, args: dict[str, Any], since: float) -> dict[str, Any] | None:
     """The result of a write the dead server already committed, or None to run it now."""
     if cmd not in {"store", "remember", "supersede"}:
         return None  # reads, and writes that are idempotent by themselves
-    found = engine.runtime.store.recent_duplicate(args["agent"], args["text"], since)
+    from datetime import datetime, timezone
+
+    stamp = datetime.fromtimestamp(since, timezone.utc).isoformat()
+    found = engine.runtime.store.recent_duplicate(args["agent"], args["text"], stamp)
     if found is None:
         return None
     if cmd == "supersede":
@@ -157,7 +152,7 @@ def stop_server(db: Path, *, timeout: float = 10.0) -> bool:
         return False
     try:
         _call_server(server, "stop", {})
-    except (OSError, RuntimeError, ValueError, http.client.HTTPException, _ServerGone):
+    except (OSError, RuntimeError, ValueError, _ServerGone):
         pass  # it may close the connection while stopping; confirm below
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -170,12 +165,11 @@ def stop_server(db: Path, *, timeout: float = 10.0) -> bool:
 def _ingest_in_chunks(server: dict[str, Any] | None, args: dict[str, Any], db: Path) -> dict[str, Any]:
     """Send large ingests as several requests, each well under the size cap (in-process without *server*).
 
-    Each chunk is one transaction on the server and idempotent (see
-    ``_Engine.cmd_ingest``: the key is derived from the chunk's lines). If the
-    server dies mid-ingest, this chunk and the rest are stored in-process with
-    the *same* chunking, so the lines it already stored are never duplicated
-    (an in-process ingest chunks identically, so re-running a file with or
-    without a server never duplicates either).
+    Each chunk is one transaction and idempotent (see ``_Engine.cmd_ingest``:
+    the key comes from the chunk's lines). If the server dies mid-ingest,
+    this chunk and the rest run in-process with the *same* chunking, so lines
+    it already stored are never duplicated; an in-process ingest chunks the
+    same way, so re-running a file with or without a server never duplicates.
     """
     result: dict[str, Any] = {"stored": 0}
     chunk: list[str] = []
@@ -194,8 +188,9 @@ def _ingest_in_chunks(server: dict[str, Any] | None, args: dict[str, Any], db: P
                 local.append(_Engine(db))
         if local:
             part = local[0].run("ingest", request)
-        result = {**part, "stored": result["stored"] + part["stored"],
-                  **({"extracted": result.get("extracted", 0) + part["extracted"]} if "extracted" in part else {})}
+        summed = {key: result.get(key, 0) + part[key]
+                  for key in ("stored", "existing", "skipped", "extracted") if key in part}
+        result = {**part, **summed}
 
     try:
         for line in args["lines"]:

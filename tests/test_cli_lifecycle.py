@@ -45,9 +45,10 @@ def test_recall_output_shows_ids_and_dates_without_same_day_noise(tmp_path: Path
     lines = _run(capsys, db, "recall", "Tomasz Nowak team", "-k", "3").splitlines()
     assert "same day" not in "\n".join(lines)
     by_text = {line.split("Tomasz Nowak ")[-1]: line for line in lines}
-    assert " #1 [2026-04-07]" in by_text["moved to the Messaging team."]
-    assert " #2 [2026-04-07]" in by_text["moved to the Platform team."]
-    assert " 2026-03-08 Tomasz" in by_text["prefers async standups."]  # date shown, no '#k'
+    # a10: no "#k" rank marker (order is kept; "order" stays in --json).
+    assert "#1" not in "\n".join(lines) and "#2" not in "\n".join(lines)
+    assert " [2026-04-07] HR" in by_text["moved to the Messaging team."]
+    assert " 2026-03-08 Tomasz" in by_text["prefers async standups."]  # date shown
     short = by_text["prefers async standups."].split("] ")[1].split()[0]
     assert len(short) == 8
 
@@ -152,7 +153,8 @@ def test_serve_stop(tmp_path: Path, capsys) -> None:
         assert cli.main(["--db", str(db), "serve", "stop"]) == 0
         assert "stop" in capsys.readouterr().out
         assert proc.wait(timeout=10) is not None
-        assert "no mark serve running" in (cli.main(["--db", str(db), "serve", "stop"]) or capsys.readouterr().out)
+        assert cli.main(["--db", str(db), "serve", "stop"]) == 1      # a10: nothing to stop -> exit 1
+        assert "no mark serve running" in capsys.readouterr().err
     finally:
         if proc.poll() is None:
             proc.kill()
@@ -162,7 +164,8 @@ def test_mcp_command_launches_the_server_for_the_cli_database(tmp_path: Path, mo
     import mark._cli.extras as extras
 
     calls = []
-    monkeypatch.setattr(extras, "run_mcp", lambda db, agent, briefing=False: calls.append((db, agent, briefing)))
+    monkeypatch.setattr(extras, "run_mcp", lambda db, agent, options=None, briefing=False: calls.append(
+        (db, agent, briefing or options.briefing)))
     assert cli.main(["--db", str(tmp_path / "m.db"), "--agent", "coder", "mcp", "--briefing"]) == 0
     assert calls == [((tmp_path / "m.db").resolve(), "coder", True)]
 
