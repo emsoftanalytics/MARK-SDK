@@ -69,11 +69,15 @@ def test_hash_v2_speed() -> None:
     text = "Elena carries a brass key into the warehouse."
     h.embed(text)
     n = 2000
-    start = time.perf_counter()
-    for _ in range(n):
-        h.embed(text)
-    per_call_ms = (time.perf_counter() - start) / n * 1000
-    assert per_call_ms < 0.5  # target < 0.1 ms; generous bound for slow CI
+    # Thread CPU time, best of three: wall time swings with machine load, CPU time
+    # of this thread does not, so the bound stays a real regression guard.
+    best = float("inf")
+    for _ in range(3):
+        start = time.thread_time()
+        for _ in range(n):
+            h.embed(text)
+        best = min(best, (time.thread_time() - start) / n * 1000)
+    assert best < 0.5  # target < 0.1 ms; generous bound for slow CI
 
 
 # ── cache ────────────────────────────────────────────────────────────────────
