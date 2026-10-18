@@ -14,15 +14,26 @@ retires the old one, so "what was it originally?" stays answerable:
 and metadata ``lifecycle="resolved"``/``resolved_at``. The ``lifecycle``
 metadata key is the memory's lifecycle state (``MemoryState`` is left alone,
 because retired memories must stay retrievable for history questions).
+
+History never forks. Revising a memory that was already superseded follows
+``superseded_by`` to the newest version and revises that one (with a
+``UserWarning`` saying so); :meth:`RevisionsMixin.current_version` returns
+that id. ``resolve`` only accepts TODOs and bugs (other memories are replaced
+with ``supersede`` or deleted with ``forget``); resolving a resolved memory
+is a no-op that returns its id.
 """
 from __future__ import annotations
 
+import warnings
 from datetime import datetime, timezone
 from typing import Any
 
 from mark.kinds import KIND_TAG_PREFIX, TAG_RESOLVED, TAG_SUPERSEDED, kind_of
 from mark.memory.facade.core import MemoryCore
 from mark.types import MemoryFragment
+
+#: Kinds ``resolve()`` closes.
+RESOLVABLE_KINDS = ("todo", "bug")
 
 #: Metadata keys owned by the lifecycle; never copied onto a new revision.
 _LIFECYCLE_KEYS = frozenset({
@@ -48,9 +59,11 @@ class RevisionsMixin(MemoryCore):
         The new memory inherits the old one's kind, tags, session and
         importance (override any of them with keyword arguments accepted by
         :meth:`remember`). The old one stays stored, tagged
-        ``mark:superseded``.
+        ``mark:superseded``. When *memory_id* was already superseded, its
+        newest version is replaced instead (a ``UserWarning`` says so), so
+        there is only ever one current version.
         """
-        old = self._require(memory_id)
+        old = self._current(self._require(memory_id), "superseding")
         history = [*_as_list(old.metadata.get("history")), old.id]
         metadata = {k: v for k, v in old.metadata.items() if k not in _LIFECYCLE_KEYS
                     and k not in {"occurred_at", "access_count"}}
@@ -76,18 +89,61 @@ class RevisionsMixin(MemoryCore):
         return self.supersede(memory_id, text, **options)
 
     def resolve(self, memory_id: str, *, note: str | None = None) -> str:
-        """Mark a memory (typically a TODO or bug) as done; returns its id.
+        """Mark a TODO or bug as done; returns the id of the memory resolved.
 
         Resolved memories leave ``list(kind=..., open=True)`` and are demoted
-        in recall, but stay stored. Raises
-        :class:`mark.errors.MemoryNotFoundError` for an unknown id.
+        in recall, but stay stored. Only TODOs and bugs (``kind="todo"`` /
+        ``"bug"`` or a leading ``TODO:``/``BUG:`` label) can be resolved;
+        anything else raises :class:`mark.errors.InvalidInputError` (use
+        :meth:`supersede` to replace it or ``forget`` to delete it).
+        Resolving an already resolved memory changes nothing and returns its
+        id; a superseded TODO resolves its newest version (with a
+        ``UserWarning``). Unknown ids raise
+        :class:`mark.errors.MemoryNotFoundError`.
         """
         fragment = self._require(memory_id)
+        if TAG_RESOLVED in fragment.tags:
+            return fragment.id  # already resolved: idempotent, keeps the first resolution
+        fragment = self._current(fragment, "resolving")
+        if TAG_RESOLVED in fragment.tags:
+            return fragment.id
+        kind = kind_of(fragment)
+        if kind not in RESOLVABLE_KINDS:
+            from mark.errors import InvalidInputError
+
+            what = f"a {kind}" if kind else "a note without a kind"
+            raise InvalidInputError(
+                f"memory {fragment.id[:8]} is {what}; resolve() closes TODOs and bugs only. "
+                "Use supersede() to replace it with the current text, or forget() to delete it")
         extra = {"resolved_at": _now()}
         if note:
             extra["resolution"] = note
         self._retire(fragment, lifecycle="resolved", tags=(TAG_RESOLVED, TAG_SUPERSEDED), **extra)
         return fragment.id
+
+    def current_version(self, memory_id: str) -> str:
+        """The id of the newest version of *memory_id* (itself when never superseded)."""
+        return self._newest(self._require(memory_id)).id
+
+    def _newest(self, fragment: MemoryFragment) -> MemoryFragment:
+        """Follow ``superseded_by`` links to the newest version that still exists."""
+        seen = {fragment.id}
+        while True:
+            nxt = fragment.metadata.get("superseded_by")
+            newer = self.get(str(nxt)) if nxt and str(nxt) not in seen else None  # type: ignore[attr-defined]
+            if newer is None:
+                return fragment
+            seen.add(newer.id)
+            fragment = newer
+
+    def _current(self, fragment: MemoryFragment, doing: str) -> MemoryFragment:
+        """*fragment*, or its newest version (with a warning) when it was superseded."""
+        newest = self._newest(fragment)
+        if newest.id != fragment.id:
+            warnings.warn(
+                f"memory {fragment.id[:8]} was already superseded by {newest.id[:8]}; "
+                f"{doing} the current version {newest.id[:8]} instead", UserWarning, stacklevel=3)
+        return newest
 
     def _retire(
         self, fragment: MemoryFragment, *, lifecycle: str,

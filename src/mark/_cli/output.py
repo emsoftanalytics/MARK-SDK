@@ -82,9 +82,13 @@ def print_result(args: Any, cmd: str, result: dict[str, Any]) -> None:
         secure = " and erased from disk" if result["secure"] and result["forgotten"] else ""
         print(f"forgot {result['forgotten']} memor{'y' if result['forgotten'] == 1 else 'ies'}{secure}")
     elif cmd == "resolve":
-        print(f"resolved {result['id'][:8]}")
+        print(_resolve_line(result))
     elif cmd == "supersede":
-        print(f"superseded {result['superseded'][:8]} with {result['id'][:8]}")
+        line = f"superseded {result['superseded'][:8]} with {result['id'][:8]}"
+        if result.get("followed_from"):
+            line += (f" ({result['followed_from'][:8]} was already superseded; "
+                     f"its current version {result['superseded'][:8]} was replaced)")
+        print(line)
     elif cmd in {"export", "import"}:
         skipped = f", {result['skipped']} skipped" if result.get("skipped") else ""
         invalid = f", {result['invalid']} invalid line(s)" if result.get("invalid") else ""
@@ -109,6 +113,16 @@ def print_result(args: Any, cmd: str, result: dict[str, Any]) -> None:
         if embedder:
             line += f"; embedder {_embedder(embedder)}"
         print(line)
+
+
+def _resolve_line(result: dict[str, Any]) -> str:
+    if result.get("already"):
+        when = str(result.get("resolved_at") or "")[:10]
+        return f"already resolved: {result['id'][:8]}{f' (on {when})' if when else ''}; nothing changed"
+    line = f"resolved {result['id'][:8]}"
+    if result.get("followed_from"):
+        line += f" (the current version of {result['followed_from'][:8]}, which was superseded)"
+    return line
 
 
 def _ingest_line(result: dict[str, Any]) -> str:

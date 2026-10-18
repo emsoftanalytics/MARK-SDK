@@ -75,11 +75,27 @@ class EngineOpsMixin:
         return {"forgotten": forgotten, "secure": secure}
 
     def cmd_resolve(self, agent: str, id: str, note: str | None = None) -> dict[str, Any]:  # noqa: A002
-        return {"id": self._memory(agent).resolve(self._full_id(agent, id), note=note)}
+        from mark.kinds import TAG_RESOLVED
+
+        memory = self._memory(agent)
+        asked = self._full_id(agent, id)
+        if TAG_RESOLVED in memory.get(asked).tags:
+            return {"id": asked, "already": True,
+                    "resolved_at": memory.get(asked).metadata.get("resolved_at")}
+        current = memory.current_version(asked)  # a superseded TODO resolves its newest version
+        result: dict[str, Any] = {"id": memory.resolve(current, note=note)}
+        if current != asked:
+            result["followed_from"] = asked
+        return result
 
     def cmd_supersede(self, agent: str, id: str, text: str) -> dict[str, Any]:  # noqa: A002
-        old = self._full_id(agent, id)
-        return {"id": self._memory(agent).supersede(old, text), "superseded": old}
+        asked = self._full_id(agent, id)
+        # Never fork history: an already superseded memory hands over to its newest version.
+        old = self._memory(agent).current_version(asked)
+        result = {"id": self._memory(agent).supersede(old, text), "superseded": old}
+        if old != asked:
+            result["followed_from"] = asked
+        return result
 
     def cmd_list(self, agent: str, kind: str | None = None, open: bool = False,  # noqa: A002
                  limit: int = 20, offset: int = 0, tags: list[str] | None = None) -> dict[str, Any]:

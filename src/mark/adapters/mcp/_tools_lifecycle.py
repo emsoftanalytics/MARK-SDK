@@ -91,12 +91,25 @@ def register_lifecycle_tools(server: Any, run: Callable[..., Any], *, enabled: s
             note: Annotated[str, bounded("Optional note on how it was resolved.", maxLength=2000)] = "",
             agent_id: AgentId = "",
         ) -> str:
-            """Mark a TODO or bug as done; it leaves open lists and briefs but keeps its history."""
+            """Mark a TODO or bug as done; it leaves open lists and briefs but keeps its history.
+
+            Only TODOs and bugs can be resolved; replace other memories with
+            mark_supersede or delete them with mark_forget.
+            """
 
             def work(memory: Any) -> str:
                 full = own_id(memory, memory_id)
-                memory.resolve(full, note=note.strip() or None)
-                return f"Resolved memory {short(full)}."
+                if TAG_RESOLVED in memory.get(full).tags:
+                    return f"Memory {short(full)} was already resolved; nothing changed."
+                current = memory.current_version(full)
+                try:
+                    done = memory.resolve(current, note=note.strip() or None)
+                except ValueError as exc:  # not a TODO/bug: say what to use instead
+                    fail(str(exc).replace("supersede()", "mark_supersede").replace("forget()", "mark_forget"))
+                if current != full:
+                    return (f"Resolved memory {short(done)} (the current version of {short(full)}, "
+                            "which was already superseded).")
+                return f"Resolved memory {short(done)}."
 
             return await run("mark_resolve", agent_id, work)
 
@@ -112,7 +125,11 @@ def register_lifecycle_tools(server: Any, run: Callable[..., Any], *, enabled: s
 
             def work(memory: Any) -> str:
                 full = own_id(memory, memory_id)
-                new_id = memory.supersede(full, text)
+                current = memory.current_version(full)  # never fork: revise the newest version
+                new_id = memory.supersede(current, text)
+                if current != full:
+                    return (f"Memory {short(full)} was already superseded by {short(current)}; "
+                            f"superseded {short(current)} with {short(new_id)}.")
                 return f"Superseded memory {short(full)} with {short(new_id)}."
 
             return await run("mark_supersede", agent_id, work)

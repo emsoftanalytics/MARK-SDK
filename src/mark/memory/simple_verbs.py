@@ -62,6 +62,7 @@ class SimpleVerbsMixin:
     aupdate = _forward("aupdate")
     resolve = _forward("resolve")
     aresolve = _forward("aresolve")
+    current_version = _forward("current_version")
     timeline = _forward("timeline")
     vacuum = _forward("vacuum")
     export_jsonl = _forward("export_jsonl")
