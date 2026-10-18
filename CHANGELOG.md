@@ -209,8 +209,10 @@ a million memories.
   changed.
 - **Multilingual keyword search**: CJK text is segmented, other languages
   are no longer run through the English stemmer, accented words match their
-  unaccented spelling, and emoji and symbols are searchable, in keyword
-  search and in the hash embedder (version 3). Store schema version 6 adds
+  unaccented spelling, emoji and symbols are searchable, in keyword
+  search and in the hash embedder (version 3), and Chinese, Japanese and
+  Korean names are recognised in timelines, fact lookups and "not in
+  memory" checks. Store schema version 6 adds
   the multilingual keyword index, vector and scope snapshots, and an index
   for TTL expiry; existing stores upgrade in place.
 - **Recall prefers what is current**: updates ("moved to", "switched to",
@@ -252,7 +254,8 @@ a million memories.
   tags tool results and errors, and counts its skill text and memory
   wrapper inside `budget_tokens`.
 - **Durability**: background fact jobs held by a process that died are
-  requeued on the next open; `shutdown()` stops workers within `timeout`
+  requeued on the next open and `facts.extract_pending()` waits at most
+  30 s by default; `shutdown()` stops workers within `timeout`
   (default 5 s), returns unfinished jobs to the queue and closes the store,
   which then raises `StoreClosedError`; `Mark.close()` is an alias.
 - **Embedder outages no longer lose writes**: network embedders retry
@@ -260,7 +263,8 @@ a million memories.
   embedder stays down, memories are stored unembedded, found by keyword
   meanwhile, and embedded once it is back, without stalling a recall. Errors
   that remain are an `EmbeddingHTTPError` naming the endpoint. `"auto"` warns
-  once when it falls back to the hash embedder.
+  once when it falls back to the hash embedder, and model download errors
+  explain `HF_HOME`.
 - **One store-path rule**: `Mark.local("./.mark")`, `mark --db .mark` and
   `mark mcp --db .mark` open the same `./.mark/memory.db`; `Mark.local()`
   also accepts a project folder or a `.db` file.
@@ -319,7 +323,8 @@ a million memories.
   10,000 characters.
 - Command-line fixes: read commands on a missing store say so instead of
   creating it; `mark recall` rejects an empty query and `-k 0`;
-  `serve stop` exits 1 when no server runs; `--no-server` is accepted after
+  `serve stop` exits 1 when no server runs and no longer fails when the
+  server closes the connection while stopping; `--no-server` is accepted after
   the sub-command; `brief` on an empty store says so; no more "same day"
   notes.
 
