@@ -151,7 +151,10 @@ class _FusionMixin:
             # A date in the question ("in November", "yesterday") is a soft
             # window: memories inside it go first, the rest stay reachable
             # (and show the same penalty in their displayed score).
-            seed_scores = {fid: score if fid in in_window else score * OUT_OF_WINDOW
+            # Inside the window, the date is matched evidence like a word: a memory
+            # covering the date and the topic leads even when the vector channel
+            # (crowded by out-of-window look-alikes) never returned it.
+            seed_scores = {fid: max(score, coverage[fid]) if fid in in_window else score * OUT_OF_WINDOW
                            for fid, score in seed_scores.items()}
             relevance = {fid: rel if fid in in_window else rel * OUT_OF_WINDOW for fid, rel in relevance.items()}
         if kind_ask is not None:

@@ -180,7 +180,12 @@ def _resolve(kind: str, m: re.Match[str], ref: date, day_first: bool) -> tuple[d
         if kind == "month_year":
             return _month(int(m["year"]), _MONTHS[m["mon"].lower()])
         if kind == "month":
-            return _month(ref.year, _MONTHS[m["mon"].lower()])
+            month = _MONTHS[m["mon"].lower()]
+            lead = m.group(0).split(None, 1)[0].lower()
+            # "last December" is the latest one before this month, "next March" the coming one.
+            year = ref.year - (month >= ref.month) if lead == "last" else ref.year + (month <= ref.month) \
+                if lead == "next" else ref.year
+            return _month(year, month)
         if kind == "year":
             return date(int(m["year"]), 1, 1), date(int(m["year"]), 12, 31)
         if kind == "quarter":

@@ -260,7 +260,7 @@ class RetrievalPipeline(
             )
         fragments, scores, relevances, intent, facts, missing, gap_report, outdated, conflicts = (
             self._order_and_report(query, agent_id, spec, analysis, fragments, scores, relevances,
-                                   names_date=bool(date_ranges), time_scoped=time_scoped or bool(date_ranges),
+                                   date_ranges=date_ranges, time_scoped=time_scoped or bool(date_ranges),
                                    cosine=cosine if uses_score_fusion(self._fusion, self._embedder) else None))
         self._reinforce_results(fragments, relevances, spec, reinforce_mode)
 

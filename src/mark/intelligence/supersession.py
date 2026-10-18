@@ -39,7 +39,7 @@ from mark.types import MemoryFragment
 # Change wording: a memory using one of these reads as an update of an earlier state.
 _UPDATE_RE = re.compile(
     r"\b(?:moved|switched|migrated|changed|replaced|relocated|transferred|renamed|upgraded|downgraded"
-    r"|updated|correction|corrected|actually|no\s+longer|anymore|any\s+more|used\s+to|now|instead"
+    r"|updated|correction|corrected|actually|no\s+longer|anymore|any\s+more|used\s+to|now|nowadays|these\s+days|instead"
     r"|resolved|removed|deprecated|superseded|retired|reverted)\b"
     # Status labels count only as labels: "done" / "fixed" inside prose or
     # code ("(title, done, priority)") are not updates.

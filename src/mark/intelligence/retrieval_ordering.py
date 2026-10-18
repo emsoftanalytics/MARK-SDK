@@ -31,6 +31,7 @@ from mark.intelligence.query_understanding import (
     anchor_present,
     query_anchors,
 )
+from mark.intelligence.retrieval_time import window_gap
 from mark.intelligence.retrieval_finish import apply_floor, demote_outdated, display_scores
 from mark.intelligence.state_change import apply_band, state_band
 from mark.intelligence.supersession import order_by_fact_agreement, order_by_supersession
@@ -51,8 +52,9 @@ class _OrderingMixin:
         scores: list[float],
         relevances: list[float],
         *,
-        names_date: bool,
+        names_date: bool = False,
         time_scoped: bool = False,
+        date_ranges: list | None = None,
         cosine: dict[str, float] | None = None,
     ) -> tuple:
         """Order the top-k for the query's point in time; return it with facts, missing anchors, gap.
@@ -61,6 +63,7 @@ class _OrderingMixin:
         outdated ids, conflicts by id). ``cosine`` (semantic embedders only)
         lets a clear vector winner count as an answer (``gap_calibration``).
         """
+        names_date = names_date or bool(date_ranges)
         fragments, scores, relevances, intent = temporal_order(query, fragments, scores, relevances)
         outdated: set[str] = set()
         conflicts: dict[str, list[str]] = {}
@@ -91,6 +94,7 @@ class _OrderingMixin:
             cosine is not None and vector_outlier(fragments[0].id, cosine)))
         gap = self._gap_report(relevances, spec, analysis, query, missing, top_covers_anchors(query, fragments),
                                answered=answered)
+        gap = window_gap(query, date_ranges, fragments, gap)
         return fragments, scores, relevances, intent, facts, missing, gap, outdated, conflicts
 
     def _maybe_compress(self, compress, query, spec, analysis, fragments, scores, relevances, missing, gap):

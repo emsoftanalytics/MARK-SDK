@@ -20,9 +20,9 @@ two or more memories and
 - otherwise, members state different values (numbers, dates or names) ->
   newest first, and the disagreeing members are *conflicts* of each other.
 
-"Original/before" questions get the band oldest first instead. Members keep
-their slots in the result list (others never move) and scores stay
-non-increasing.
+"Original/before" questions get the band oldest first instead. The band
+moves as a block to the slot of its best member (others keep their order)
+and ranking scores stay non-increasing.
 """
 from __future__ import annotations
 
@@ -43,14 +43,24 @@ _GROUPS: tuple[tuple[str, str], ...] = (
     ("phone phones mobile cell telephone number", r"\bnew\s+one\s+is\b"),
     ("job jobs work works working employer employed occupation role position", r"\bnow\s+an?\s+\w+"),
     ("appointment appointments meeting booking reservation", r"\b(?:moved|rescheduled|postponed)\s+to\b"),
+    ("manager managers boss supervisor report reports", r"\breport(?:s|ing)?\s+to\b"),
+    ("use uses using", r"\b(?:switched|moved|migrated|changed)\s+(?:over\s+)?to\b"),
+    # "What time is standup?": a clock time states the time.
+    ("time times", r"\b\d{1,2}[:.]\d{2}\b|\b\d{1,2}\s*[ap]\.?m\b"),
 )
 # Words that find unnamed updates of a group's attribute in the keyword index.
-_CHANGE_LOOKUPS = (("moved", "relocated"), ("number",), ("job", "jobs"), ("moved", "rescheduled"))
+_CHANGE_LOOKUPS = (("moved", "relocated", "based"), ("number",), ("job", "jobs"), ("moved", "rescheduled"),
+                   ("report", "reports"), ("switched", "migrated"), ("moved", "rescheduled"))
 # Words that say nothing about which attribute is asked ("What's my sister's name?").
 _WEAK = {"name", "call", "called", "much", "many", "old", "new", "former", "previous"}
-_FIRST_PERSON = r"\b(?:i|i'm|im|my|me|mine|myself)\b"
+# First person singular or plural ("we use Jira"; "us" is left out: the US).
+_FIRST_PERSON = r"\b(?:i|i'm|im|my|me|mine|myself|we|we're|our|ours)\b"
 _CHANGE_EXTRA = r"\b(?:new\s+one|now|these\s+days|nowadays)\b"
 _MIN_TOPIC_SHARE = 0.5
+# Marker "subject" for questions about a thing named by plain words (see _subject_and_terms).
+TOPIC = "\x00topic"
+# Words too generic to make a topic on their own ("What time is it?").
+_GENERIC = {"time", "use", "thing"}
 
 
 @cache
@@ -82,17 +92,21 @@ def _subject_and_terms(query: str) -> tuple[list[str], list[str]] | None:
     No names means the user ("I/my") is the subject."""
     first_person = _patterns()[0]
     names = [n for n in gap_anchors(query) if not n.isdigit()]
-    if not names and not first_person.search(query):
-        return None
     name_words = {word for name in names for word in name.split()}
     terms = [t for t in _content_terms(query) if t not in name_words and t not in _WEAK
              and not t.isdigit() and t.isascii()]
+    if not names and not first_person.search(query):
+        # No name and no "I/we": the topic words are the subject ("What time is
+        # standup?", "What is the wifi SSID?"); every one must be stated.
+        return ([TOPIC], terms) if len(terms) >= 1 and set(terms) - _GENERIC else None
     return (names, terms) if terms else None
 
 
 def _member(content: str, names: list[str], terms: list[str]) -> bool:
     """Whether a memory is about the asked subject and states every asked attribute term."""
-    if names:
+    if names == [TOPIC]:
+        pass  # topic questions: the attribute terms below are the whole test
+    elif names:
         if not all(name_mentioned(content, n) for n in names):
             return False
     elif _patterns()[0].search(content) is None:
@@ -137,7 +151,7 @@ def state_band(query: str, intent: TemporalIntent, fragments: list[MemoryFragmen
     if parsed is None:
         return None
     names, terms = parsed
-    name_words = {word for name in names for word in name.split()}
+    name_words = {word for name in names if name != TOPIC for word in name.split()}
     change_re = _patterns()[1]
     band = [i for i, f in enumerate(fragments) if _member(f.content, names, terms)]
     if len(band) < 2:
@@ -155,10 +169,13 @@ def state_band(query: str, intent: TemporalIntent, fragments: list[MemoryFragmen
     ordered = list(reversed(newest_first)) if intent == TemporalIntent.ORIGINAL else newest_first
     if intent == TemporalIntent.ORIGINAL:
         outdated = set()
-    slots = sorted(band)
-    order = list(range(len(fragments)))
-    for slot, index in zip(slots, ordered):
-        order[slot] = index
+    # The band moves together to its best slot: swapping members across the
+    # list would make every unrelated result between them show the evidence
+    # of the member moved down (displayed scores are non-increasing).
+    first = min(band)
+    rest = [i for i in range(len(fragments)) if i not in set(band)]
+    at = sum(1 for i in rest if i < first)
+    order = rest[:at] + ordered + rest[at:]
     return StateBand(order, outdated, conflicts)
 
 
