@@ -10,9 +10,10 @@ false positives at negligible cost.
 from __future__ import annotations
 
 import re
+from mark.security.lazy_regex import lazy_compile
 
-_NON_DIGIT = re.compile(r"\D")
-_NON_ALNUM = re.compile(r"[^A-Za-z0-9]")
+_NON_DIGIT = lazy_compile(r"\D")
+_NON_ALNUM = lazy_compile(r"[^A-Za-z0-9]")
 
 # ISO 13616 IBAN lengths per country (the common ones; unknown countries
 # fall back to the generic 15–34 range so new registrations still match).

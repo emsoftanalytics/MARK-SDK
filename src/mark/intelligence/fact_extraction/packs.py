@@ -31,6 +31,7 @@ from mark.intelligence.fact_extraction.rules import (  # noqa: F401  (re-exporte
     _AUX,
     _DET,
 )
+from mark.intelligence.fact_extraction.packs_more import MORE_PACKS
 from mark.intelligence.fact_extraction.packs_people import PEOPLE_PACKS
 
 _CHANGE_VERBS = (r"moved|changed|switched|migrated|transferred|relocated|reassigned|shifted|updated"
@@ -209,8 +210,9 @@ KEY_VALUE = RulePack(
 )
 
 #: The built-in packs, in the order they are tried (earlier packs win a slot).
-#: People/thing packs (preferences, prices, ...) live in :mod:`.packs_people`.
+#: People/thing packs (preferences, prices, ...) live in :mod:`.packs_people`;
+#: habits, counts, tools and project settings in :mod:`.packs_more`.
 BUILTIN_PACKS: tuple[RulePack, ...] = (STATUS, OWNERSHIP, ASSIGNMENT, MEMBERSHIP, CHANGES,
                                        LISTENING, REGION, PLACEMENT, LOCATION,
-                                       DATASTORE, REPORTING, *PEOPLE_PACKS, KEY_VALUE)
+                                       DATASTORE, REPORTING, *PEOPLE_PACKS, *MORE_PACKS, KEY_VALUE)
 PACKS_BY_NAME: dict[str, RulePack] = {pack.name: pack for pack in BUILTIN_PACKS}

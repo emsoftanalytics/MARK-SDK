@@ -89,6 +89,18 @@ class WritePolicy:
             metadata = {**(metadata or {}), "mark_security": {**previous, **findings}}
         return WriteDecision(content, metadata, tags, quarantine, reason)
 
+    def redact_text(self, text: str) -> tuple[str, tuple[str, ...]]:
+        """Redact one short string (a title, a source path) without injection screening.
+
+        Used for document titles and sources: they are stored next to the
+        text, so they must not keep a secret either, but they are labels,
+        not instructions a model would follow.
+        """
+        if self.redaction is None or not text:
+            return text, ()
+        result = redact(text, self.redaction)
+        return result.text, result.kinds
+
 
 def _redact_metadata(value: Any, policy: RedactionPolicy) -> tuple[Any, set[str]]:
     """Redact string values (recursively) in caller metadata."""

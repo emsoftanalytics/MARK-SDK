@@ -32,8 +32,8 @@ def triples(text: str, extractor: PatternFactExtractor = X) -> list[tuple[str, s
     ("I no longer eat meat.", ("user", "diet", "no meat")),
     ("My birthday is 14 March.", ("user", "birthday", "14 March")),
     ("I am 182 cm tall.", ("user", "height", "182 cm")),
-    ("I prefer dark mode.", ("user", "dark mode", "prefers")),
-    ("I love jazz.", ("user", "jazz", "loves")),
+    ("I prefer dark mode.", ("user", "prefers", "dark mode")),
+    ("I love jazz.", ("user", "loves", "jazz")),
     ("I'm a software engineer.", ("user", "occupation", "software engineer")),
     ("Priya manages me.", ("user", "manager", "Priya")),
 ])
@@ -78,7 +78,7 @@ def test_trivially_safe_pronoun_resolution() -> None:
 @pytest.mark.parametrize(("text", "expected"), [
     ("Priya manages Tomasz.", ("Tomasz", "manager", "Priya")),
     ("Grace was born on 14 March 1990.", ("Grace", "birthday", "14 March 1990")),
-    ("User prefers dark roast coffee.", ("user", "dark roast coffee", "prefers")),
+    ("User prefers dark roast coffee.", ("user", "prefers", "dark roast coffee")),
     ("The Growth plan costs $79 per month.", ("Growth plan", "price", "$79 per month")),
     ("The kitchen tiles cost 42 euros per square metre.", ("kitchen tiles", "price", "42 euros per square metre")),
     ("The renovation budget is capped at 38,000 euros.", ("renovation", "budget", "38,000 euros")),

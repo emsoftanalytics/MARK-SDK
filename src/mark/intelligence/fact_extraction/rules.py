@@ -43,6 +43,9 @@ ATTRIBUTE_SYNONYMS: dict[str, str] = {
     "date of birth": "birthday", "birthdate": "birthday", "dob": "birthday", "home address": "address",
     "home town": "hometown", "time zone": "timezone", "mum": "mother", "mom": "mother", "dad": "father",
     "allergies": "allergy", "configuration file": "config file", "entrypoint": "entry point",
+    # One key for where a config lives: agents write all of these for the same thing.
+    "config path": "config file", "configuration path": "config file", "config file path": "config file",
+    "config_path": "config file", "config_file": "config file",
 }
 
 # Longest first so "availability zone" wins over "zone".
@@ -55,7 +58,8 @@ SUBJECT = rf"(?P<subject>{_TOKEN}(?:\s+{_TOKEN}){{0,3}}?)(?:'s)?"
 #: Value: the shortest run that ends the clause or meets a connective
 #: ("... to port 4444 on Monday", "... to Lisbon because ...").
 VALUE = (
-    r"(?P<value>[^;()]+?)"
+    # A `code span` is one value, whatever it contains ("`ruff check .`", "`make test on ci`").
+    r"(?P<value>`[^`\n]+`|[^;()]+?)"
     # A full stop ends a value unless it closes a title ("Dr. Silva").
     r"(?=\s*(?:[;()]|,(?:\s|$)|(?<!\bDr)(?<!\bMr)(?<!\bMrs)(?<!\bMs)(?<!\bProf)(?<!\bSt)\.(?:\s|$)|$)"
     r"|\s+(?:and|but|because|after|before|since|on|at|as\s+of|effective|following|due\s+to|until"
@@ -99,6 +103,19 @@ class RulePack:
     #: ``trigger`` (a regex) must be found in it, for any pattern to match.
     trigger_words: tuple[str, ...] = ()
     trigger: str | None = None
+    #: Fixed subject for patterns without a subject group ("The test command is X" -> project).
+    subject: str | None = None
+    #: Values are one of several current values (recorded with ``facts.add``).
+    multi: bool = False
+    #: Name the attribute after the kind of product in the value ("uses pnpm" -> package manager);
+    #: the match is dropped when the value is not a known product.
+    attribute_from_type: bool = False
+    #: Only match when the sentence carries a date ("From 2027-02-01 the team moves to Lisbon"):
+    #: present-tense moves without one are narration or plans.
+    needs_date: bool = False
+    #: The pattern states a change of value, so an undated value of the slot
+    #: stamped later than the change is older than it (see ``FactCandidate.change``).
+    change: bool = False
 
     def compiled(self) -> tuple[re.Pattern[str], ...]:
         """Patterns with placeholders expanded, compiled case-insensitively."""

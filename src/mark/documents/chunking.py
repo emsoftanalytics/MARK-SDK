@@ -21,12 +21,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from mark.security.lazy_regex import lazy_compile
 
-_TOKEN = re.compile(r"\w+|[^\w\s]")
-_HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$")
-_FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[\"'(\[]?[A-Z0-9])")
-_TOP_LEVEL = re.compile(r"^(?:async\s+def|def|class|function|fn|func|pub\s+fn|impl|struct|interface|type|const|let"
+_TOKEN = lazy_compile(r"\w+|[^\w\s]")
+_HEADING = lazy_compile(r"^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$")
+_FENCE = lazy_compile(r"^\s{0,3}(`{3,}|~{3,})")
+_SENTENCE_END = lazy_compile(r"(?<=[.!?])\s+(?=[\"'(\[]?[A-Z0-9])")
+_TOP_LEVEL = lazy_compile(r"^(?:async\s+def|def|class|function|fn|func|pub\s+fn|impl|struct|interface|type|const|let"
                         r"|export\s+(?:default\s+)?(?:function|class|const))\b\s*([\w$]+)?")
 _SEPARATOR = " › "
 

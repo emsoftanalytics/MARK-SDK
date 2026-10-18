@@ -144,11 +144,12 @@ def test_ingest_extract_facts_in_process_and_served(tmp_path: Path, capsys, monk
                    "[2026-03-30] CHANGE: atlas-core moved from port 9239 to port 4444.\n"
                    "Did atlas-core move to port 1?\n")
     out = _run(capsys, "--db", db, "--no-server", "ingest", str(log), "--extract-facts")
-    assert "stored 3 new memories (2 facts extracted)" in out  # this call's facts, not the store total
+    # This call's facts, not the store total: owner, port 4444 and the earlier port 9239 ("moved from").
+    assert "stored 3 new memories (3 facts extracted)" in out
     assert _run(capsys, "--db", db, "--no-server", "fact", "get", "atlas-core", "port").startswith(
         "atlas-core port = 4444 (since 2026-03-30)")
     _run(capsys, "--db", db, "--no-server", "ingest", str(log), "--extract-facts")  # idempotent
-    assert len(_run(capsys, "--db", db, "--no-server", "fact", "history", "atlas-core", "port").splitlines()) == 1
+    assert len(_run(capsys, "--db", db, "--no-server", "fact", "history", "atlas-core", "port").splitlines()) == 2
     assert "stored 0 new memories (3 already present)\n" == _run(capsys, "--db", db, "--no-server",
                                                                     "ingest", str(log))
 
@@ -165,7 +166,8 @@ def test_ingest_extract_facts_in_process_and_served(tmp_path: Path, capsys, monk
         monkeypatch.setattr(client, "INGEST_CHUNK_BYTES", 80)  # force several requests
         lines = log.read_text().splitlines()
         result = cli.execute(served, "ingest", {"agent": "x", "lines": lines, "extract_facts": True})
-        assert result == {"stored": 3, "existing": 0, "facts": 2, "extracted": 2}
+        # 2 current facts, 3 written (9239 is recorded as history before 4444).
+        assert result == {"stored": 3, "existing": 0, "facts": 2, "extracted": 3}
         again = cli.execute(served, "ingest", {"agent": "x", "lines": lines})
         assert (again["stored"], again["existing"]) == (0, 3)  # summed over every chunk
     finally:

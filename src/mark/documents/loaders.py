@@ -1,13 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 MARK Contributors
-"""Load a file as document text: plain text, Markdown, source code, HTML, PDF.
+"""Load a file as document text: plain text, Markdown, source code, HTML, PDF, Office.
 
 The file's *content* decides how it is read (see
 :func:`mark.media.files.sniff`): text is decoded as UTF-8 (BOM-aware, with
 a Latin-1 fallback), HTML is reduced to text with its headings kept as
 Markdown headings, and PDF text is extracted with the optional ``pypdf``
 dependency (``pip install 'mark-sdk[pdf]'``), one "## Page N" section per
-page so recall can say where a passage came from. Anything else raises
+page so recall can say where a passage came from. Word, Excel and
+PowerPoint files (docx/xlsx/pptx) are read with the standard library (see
+:mod:`mark.documents.office`). An empty file or anything else raises
 :class:`~mark.media.errors.UnsupportedFileError` with a hint.
 """
 from __future__ import annotations
@@ -27,6 +29,12 @@ CODE_SUFFIXES = frozenset(
     " .scala .sh .bash .zsh .sql .lua .r .dart .ex .exs .hs .clj .vue .svelte".split())
 _HTML_SUFFIXES = frozenset({".html", ".htm", ".xhtml"})
 _MAX_BYTES = 50 * 1024 * 1024  # refuse to load huge files whole
+#: Office Open XML media types read by :mod:`mark.documents.office` (no extra needed).
+OFFICE_TYPES = frozenset({
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+})
 
 
 @dataclass(frozen=True)
@@ -50,8 +58,14 @@ def load_file(path: str | Path) -> LoadedFile:
     media_type = sniff(file)
     digest = hashlib.sha256(file.read_bytes()).hexdigest()
     suffix = file.suffix.lower()
+    if file.stat().st_size == 0:
+        raise UnsupportedFileError(f"{file.name} is empty; there is nothing to remember")
     if media_type == "application/pdf":
         return LoadedFile(read_pdf(file), file.name, str(file), "markdown", media_type, digest)
+    if media_type in OFFICE_TYPES:
+        from mark.documents.office import read_office  # stdlib zip + XML, loaded on first use
+
+        return LoadedFile(read_office(file, media_type), file.name, str(file), "markdown", media_type, digest)
     if media_type != "text/plain":
         raise UnsupportedFileError(
             f"{file.name} looks like {media_type}, not text; use memory.remember_file() for images, "
@@ -64,9 +78,18 @@ def load_file(path: str | Path) -> LoadedFile:
 
 
 def decode_text(data: bytes) -> str:
-    """UTF-8 (with or without BOM), falling back to Latin-1 so a stray byte never loses a file."""
+    """UTF-8 (with or without BOM), else Windows-1252, else Latin-1 (never fails).
+
+    Windows-1252 before Latin-1: it is what "Latin-1" files from Windows tools
+    really are, and it maps 0x80-0x9F to quotes, dashes and the euro sign
+    instead of invisible control characters.
+    """
     try:
         return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        pass
+    try:
+        return data.decode("cp1252")
     except UnicodeDecodeError:
         return data.decode("latin-1")
 

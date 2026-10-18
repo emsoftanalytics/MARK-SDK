@@ -8,7 +8,8 @@ sister is Ines" as "<user>'s sister is Ines". Precision guards:
     the value, so "My dog is sick" is not a fact;
   - vague verbs ("likes", "manages", "moved to") only fire between
     capitalised names or the user, never for "the scheduler manages retries"
-    or "the meeting moved to Thursday";
+    or "the meeting moved to Thursday"; present-tense moves ("moves to
+    Lisbon") need a date in the sentence;
   - prices and measurements need a number with a currency or unit, which is
     kept in the value ("$79 per month", "182 cm").
 """
@@ -99,6 +100,30 @@ EMPLOYER = RulePack(
     trigger_words=('works', 'working', 'employed'),
 )
 
+_ORG_VALUE = (r"(?P<value>(?-i:[A-Z])[\w&.'-]*(?:\s+(?-i:[A-Z&])[\w&.'-]*){0,3})"
+              r"(?<!\steam)(?<!\ssquad)(?<!\sdepartment)(?<!\sgroup)(?=\s*$|\s+(?:as|since|now|and|in|last|this)\b)")
+_STARTED = (r"(?:has\s+|have\s+|just\s+|recently\s+|finally\s+)*(?:started|began|starts|begins)\s+"
+            r"(?:a\s+new\s+|a\s+|my\s+new\s+)?(?:job|role|position|working|work)")
+JOB_START = RulePack(
+    name="job_start",
+    # "I started a new job at Stripe" -> employer; "... as a product manager" -> occupation.
+    patterns=(rf"^{PERSON}\s+{_STARTED}\s+(?:at|for|with)\s+{_ORG_VALUE}",),
+    attribute="employer",
+    attribute_from_value=False,
+    change=True,
+    confidence=0.75,
+    trigger_words=('started', 'began', 'starts', 'begins'),
+)
+JOB_START_ROLE = RulePack(
+    name="job_start_role",
+    patterns=(rf"^{PERSON}\s+{_STARTED}\s+as\s+(?:an?\s+)?{{V}}",),
+    attribute="occupation",
+    attribute_from_value=False,
+    change=True,
+    confidence=0.75,
+    trigger_words=('started', 'began', 'starts', 'begins'),
+)
+
 BIRTH = RulePack(
     name="birth",
     patterns=(rf"^{{S}}\s+was\s+born\s+(?:on\s+)?(?P<value>{DATE})(?![\w])",),
@@ -149,16 +174,20 @@ PRICE = RulePack(
 
 PREFERENCE = RulePack(
     name="preference",
-    # Keyed by the thing ("<user>.dark mode = prefers") so "likes tea" and
-    # "likes jazz" never supersede each other and "hates tea" does.
-    patterns=(rf"^{PERSON}\s+(?:really\s+|much\s+|strongly\s+)?(?P<value>prefers|likes|loves|enjoys|adores|hates"
-              r"|dislikes|detests|can't\s+stand|cannot\s+stand)\s+(?!(?:to|that|it|when|how|what|if|being|having)\b)"
-              r"(?P<attribute_free>[\w'+#.-]+(?:\s+[\w'+#.-]+){0,3}?)"
-              r"(?=\s*$|\s+(?:over|to|than|instead|because|but|and|in|for|when)\b)",),
-    value_case="lower",
-    value_map={"enjoys": "likes", "adores": "loves", "detests": "hates", "can't stand": "hates",
-               "cannot stand": "hates"},
+    # The verb is the attribute and the thing the value ("<user>.likes = tea without
+    # sugar"), comparisons kept ("prefers = tea over coffee"). Values are
+    # multi-valued, so "likes tea" and "likes jazz" both stay current.
+    patterns=(rf"^{PERSON}\s+(?:really\s+|much\s+|strongly\s+|absolutely\s+|also\s+|still\s+)?"
+              r"(?P<verb>prefers|likes|loves|enjoys|adores|hates|dislikes|detests|can't\s+stand|cannot\s+stand)\s+"
+              r"(?!(?:to|that|it|its|when|how|what|if|being|having|you|him|her|them|us|this|these|those|one"
+              r"|some|any|doing|a\s+lot)\b)"
+              r"(?P<value>[\w'’+#.-]+(?:\s+[\w'’+#.-]+){0,5}?)"
+              r"(?=\s*$|\s+(?:because|but|and|when|whenever|if|since|for|as|though|although|in|at|on)\b)",),
+    verb_attributes={"prefers": "prefers", "likes": "likes", "enjoys": "likes", "loves": "loves", "adores": "loves",
+                     "hates": "hates", "detests": "hates", "can't stand": "hates", "cannot stand": "hates",
+                     "dislikes": "dislikes"},
     attribute_from_value=False,
+    multi=True,
     confidence=0.7,
     trigger_words=('prefers', 'likes', 'loves', 'enjoys', 'adores', 'hates', 'dislikes', 'detests', 'stand'),
 )
@@ -183,18 +212,35 @@ RELATIONS = RulePack(
 _WEEKDAYS_MONTHS = (r"(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|tonight|"
                     r"january|february|march|april|may|june|july|august|september|october|november|december"
                     r"|room|slot|q[1-4]|version|v\d)\b")
+# Teams, offices and companies move too ("the support team moved to Lisbon").
+_ORG = (r"(?:the\s+|our\s+)?(?P<subject>(?:[a-z][\w-]*\s+){0,2}(?:team|office|department|squad|company"
+        r"|headquarters|hq|lab|studio|branch))")
+_TO_PLACE = (r"(?:\s+from\s+(?P<old>(?-i:[A-Z])[\w.'-]*(?:\s+(?-i:[A-Z])[\w.'-]*){0,2}))?\s+(?:back\s+)?to\s+"
+             rf"(?:the\s+)?(?!{_WEEKDAYS_MONTHS})(?P<value>(?-i:[A-Z])[\w.'-]*(?:\s+(?-i:[A-Z])[\w.'-]*){{0,2}})(?![\w-])")
 RELOCATION = RulePack(
     name="relocation",
     # People move to places; meetings move to days, which are excluded.
-    patterns=(rf"^{PERSON}\s+(?:has\s+|have\s+|just\s+|recently\s+|finally\s+)*(?:moved|relocated)"
-              r"(?:\s+from\s+(?-i:[A-Z])[\w.' -]*?)?\s+(?:back\s+)?to\s+"
-              rf"(?:the\s+)?(?!{_WEEKDAYS_MONTHS})(?P<value>(?-i:[A-Z])[\w.'-]*(?:\s+(?-i:[A-Z])[\w.'-]*){{0,2}})(?![\w-])",),
+    patterns=(rf"^{PERSON}\s+(?:has\s+|have\s+|just\s+|recently\s+|finally\s+)*(?:moved|relocated){_TO_PLACE}",
+              rf"^{_ORG}\s+(?:has\s+|have\s+|just\s+|recently\s+|finally\s+)*(?:moved|relocated){_TO_PLACE}"),
     attribute="location",
     attribute_from_value=False,
+    change=True,
     confidence=0.75,
     trigger_words=('moved', 'relocated'),
 )
+RELOCATION_SCHEDULED = RulePack(
+    name="relocation_scheduled",
+    # "Zenith Labs moves to Ikeja on 2027-01-01": present tense only with a date.
+    patterns=(rf"^{PERSON}\s+(?:moves|relocates|is\s+moving|is\s+relocating){_TO_PLACE}",
+              rf"^{_ORG}\s+(?:moves|relocates|is\s+moving|is\s+relocating){_TO_PLACE}"),
+    attribute="location",
+    attribute_from_value=False,
+    needs_date=True,
+    change=True,
+    confidence=0.75,
+    trigger_words=('moves', 'relocates', 'moving', 'relocating'),
+)
 
 #: People/thing packs, tried after the generic state-change packs.
-PEOPLE_PACKS: tuple[RulePack, ...] = (RELOCATION, RELATIONS, PERSONAL_RELATION, DIET, HEALTH, WORK, EMPLOYER,
+PEOPLE_PACKS: tuple[RulePack, ...] = (RELOCATION, RELOCATION_SCHEDULED, JOB_START, JOB_START_ROLE, RELATIONS, PERSONAL_RELATION, DIET, HEALTH, WORK, EMPLOYER,
                                       BIRTH_YEAR, BIRTH, MEASUREMENTS, AGE, PRICE, PREFERENCE, PERSONAL_DETAIL)
