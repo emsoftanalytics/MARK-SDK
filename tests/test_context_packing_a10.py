@@ -89,6 +89,8 @@ def test_requests_are_tagged_and_never_briefed(memory) -> None:
     assert is_request("Explain what a goroutine is in one sentence.")
     assert is_request("Suggest one dinner dish for me tonight. Just name the dish.")
     assert not is_request("Please remember I prefer reminders in the morning.")
+    assert is_request("How many sprockets are in stock? Use the tool.")   # LangChain M7 re-run
+    assert not is_request("Use 4 spaces for indentation in the Python repo.")
     assert REQUEST_TAG in user_options("Give me a short motivational quote.")["tags"]
     assert "goroutine" not in _brief(memory, "What is a goroutine?", preset="default")
 

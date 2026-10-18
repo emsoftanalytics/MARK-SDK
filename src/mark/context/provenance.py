@@ -109,6 +109,11 @@ def _sentences(text: str) -> list[str]:
     return [s.strip() for s in re.split(r"(?<=[.!?])\s+", " ".join((text or "").split())) if s.strip()]
 
 
+#: Imperatives that are often conventions worth keeping ("Use 4 spaces in Python."):
+#: they mark a request only next to a question ("How many sprockets? Use the tool.").
+_WEAK_REQUEST = re.compile(r"^(?:(?:please|just|ok|okay)[,\s]+)*(use|run|call|try|ask|go)\b", re.IGNORECASE)
+
+
 def is_request(text: str) -> bool:
     """True when *text* only asks for something: every sentence is a question or an
     imperative request ("Explain what a goroutine is in one sentence.").
@@ -116,9 +121,14 @@ def is_request(text: str) -> bool:
     At least one sentence must be imperative (pure questions are :func:`is_question`).
     """
     sentences = _sentences(text)
-    if not sentences or not any(_REQUEST_START.match(s) for s in sentences):
+    asks = any(_is_question_sentence(s) for s in sentences)
+
+    def imperative(sentence: str) -> bool:
+        return bool(_REQUEST_START.match(sentence) or (asks and _WEAK_REQUEST.match(sentence)))
+
+    if not sentences or not any(imperative(s) for s in sentences):
         return False
-    return all(_REQUEST_START.match(s) or _is_question_sentence(s) for s in sentences)
+    return all(imperative(s) or _is_question_sentence(s) for s in sentences)
 
 
 def _is_question_sentence(sentence: str) -> bool:
