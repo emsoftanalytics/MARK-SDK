@@ -71,6 +71,25 @@ class SimpleVerbsMixin:
     store_document = _forward("store_document")
     remember_file = _forward("remember_file")
     store_many_sync = _forward("store_many_sync")
+    # Runtime-level read/write verbs used by ContextWatch, MarkChat and the
+    # agent loop, so they accept ``mark.memory`` as well as a MarkMemory.
+    store_sync = _forward("store_sync")
+    retrieve_sync = _forward("retrieve_sync")
+    retrieve_many_sync = _forward("retrieve_many_sync")
+    retrieve_many = _forward("retrieve_many")
+
+    @property
+    def agent_id(self) -> str:
+        """The reserved agent that owns every ``mark.memory`` write (``"__mark__"``)."""
+        return self._mark_memory.agent_id
+
+    @property
+    def _store(self) -> Any:
+        return self._mark_memory._store
+
+    @property
+    def _pipeline(self) -> Any:  # the user subject lives here (ContextWatch reads it)
+        return self._mark_memory._pipeline
 
     @property
     def images(self) -> Any:
