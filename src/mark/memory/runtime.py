@@ -158,6 +158,11 @@ class MarkRuntime(MaintenanceMixin):
         )
         for plugin in plugins or []:
             registry.register(plugin, runtime=runtime)
+        # Direct users (scripts, the LangChain backend) get the user subject saved
+        # with the store (``mark config``), like Mark.local and the CLI do.
+        from mark.runtime_config import apply_user_subject
+
+        apply_user_subject(runtime)
         return runtime
 
     def configure_llm(self, llm: LLMProvider) -> None:
