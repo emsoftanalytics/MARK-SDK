@@ -126,6 +126,37 @@ class FragmentReadMixin:
         rows = self._fetchall("SELECT * FROM fragments")
         return [self._row_to_fragment(dict(row)) for row in rows]
 
+    def recent_duplicate(self, agent_id: str, text: str, since: str, *, limit: int = 64) -> str | None:
+        """Id of a memory of *agent_id* written at/after *since* (ISO time) whose content is *text*.
+
+        Used to retry a write whose outcome is unknown (the server died
+        mid-request) without storing it twice. Redaction placeholders in the
+        stored text (``[REDACTED]``, ``[EMAIL]``, ...) match any span, since
+        the write path may have replaced secrets. Only the newest *limit*
+        rows are decrypted.
+        """
+        import re
+
+        from mark.security.redaction import PLACEHOLDER_RE
+        from mark.store._sqlite.codec import _as_bytes
+
+        wanted = " ".join(text.split())
+        rows = self._fetchall(
+            "SELECT id, content FROM fragments WHERE agent_id = ? AND updated_at >= ? ORDER BY rowid DESC LIMIT ?",
+            (agent_id, since, limit),
+        )
+        for fragment_id, content in rows:
+            try:
+                stored = " ".join(self.encryption.decrypt_str(_as_bytes(content)).split())
+            except Exception:  # noqa: BLE001 - unreadable rows are never a match
+                continue
+            if stored == wanted:
+                return str(fragment_id)
+            parts = PLACEHOLDER_RE.split(stored)
+            if len(parts) > 1 and re.fullmatch(".+?".join(map(re.escape, parts)), wanted, re.S):
+                return str(fragment_id)
+        return None
+
     def count(self, agent_id: str) -> int:
         """Return the number of fragments stored for an agent."""
         row = self._fetchone("SELECT COUNT(*) FROM fragments WHERE agent_id = ?", (agent_id,))
