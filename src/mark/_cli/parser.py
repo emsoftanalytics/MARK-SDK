@@ -102,7 +102,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("agents", help="list agent namespaces in the store")
     sub.add_parser("stats", help="count memories and facts; show the embedder")
     p = sub.add_parser("serve", help="keep MARK warm for fast calls (`mark serve stop` stops it)")
-    p.add_argument("action", nargs="?", choices=("start", "stop"), default="start")
+    p.add_argument("action", nargs="?", choices=("start", "stop", "status"), default="start")
+    p.add_argument("--detach", action="store_true",
+                   help="start in the background and return (pid in X.db.server.json, log in X.db.server.log)")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=0)
     _config_parser(sub)

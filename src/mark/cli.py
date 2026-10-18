@@ -50,7 +50,9 @@ Data and processes
     agents                                       agent namespaces in the store
     stats                                        number of memories and current facts,
                                                  and which embedder is active
-    serve [start|stop] [--host H] [--port N]     keep MARK warm (loopback only)
+    serve [start|stop|status] [--detach] [--host H] [--port N]
+                                                 keep MARK warm (loopback only); agents
+                                                 use --detach (returns once it answers)
     mcp [--db P] [--agent ID] [--briefing] [--preset default|small|tiny]
         [--tools T,...] [--allow-agent ID ...] [--user-subject NAME] [--extract-facts]
                                                  run the MCP server (stdio) on this store
@@ -183,6 +185,13 @@ def _serve(args: argparse.Namespace, db: Path) -> int:
             return 1
         print(message)
         return 0
+    if args.action == "status" or args.detach:
+        from mark._cli import daemon
+
+        ok, message = daemon.status(db) if args.action == "status" else daemon.detach(db, args.host, args.port)
+        print(message if ok or args.action == "status" else f"mark: {message}",
+              file=sys.stdout if ok or args.action == "status" else sys.stderr)
+        return 0 if ok else 1
     from mark._cli.server import serve
 
     serve(db, args.host, args.port)  # RuntimeError (e.g. encrypted store) is reported by main
