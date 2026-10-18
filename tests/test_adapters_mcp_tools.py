@@ -43,7 +43,8 @@ def test_mcp_server_exposes_the_memory_tools(mark):
         return {t.name for t in await srv.list_tools()}
 
     assert asyncio.run(_names(server)) == {"mark_retrieve", "mark_observe", "mark_write", "mark_fact",
-                                           "mark_timeline", "mark_brief", "mark_forget"}
+                                           "mark_timeline", "mark_brief", "mark_list", "mark_resolve",
+                                           "mark_supersede", "mark_forget"}
     assert asyncio.run(_names(core)) == {"mark_retrieve", "mark_observe", "mark_write"}
     with pytest.raises(ValueError):
         create_mark_mcp_server(LocalMarkBackend(mark), tools=["mark_everything"])

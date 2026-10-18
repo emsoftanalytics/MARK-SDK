@@ -16,6 +16,7 @@ import re
 
 from mark.intelligence.fact_extraction.base import FactCandidate
 from mark.intelligence.fact_extraction.rules import _TOKEN
+from mark.security.lazy_regex import lazy_compile
 
 # Verbs that can open a subject-less clause continuing a description. Kept to
 # the verb families the built-in packs understand, so a carried subject only
@@ -29,12 +30,12 @@ _CONTINUATION_VERBS = (
 )
 # Clause boundaries: ";" and ", " (an "and" after the comma is dropped), plus a
 # bare "and" when a continuation verb follows ("... in Berlin and reports to Ana").
-_CLAUSE_SPLIT = re.compile(rf";\s*|,\s+(?:and\s+)?|\s+and\s+(?={_CONTINUATION_VERBS})", re.IGNORECASE)
-_CONTINUATION = re.compile(rf"^{_CONTINUATION_VERBS}", re.IGNORECASE)
+_CLAUSE_SPLIT = lazy_compile(rf";\s*|,\s+(?:and\s+)?|\s+and\s+(?={_CONTINUATION_VERBS})", re.IGNORECASE)
+_CONTINUATION = lazy_compile(rf"^{_CONTINUATION_VERBS}", re.IGNORECASE)
 # Grammatical subject of a clause: 1-4 tokens before an auxiliary or a
 # lower-case "-ed"/"-s" verb ("TICKET INC-4 opened", "Mei Lin joined"). The
 # lower-case requirement keeps capitalised surnames ("James Jones") whole.
-_LEAD_SUBJECT = re.compile(
+_LEAD_SUBJECT = lazy_compile(
     rf"^(?P<subject>{_TOKEN}(?:\s+{_TOKEN}){{0,3}}?)\s+"
     r"(?=(?:is|are|was|were|has|have|had|now|does|did)\b|(?-i:[a-z][a-z]*(?:ed|s))(?=[\s:(]|$))",
     re.IGNORECASE)

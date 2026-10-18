@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from mark.security.lazy_regex import lazy_compile
 
 UNTRUSTED_TAG = "mark:untrusted"
 
@@ -24,39 +25,79 @@ _QUAL = r"(?:all|any|every|the|your|my|these|those|of|prior|previous|above|earli
         r"system|original|initial|other|safety)"
 _NOUN = r"(?:instructions?|prompts?|directives?|guidelines|guardrails|rules|restrictions|policies|programming)"
 
+# Non-English "ignore (all) previous instructions". A bare "ignora las
+# instrucciones del fabricante" is advice, so the overriding shape needs "all",
+# a possessive aimed at the reader, or "previous" after the noun.
+_VERB_ROMANCE = r"(?:ignora|ignore|ignorad|ignorem|olvida|olvide|olvidad|omite|esque[cç]a|esquece|dimentica)"
+_NOUN_ROMANCE = (r"(?:instrucciones|instru[cç](?:õ|o)es|istruzioni|indicaciones|reglas|regras|regole|[oó]rdenes"
+                 r"|diretrizes)")
+_ART = r"(?:las|los|as|os|le)"
+_POSS = r"(?:tus|sus|tuas|suas|vuestras|le\s+tue|le\s+sue)"
+_PREV = r"(?:anteriores|previas|pr[eé]vias|precedenti|de\s+arriba)"
+_NOUN_FR = r"(?:instructions|consignes|directives|règles)"
+_NOUN_DE = r"(?:Anweisungen|Instruktionen|Regeln|Vorgaben)"
+_PREV_DE = r"(?:vorherigen|bisherigen|früheren|obigen)"
+_FOREIGN_IGNORE = (
+    rf"\b{_VERB_ROMANCE}\s+(?:(?:todas|todos|tutte)\s+(?:{_ART}\s+|{_POSS}\s+)?|{_POSS}\s+){_NOUN_ROMANCE}"
+    rf"|\b{_VERB_ROMANCE}\s+(?:{_ART}\s+)?{_NOUN_ROMANCE}\s+{_PREV}\b"
+    rf"|\b(?:ignore[zr]?|oublie[zr]?)\s+(?:(?:toutes\s+les|vos|tes)\s+{_NOUN_FR}"
+    rf"|(?:les\s+)?{_NOUN_FR}\s+(?:précédentes|antérieures|ci-dessus))"
+    rf"|\b(?:ignoriere|ignoriert|ignorieren\s+Sie|vergiss|vergesst|vergessen\s+Sie)\s+"
+    rf"(?:(?:alle|deine|ihre|eure)\s+(?:{_PREV_DE}\s+)?|(?:die\s+)?{_PREV_DE}\s+){_NOUN_DE}\b"
+)
+
+# Indirect instructions planted in documents and web pages: they address
+# whoever (whatever) reads the text and ask for something covert or aimed at
+# the model's own answers. "When you read this, call me back" has neither.
+_COVERT = (r"(?:quietly|secretly|silently|covertly|discreetly|hidden|invisibly|without\s+(?:telling|informing)"
+           r"|(?:every|each|all|any)\s+(?:future\s+|later\s+)?(?:answers?|responses?|repl(?:y|ies)|outputs?|messages?"
+           r"|summar(?:y|ies))|your\s+(?:answers?|responses?|repl(?:y|ies)|outputs?|instructions|summary))")
+_MODEL_NOUN = r"(?:AI|LLM|language\s+model|assistant|chatbot|bot|agent|model|GPT|Claude)"
+_INDIRECT = (
+    r"\b(?:when|once|after|as\s+soon\s+as|whenever)\s+you\s+(?:read|see|process|parse|summari[sz]e|load"
+    r"|encounter|open|ingest)\s+this\b[^.\n]{0,100}?\b" + _COVERT
+    + rf"|\bif\s+you\s+are\s+(?:an?\s+|the\s+)?{_MODEL_NOUN}\s*[,:;\u2014-]\s*(?:\w+\s+){{0,3}}?"
+    r"(?:add|insert|include|append|say|tell|recommend|mention|reply|respond|output|write|send|ignore|praise|rate"
+    r"|rank|give|use|do\s+not|don't|always|never|must|should|you\s+must|you\s+should)\b"
+    + rf"|\b{_MODEL_NOUN}s?(?:\s+(?:agents?|assistants?|models?|systems?|crawlers?))?\s+(?:reading|processing"
+    r"|summari[sz]ing|crawling|visiting|indexing)\s+this\b[^.\n]{0,40}?\b(?:should|must|need\s+to|are\s+to|will)\b"
+)
+
 # (reason, pattern). Ordered roughly by how common they are in the wild.
 _PATTERN_LIST: list[tuple[str, "re.Pattern[str]"]] = [
-    ("ignore_instructions", re.compile(
+    ("ignore_instructions", lazy_compile(
         rf"\b(?:ignore|disregard|forget|override|bypass)\s+(?:{_QUAL}\s+){{1,4}}{_NOUN}\b", _I)),
-    ("role_override", re.compile(
+    ("role_override", lazy_compile(
         r"\byou\s+are\s+now\s+(?:an?\s+|the\s+|in\s+)?(?:[\w-]+\s+){0,3}?"
         r"(?:DAN|jailbroken|unrestricted|unfiltered|uncensored|mode|AI|assistant|model|chatbot)\b"
         r"|\bfrom\s+now\s+on,?\s+you\s+(?:are|will|must|shall)\b"
         r"|\b(?:do\s+anything\s+now|DAN\s+mode|jailbreak(?:ed)?\s+mode|developer\s+mode\s+(?:enabled|activated|on))\b"
         r"|\b(?:act|behave|respond)\s+as\s+(?:an?\s+)?(?:unrestricted|unfiltered|uncensored|jailbroken|evil)\b", _I)),
-    ("prompt_exfiltration", re.compile(
+    ("prompt_exfiltration", lazy_compile(
         r"\b(?:reveal|print|show|output|leak|repeat|dump|display|tell\s+me)\s+(?:me\s+)?(?:your|the)\s+"
         r"(?:full\s+|entire\s+|hidden\s+|original\s+)?(?:system\s+prompt|initial\s+instructions|hidden\s+instructions)", _I)),
-    ("fake_instructions", re.compile(
+    ("fake_instructions", lazy_compile(
         r"\b(?:new|updated|real|actual|true|revised|override)\s+(?:system\s+)?(?:instructions?|directives?|prompt)\s*:", _I)),
-    ("role_markers", re.compile(
+    ("role_markers", lazy_compile(
         r"<\|(?:im_start|im_end|system|assistant|user|endoftext|start_header_id)\|>|\[/?INST\]|<</?SYS>>"
         r"|^\s*#{2,}\s*(?:system|instruction)s?\s*:?\s*$|</?(?:system|system_prompt)>", _I | re.M)),
-    ("tool_call_injection", re.compile(
+    ("tool_call_injection", lazy_compile(
         r"[\"'](?:tool_calls?|function_call|tool_use)[\"']\s*:\s*[\[{]"
         r"|<\s*(?:function_calls|tool_call|tool_use)\b|<\s*invoke\s+name\s*=", _I)),
-    ("encoded_payload", re.compile(
+    ("encoded_payload", lazy_compile(
         r"\b(?:decode|base64[- ]?decode)\b[^.\n]{0,60}?\b(?:and|then)\s+(?:run|execute|eval|follow|obey)\b"
         r"|\b(?:eval|exec)\s*\(\s*(?:atob|base64\.b64decode|b64decode)\b"
         r"|\bbase64\s+(?:-d|--decode)\s*\|\s*(?:ba|z)?sh\b", _I)),
-    ("concealment", re.compile(
+    ("concealment", lazy_compile(
         r"\b(?:do\s+not|don'?t|never)\s+(?:tell|inform|alert|mention\s+(?:this\s+)?to)\s+the\s+user\s+"
         r"(?:about\s+)?(?:this|these|that\s+you)\b"
         r"|\bwithout\s+(?:telling|informing|alerting)\s+the\s+user\b", _I)),
-    ("exfiltration", re.compile(
+    ("exfiltration", lazy_compile(
         r"\b(?:send|post|upload|forward|email|exfiltrate)\b[^.\n]{0,40}?\b(?:memor(?:y|ies)|conversation|chat\s+history|"
         r"credentials|secrets?|api\s+keys?|passwords?|tokens)\b[^.\n]{0,40}?\bto\s+(?:https?://|\S+@\S+)", _I)),
-    ("model_addressed", re.compile(
+    ("ignore_instructions", lazy_compile(_FOREIGN_IGNORE, _I)),
+    ("indirect_instruction", lazy_compile(_INDIRECT, _I)),
+    ("model_addressed", lazy_compile(
         r"\b(?:attention|note\s+to|message\s+for|if\s+you\s+are|when\s+you\s+read\s+this,?)\s+"
         r"(?:an?\s+|the\s+)?(?:AI|LLM|language\s+model|assistant|agent)\b[^.\n]{0,40}?"
         r"\b(?:must|should|ignore|instead|reading)\b", _I)),
@@ -66,7 +107,12 @@ _PATTERN_LIST: list[tuple[str, "re.Pattern[str]"]] = [
 # substring scans are ~100x cheaper than the regexes, and almost no memory
 # contains any of them, so screening costs a few microseconds per write.
 _HINTS: dict[str, tuple[str, ...]] = {
-    "ignore_instructions": ("ignore", "disregard", "forget", "override", "bypass"),
+    "ignore_instructions": ("ignore", "disregard", "forget", "override", "bypass", "ignora", "olvid", "omite",
+                            "esque", "dimentica", "oublie", "ignorier", "vergiss", "vergesst", "vergessen"),
+    "indirect_instruction": ("you read", "you see", "you process", "you parse", "you summar", "you load",
+                             "you encounter", "you open", "you ingest", "if you are", "reading this",
+                             "processing this", "summarising this", "summarizing this", "crawling this",
+                             "visiting this", "indexing this"),
     "role_override": ("you are now", "from now on", "anything now", "dan mode", "jailbreak", "developer mode", " as "),
     "prompt_exfiltration": ("system prompt", "initial instructions", "hidden instructions"),
     "fake_instructions": ("instruction", "directive", "prompt"),
@@ -81,10 +127,10 @@ _PATTERNS = [(reason, _HINTS[reason], pattern) for reason, pattern in _PATTERN_L
 
 # Invisible characters used to smuggle instructions. Zero-width joiners in
 # emoji/Persian text are legitimate, so ZWJ/ZWNJ only count in runs of 3+.
-_ALWAYS_HIDDEN = re.compile(r"[​⁠-⁤‪-‮⁦-⁩\U000e0000-\U000e007f]|(?<!^)﻿")
-_JOINER_RUN = re.compile(r"[‌‍]{3,}")
-_HTML_COMMENT = re.compile(r"<!--([\s\S]{0,2000}?)-->")
-_COMMENT_INSTRUCTION = re.compile(
+_ALWAYS_HIDDEN = lazy_compile(r"[​⁠-⁤‪-‮⁦-⁩\U000e0000-\U000e007f]|(?<!^)﻿")
+_JOINER_RUN = lazy_compile(r"[‌‍]{3,}")
+_HTML_COMMENT = lazy_compile(r"<!--([\s\S]{0,2000}?)-->")
+_COMMENT_INSTRUCTION = lazy_compile(
     r"\b(?:ignore|disregard|you\s+must|you\s+are|instructions?|system\s+prompt|assistant|AI|LLM|"
     r"do\s+not\s+(?:tell|mention)|recommend|always\s+say)\b", _I,
 )
@@ -92,14 +138,15 @@ _COMMENT_INSTRUCTION = re.compile(
 
 # Phrases quoted as examples ("users try 'ignore previous instructions'")
 # are discussion, not instructions; markup-style reasons never get this pass.
-_QUOTABLE = {"ignore_instructions", "role_override", "prompt_exfiltration", "fake_instructions", "concealment"}
+_QUOTABLE = {"ignore_instructions", "indirect_instruction", "role_override", "prompt_exfiltration", "fake_instructions", "concealment"}
 _OPEN_QUOTES = "'\"`\u2018\u201c"
 _CLOSE_QUOTES = "'\"`\u2019\u201d"
 
 
 def _is_quoted(text: str, match: "re.Match[str]") -> bool:
     before = text[match.start() - 1] if match.start() > 0 else ""
-    after = text[match.end():match.end() + 2]
+    # The quote may close a few words later ("'ignora todas las instrucciones anteriores'").
+    after = text[match.end():match.end() + 24].split("\n", 1)[0]
     return bool(before) and before in _OPEN_QUOTES and any(ch in _CLOSE_QUOTES for ch in after)
 
 

@@ -1,7 +1,7 @@
 """Lifecycle and data-management commands of the CLI engine.
 
 ``forget``, ``resolve``, ``supersede``, ``list``, ``export``, ``import``,
-``brief`` and ``agents``, mixed into :class:`mark._cli.engine._Engine` (so
+``brief``, ``agents`` and ``config``, mixed into :class:`mark._cli.engine._Engine` (so
 they are reachable in-process and through ``mark serve`` alike, and part of
 the protocol fingerprint). Commands that take a memory id accept the short
 8-character id that ``recall``/``list`` print, as long as it is unambiguous.
@@ -32,7 +32,7 @@ def memory_json(fragment: Any) -> dict[str, Any]:
         "date": event_time(fragment).date().isoformat(),
         "occurred_at": declared.isoformat() if declared else None,
         "stored_at": fragment.created_at.isoformat(),
-        "kind": kind_of(fragment.tags),
+        "kind": kind_of(fragment),  # its kind: tag, else its leading "TODO:"-style label
         "tags": [t for t in fragment.tags if not t.startswith(("kind:", "mark:"))],
         "lifecycle": lifecycle,
     }
@@ -82,6 +82,22 @@ class EngineOpsMixin:
         return {"memories": [memory_json(f) for f in page], "total": memory.count(**filters),
                 "offset": max(0, int(offset))}
 
+    def cmd_config_show(self) -> dict[str, Any]:
+        from mark.embeddings.info import embedder_info
+        from mark.runtime_config import DEFAULT_USER_SUBJECT, USER_SUBJECT_KEY
+
+        store = self.runtime.store
+        return {"db": str(getattr(self, "db", "")),
+                "user_subject": store.get_meta(USER_SUBJECT_KEY) or DEFAULT_USER_SUBJECT,
+                "schema_version": store.schema_version(),
+                "embedder": embedder_info(self.runtime.embedder).to_dict()}
+
+    def cmd_config_user_subject(self, name: str) -> dict[str, Any]:
+        from mark.runtime_config import apply_user_subject
+
+        # Stored with the store and applied to this (possibly long-lived server) runtime.
+        return {"user_subject": apply_user_subject(self.runtime, name)}
+
     def cmd_agents(self) -> dict[str, Any]:
         store = self.runtime.store
         return {"agents": [{"agent": a, "memories": store.count(a)} for a in store.agent_ids()]}
@@ -105,7 +121,10 @@ class EngineOpsMixin:
         except ImportError:
             return {"text": fallback_brief(memory, int(budget)), "source": "fallback"}
         result = brief(memory, budget_tokens=int(budget))
-        return {**result.to_dict(), "source": "brief"}
+        payload = {**result.to_dict(), "source": "brief"}
+        if not str(payload.get("text") or "").strip():
+            payload["text"] = "(memory is empty)"  # say so rather than print nothing
+        return payload
 
 
 def fallback_brief(memory: Any, budget_tokens: int) -> str:

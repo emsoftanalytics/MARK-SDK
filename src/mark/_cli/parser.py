@@ -6,6 +6,7 @@ is standard-library only too, so building the parser never loads MARK.
 from __future__ import annotations
 
 import argparse
+from typing import Any
 
 from mark._cli.config import DEFAULT_AGENT
 from mark.kinds import KINDS
@@ -18,10 +19,12 @@ def _recall_options(p: argparse.ArgumentParser, *, filters: bool) -> None:
     p.add_argument("--json", action="store_true")
     if filters:
         p.add_argument("--session", help="only memories of this session")
-        p.add_argument("--since", help="only events on/after this ISO date")
-        p.add_argument("--until", help="only events on/before this ISO date")
+        p.add_argument("--since", help="only events on/after this date (ISO or words: 'last week')")
+        p.add_argument("--until", help="only events on/before this date")
         p.add_argument("--tag", action="append", dest="tags", help="only memories with this tag (repeatable)")
-        p.add_argument("--kind", choices=KINDS, help="only memories of this kind")
+        p.add_argument("--kind", choices=KINDS, help="only open memories of this kind (see --all)")
+        p.add_argument("--open", action="store_true", help="hide resolved and superseded memories")
+        p.add_argument("--all", action="store_true", help="with --kind: include resolved/superseded ones")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -47,7 +50,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--importance", type=float, help="0..1 (default 0.5)")
     p.add_argument("--extract-facts", action="store_true", help="record facts stated in TEXT")
     p.add_argument("--session")
-    p.add_argument("--occurred-at", help="when it happened (ISO date/time)")
+    p.add_argument("--occurred-at", help="when it happened: ISO date/time or words ('yesterday', '3 May')")
+    p.add_argument("--json", action="store_true", help="print the full id as JSON")
 
     p = sub.add_parser("forget", help="forget a memory (and the facts extracted from it)")
     p.add_argument("id", nargs="?", help="memory id (the 8-character short id is enough)")
@@ -81,27 +85,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("subject")
     p.add_argument("attribute", nargs="?")
     p.add_argument("--limit", type=int, help="keep only the newest N events")
-    p.add_argument("--since", help="earliest event time (ISO date)")
-    p.add_argument("--until", help="latest event time (ISO date)")
+    p.add_argument("--since", help="earliest event time (ISO date or words: 'last week')")
+    p.add_argument("--until", help="latest event time (ISO date or words)")
     p.add_argument("--json", action="store_true")
-    fact = sub.add_parser("fact", help="bi-temporal facts").add_subparsers(dest="fact_cmd", required=True)
-    p = fact.add_parser("set")
-    p.add_argument("subject")
-    p.add_argument("attribute")
-    p.add_argument("value")
-    p.add_argument("--valid-from")
-    p.add_argument("--correction", action="store_true",
-                   help="replace the value(s) recorded for this time instead of adding a step")
-    p = fact.add_parser("get")
-    p.add_argument("subject")
-    p.add_argument("attribute", nargs="?")
-    p = fact.add_parser("history")
-    p.add_argument("subject")
-    p.add_argument("attribute")
-    p = fact.add_parser("retract", help="retract facts recorded by mistake (kept for audit)")
-    p.add_argument("subject")
-    p.add_argument("attribute", nargs="?")
-    p.add_argument("--value", help="only retract this value")
+    _fact_parser(sub)
 
     p = sub.add_parser("export", help="back up memories, facts and documents to a JSONL file")
     p.add_argument("file")
@@ -114,6 +101,59 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("action", nargs="?", choices=("start", "stop"), default="start")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=0)
-    p = sub.add_parser("mcp", help="run the MARK MCP server on stdio for this database")
-    p.add_argument("--briefing", action="store_true", help="also expose the mark_briefing tool")
+    _config_parser(sub)
+    _mcp_parser(sub)
     return parser
+
+
+def _fact_parser(sub: Any) -> None:
+    fact = sub.add_parser("fact", help="bi-temporal facts: values that change over time, with history",
+                          description="Record and read facts (subject, attribute, value) over time.")
+    # metavar + help per verb: `mark fact --help` lists every verb, not just one.
+    commands = fact.add_subparsers(dest="fact_cmd", required=True, metavar="{set,get,history,list,retract}")
+    p = commands.add_parser("set", help="record a value (a future --valid-from schedules it)")
+    p.add_argument("subject")
+    p.add_argument("attribute")
+    p.add_argument("value")
+    p.add_argument("--valid-from", help="when it became true: ISO date or words ('yesterday', '1 May')")
+    p.add_argument("--correction", action="store_true",
+                   help="replace the value(s) recorded for this time instead of adding a step")
+    p = commands.add_parser("get", help="current value(s) of a subject (and attribute)")
+    p.add_argument("subject")
+    p.add_argument("attribute", nargs="?")
+    p = commands.add_parser("history", help="every value an attribute has had, oldest first")
+    p.add_argument("subject")
+    p.add_argument("attribute")
+    p = commands.add_parser("list", help="every current fact (of one SUBJECT)")
+    p.add_argument("subject", nargs="?")
+    p = commands.add_parser("retract", help="retract facts recorded by mistake (kept for audit)")
+    p.add_argument("subject")
+    p.add_argument("attribute", nargs="?")
+    p.add_argument("--value", help="only retract this value")
+    for parser in (commands.choices.values()):
+        parser.add_argument("--json", action="store_true")
+
+
+def _config_parser(sub: Any) -> None:
+    config = sub.add_parser("config", help="show or change store settings (user subject)")
+    commands = config.add_subparsers(dest="config_cmd", required=True, metavar="{show,user-subject}")
+    p = commands.add_parser("show", help="store path, user subject, schema version and embedder")
+    p.add_argument("--json", action="store_true")
+    p = commands.add_parser("user-subject", help="who 'I'/'my' is in this store's memories "
+                                                 "(stored with the store; default 'user')")
+    p.add_argument("name")
+
+
+def _mcp_parser(sub: Any) -> None:
+    """``mark mcp``: the options of ``python -m mark.adapters.mcp`` (same launcher)."""
+    p = sub.add_parser("mcp", help="run the MARK MCP server on stdio for this database")
+    # Own dests: argparse lets sub-command defaults overwrite the global --db/--agent.
+    p.add_argument("--db", dest="mcp_db", help="store (same rule as the global --db)")
+    p.add_argument("--agent", dest="mcp_agent", help="default memory namespace")
+    p.add_argument("--briefing", action="store_true", help="also expose the mark_briefing tool")
+    p.add_argument("--preset", default="default", choices=("default", "small", "tiny"),
+                   help="briefing size for the client's model")
+    p.add_argument("--tools", help="comma-separated subset of the MCP tools to expose")
+    p.add_argument("--allow-agent", action="append", dest="allowed", metavar="ID",
+                   help="restrict clients to these namespaces (repeatable)")
+    p.add_argument("--user-subject", help="who 'I'/'my' is (stored with the store)")

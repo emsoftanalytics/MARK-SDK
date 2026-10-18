@@ -6,12 +6,46 @@
 * :class:`MarkConfigureMixin` holds the late-binding ``configure_*`` hooks
   that swap LLM, compressor, or query expander on a running instance. Each
   hook is a no-op when the underlying engine does not support it.
+* :func:`apply_user_subject` stores the user subject (who "I" is) with the
+  store and applies it on open, for ``Mark.local``, the CLI and MCP alike.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+
+#: schema_info key holding the user subject, so it travels with the store.
+USER_SUBJECT_KEY = "user_subject"
+#: Subject of first-person facts when none was ever configured.
+DEFAULT_USER_SUBJECT = "user"
+
+
+def apply_user_subject(runtime: Any, subject: str | None = None) -> str:
+    """Apply the user subject to *runtime*; returns the subject in effect.
+
+    With *subject*, it is validated, stored in the store's ``schema_info``
+    and applied. Without, the stored value (if any) is applied. Why stored:
+    it used to be in-process only, so "Where do I live?" lost its subject
+    after a reopen and the CLI/MCP never knew it (a10 report M-a).
+    """
+    store = getattr(runtime, "store", None)
+    if subject is not None:
+        name = str(subject).strip()
+        if not name:
+            from mark.errors import InvalidInputError
+
+            raise InvalidInputError("user subject must be a non-empty name")
+        runtime.configure_user_subject(name)
+        store.set_meta(USER_SUBJECT_KEY, name)
+        return name
+    get_meta = getattr(store, "get_meta", None)
+    stored = get_meta(USER_SUBJECT_KEY) if callable(get_meta) else None
+    if stored:
+        runtime.configure_user_subject(stored)
+        return stored
+    return DEFAULT_USER_SUBJECT
 
 
 @dataclass(frozen=True)
@@ -26,6 +60,21 @@ class MarkConfigureMixin:
 
     memory: Any
     _runtime_engine: Any
+
+    @property
+    def user_subject(self) -> str:
+        """Who "I" is in this store's memories (default ``"user"``)."""
+        stored = self._runtime_engine.store.get_meta(USER_SUBJECT_KEY)
+        return stored or DEFAULT_USER_SUBJECT
+
+    def configure_user_subject(self, subject: str) -> None:
+        """Name the user ("I", "my") and store it, so every later open uses it too.
+
+        Example: ``mark.configure_user_subject("ana")`` then "I moved to Porto"
+        records ``ana city = Porto`` and "Where do I live?" finds it — also
+        from ``mark recall`` and MCP. Same as ``mark config user-subject ana``.
+        """
+        apply_user_subject(self._runtime_engine, subject)
 
     def configure_query_expander(self, expander: object) -> None:
         """Replace the active query expander at runtime (late-binding)."""

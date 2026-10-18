@@ -41,8 +41,9 @@ def check_content(content: Any, max_bytes: int | None = DEFAULT_MAX_MEMORY_BYTES
         )
     if isinstance(content, PurePath):
         raise InvalidMemoryError(
-            f"memory content must be text (str), got a path ({content}); read the file "
-            "or use store_document(...) for files", reason="not_text",
+            f"memory content must be text (str), got a path ({content}); to remember a file use "
+            "memory.remember_file(path) (text, Markdown, code, HTML, PDF, Office, images, audio)",
+            reason="not_text",
         )
     if not isinstance(content, str):
         kind = "None" if content is None else type(content).__name__

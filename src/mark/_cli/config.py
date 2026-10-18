@@ -18,9 +18,15 @@ _LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 
 
 def _db_path(arg: str | None) -> Path:
-    """Resolve the database: ``--db``, else ``$MARK_DB``, else ``./.mark/memory.db``."""
-    raw = arg or os.environ.get("MARK_DB") or str(Path(".mark") / "memory.db")
-    return Path(raw).expanduser().resolve()
+    """Resolve the database: ``--db``, else ``$MARK_DB``, else ``./.mark/memory.db``.
+
+    ``--db`` follows the store-path rule of :func:`mark.runtime_data.store_db_file`
+    (``.mark`` folder, project folder or database file), so the CLI opens the
+    same file as ``Mark.local(path)`` and ``mark mcp --db path``.
+    """
+    from mark.runtime_data import store_db_file  # standard library only
+
+    return store_db_file(arg or os.environ.get("MARK_DB") or str(Path(".mark") / "memory.db"))
 
 
 def _state_path(db: Path) -> Path:

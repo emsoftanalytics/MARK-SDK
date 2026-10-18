@@ -15,8 +15,16 @@ Lifecycle tags (set by ``supersede``/``update``/``resolve``):
   resolved). Retrieval demotes it but keeps it findable for history questions.
 * ``mark:resolved``   — a TODO/bug that was closed; ``list(kind="todo",
   open=True)`` leaves it out.
+
+A memory written without ``kind`` takes it from a leading label
+(:func:`kind_from_text`: ``TODO:``, ``DECISION:``/``ADR-7:``, ``BUG:``,
+``FIX:``, ``DONE:``/``NOTE:``, ``API:``, ``SNIPPET:``), so the brief, ``list
+--kind`` and ``recall --kind`` agree on what agents actually write.
 """
 from __future__ import annotations
+
+import functools
+from typing import Any
 
 #: Every accepted memory kind, in documentation order.
 KINDS: tuple[str, ...] = ("decision", "todo", "bug", "fix", "preference", "snippet", "api", "note")
@@ -53,12 +61,46 @@ def kind_tag(kind: str) -> str:
     return KIND_TAG_PREFIX + kind
 
 
-def kind_of(tags: list[str] | tuple[str, ...]) -> str | None:
-    """The kind recorded in *tags*, if any."""
+#: Leading labels and the kind they mean. DONE is a progress note: the brief
+#: still reads its "DONE:" prefix to close the TODO it names.
+_LABEL_KINDS = {"todo": "todo", "decision": "decision", "adr": "decision", "bug": "bug",
+                "fix": "fix", "fixed": "fix", "done": "note", "note": "note", "api": "api",
+                "snippet": "snippet"}
+
+
+@functools.cache
+def _label_re() -> Any:
+    # Compiled on first use, not at import: the CLI imports this module on
+    # every start-up and most commands never read a label.
+    import re
+
+    # An optional "[2026-10-02]" stamp, the label, then ":" or a spaced dash
+    # ("TODO - x"); "API-key rotation" is prose, not a label.
+    return re.compile(r"^\s*(?:\[[^\]]{1,40}\]\s*)?(TODO|DECISION|ADR(?:[-\s]?\d+)?|BUG|FIX(?:ED)?|DONE|"
+                      r"NOTE|API|SNIPPET)(?:\s*:|\s+-\s)", re.IGNORECASE)
+
+
+def kind_from_text(text: str | None) -> str | None:
+    """The kind a leading label names ("TODO: add retries" -> "todo"), or None."""
+    match = _label_re().match(text or "")
+    if match is None:
+        return None
+    word = match.group(1).lower()
+    return _LABEL_KINDS.get(word) or _LABEL_KINDS.get(word[:3])  # "adr-7" -> "adr"
+
+
+def kind_of(tags_or_fragment: Any) -> str | None:
+    """The kind of a memory: its ``kind:<k>`` tag, else (for a fragment) its leading label.
+
+    Accepts a tag list or anything with ``tags`` (and ``content``), such as a
+    :class:`mark.types.MemoryFragment`: ``kind_of(memory.get(id))``.
+    """
+    tags = getattr(tags_or_fragment, "tags", tags_or_fragment) or ()
     for tag in tags:
         if tag.startswith(KIND_TAG_PREFIX):
             return tag[len(KIND_TAG_PREFIX):]
-    return None
+    content = getattr(tags_or_fragment, "content", None)
+    return kind_from_text(content) if isinstance(content, str) else None
 
 
 def is_open(tags: list[str] | tuple[str, ...]) -> bool:

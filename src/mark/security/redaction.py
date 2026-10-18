@@ -21,12 +21,14 @@ from typing import Any
 
 from mark.security.pii_rules import EMAIL_PATTERN, EMAIL_RULE, OTHER_PII_RULES, PHONE_RULES
 from mark.security.rules import Rule
-from mark.security.secret_rules import SECRET_ASSIGNMENT, SECRET_RULES
+from mark.security.secret_rules import SECRET_ASSIGNMENT
+from mark.security.secret_rules_prose import ALL_SECRET_RULES
+from mark.security.lazy_regex import lazy_compile
 
 REDACTED = "[REDACTED]"
 
 # Every placeholder MARK writes; fact extraction must never store one as a value.
-PLACEHOLDER_RE = re.compile(r"\[(?:SECRET:[a-z0-9_]+|REDACTED[A-Z_]*|EMAIL|PHONE|IBAN|SSN|CC)\]")
+PLACEHOLDER_RE = lazy_compile(r"\[(?:SECRET:[a-z0-9_]+|REDACTED[A-Z_]*|EMAIL|PHONE|IBAN|SSN|CC)\]")
 
 
 @dataclass(frozen=True)
@@ -53,7 +55,7 @@ class RedactionPolicy:
         """Return the ordered rules this policy applies."""
         out: list[Rule] = []
         if self.secrets:
-            out.extend(SECRET_RULES)
+            out.extend(ALL_SECRET_RULES)
         out.extend(Rule(kind, pattern) for kind, pattern in self.extra_patterns)
         if self.emails if self.emails is not None else self.pii:
             out.append(EMAIL_RULE)
@@ -140,11 +142,11 @@ def redact_secrets(text: str) -> str:
 
 # Key names whose values are always secret in mappings. ``auth(?!ors?\b)``
 # keeps "author"/"authors" readable while matching "auth", "authorization".
-SENSITIVE_KEY_RE = re.compile(
+SENSITIVE_KEY_RE = lazy_compile(
     r"(?i)(pass(?:word)?|passwd|secret|token|api[\s_-]?key|auth(?!ors?\b)|cookie|credential|private[_-]?key)"
 )
 # Key names that contain a sensitive word but are routine counters/settings.
-_BENIGN_KEY_RE = re.compile(
+_BENIGN_KEY_RE = lazy_compile(
     r"(?i)^(?:max_?tokens?|num_?tokens?|tokens?_?(?:count|used|limit|budget)|"
     r"(?:prompt|completion|total|input|output)_tokens?|token_?type|tokenizer|auth_?type|auth_?method)$"
 )
@@ -190,7 +192,7 @@ def _redact_whole(value: Any) -> Any:
 
 
 # Deprecated aliases kept for 0.2.0a9 imports.
-SECRET_PATTERNS = [(rule.kind, rule.pattern) for rule in SECRET_RULES]
+SECRET_PATTERNS = [(rule.kind, rule.pattern) for rule in ALL_SECRET_RULES]
 PII_PATTERNS = [(rule.kind, rule.pattern) for rule in [*OTHER_PII_RULES, *PHONE_RULES]]
 ASSIGNMENT_PATTERN = SECRET_ASSIGNMENT
 

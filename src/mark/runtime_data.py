@@ -5,8 +5,8 @@
 ``Mark`` mixes in :class:`MarkDataMixin` for the operations that span every
 agent namespace in one store — listing namespaces, whole-store backup and
 restore, vacuum, and reporting the active embedder — plus
-:func:`resolve_store_location`, which lets ``Mark.local`` accept a folder or
-a database file exactly like the ``mark --db`` command line.
+:func:`store_db_file` / :func:`resolve_store_location`, the single
+store-path rule shared by ``Mark.local``, ``mark --db`` and ``mark mcp --db``.
 """
 from __future__ import annotations
 
@@ -19,29 +19,56 @@ if TYPE_CHECKING:
 
 #: File suffixes that mark a path as a database file rather than a folder.
 DB_SUFFIXES = (".db", ".sqlite", ".sqlite3")
+#: The database file inside a store folder.
+DB_NAME = "memory.db"
+#: Folder suffix that marks a path as the store folder itself (``./.mark``).
+STORE_DIR_SUFFIX = ".mark"
+
+
+def store_db_file(path: str | Path) -> Path:
+    """The SQLite file a store path names: the one rule shared by Python, CLI and MCP.
+
+    * an existing file, or a path ending in .db/.sqlite/.sqlite3, is the file;
+    * a folder whose name ends in ``.mark``, or an existing folder that
+      already holds ``memory.db``, is the store folder: ``<dir>/memory.db``;
+    * any other folder (existing or not) is a project folder:
+      ``<dir>/.mark/memory.db``.
+
+    Missing paths are decided by their name alone, so a new path never fails
+    with NotADirectoryError. Standard library only (the CLI calls it).
+    """
+    target = Path(path).expanduser().resolve()
+    if target.is_file():
+        return target
+    if not target.is_dir() and target.suffix.lower() in DB_SUFFIXES:
+        return target
+    # Why both tests: `Mark.local("./.mark")` once created ./.mark/.mark/memory.db
+    # while `mark --db .mark` opened ./.mark/memory.db (two stores, blocker B1).
+    if target.name.endswith(STORE_DIR_SUFFIX) or (target / DB_NAME).is_file():
+        return target / DB_NAME
+    return target / STORE_DIR_SUFFIX / DB_NAME
 
 
 def resolve_store_location(project_path: str | Path, store_path: str | Path | None) -> tuple[Path, Path, Path]:
     """Return ``(project_dir, mark_dir, db_file)`` for ``Mark.local`` arguments.
 
-    Either argument may name a database file (an existing file, or a path
-    ending in .db/.sqlite/.sqlite3): ``Mark.local("notes.db")`` and
-    ``mark --db notes.db`` then open the same store. Otherwise the folder
-    rules are unchanged: ``store_path`` is the ``.mark`` directory, else
-    ``<project_path>/.mark``, holding ``memory.db``.
+    ``project_path`` follows :func:`store_db_file`, so ``Mark.local(".")``,
+    ``Mark.local("./.mark")``, ``mark --db .mark`` and ``mark mcp --db .mark``
+    all open ``./.mark/memory.db``. ``store_path`` (explicit) is the store
+    folder itself, or a database file.
     """
-    def is_db_file(path: Path) -> bool:
-        return path.is_file() or (path.suffix.lower() in DB_SUFFIXES and not path.is_dir())
-
     project = Path(project_path).expanduser().resolve()
     if store_path is not None:
         store = Path(store_path).expanduser().resolve()
-        if is_db_file(store):
+        if store.is_file() or (store.suffix.lower() in DB_SUFFIXES and not store.is_dir()):
             return project, store.parent, store
-        return project, store, store / "memory.db"
-    if is_db_file(project):
+        return project, store, store / DB_NAME
+    db = store_db_file(project)
+    if db == project:                # a database file: its folder is the project
         return project.parent, project.parent, project
-    return project, project / ".mark", project / ".mark" / "memory.db"
+    if db.parent == project:         # the store folder itself
+        return project.parent, project, db
+    return project, db.parent, db
 
 
 class MarkDataMixin:
