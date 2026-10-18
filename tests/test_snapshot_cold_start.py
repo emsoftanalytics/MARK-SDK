@@ -136,6 +136,10 @@ def test_serve_saves_a_fresh_snapshot_on_graceful_stop(snapshot_store, monkeypat
     stop = threading.Event()
     ready = threading.Event()
     monkeypatch.setattr("mark._cli.server._warm", lambda engine: (engine.runtime.warm_up(), ready.set()))
+    # A one-row delta counts as large here (by default it is left for the next
+    # cold start: see test_a10_serve_stop_snapshot).
+    monkeypatch.setattr("mark._cli.server_snapshots.REFRESH_MIN_ROWS", 1)
+    monkeypatch.setattr("mark._cli.server_snapshots.REFRESH_FRACTION", 10**9)
     thread = threading.Thread(target=serve, args=(db,), kwargs={"stop_event": stop}, daemon=True)
     thread.start()
     assert ready.wait(60)
