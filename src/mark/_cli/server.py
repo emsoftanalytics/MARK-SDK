@@ -225,7 +225,7 @@ def _warm(engine: Any) -> None:
 
     started = time.monotonic()
     try:
-        count = warm_up()
+        count = warm_up(sketches=True)  # encrypted stores: timelines and id recalls never pay it
     except Exception:  # noqa: BLE001 - e.g. shut down while warming
         logger.debug("mark serve: index warm-up skipped", exc_info=True)
         return

@@ -17,14 +17,16 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 class MaintenanceMixin:
     """Memory hygiene: promote, merge duplicates, decay and prune; warm the index."""
 
-    def warm_up(self, agent_ids: "list[str] | None" = None) -> int:
+    def warm_up(self, agent_ids: "list[str] | None" = None, *, sketches: bool = False) -> int:
         """Do now the work the first recall would do; returns the vectors indexed.
 
         Loads the embedder (one probe embedding) and, for every agent (or
         just ``agent_ids``), the stored vectors into the in-memory index and
         the retrievable-id cache. Read-only: unlike a dummy recall it does not
         bump access counts. Long-running hosts (``mark serve``, MCP servers)
-        call it at start so the first real recall is fast.
+        call it at start so the first real recall is fast. ``sketches=True``
+        also builds an encrypted store's token sketches (one decrypt per
+        memory), so the first timeline or identifier recall is fast too.
         """
         from mark.intelligence.retrieval_policy import SessionFilter
 
@@ -38,8 +40,11 @@ class MaintenanceMixin:
         if allowed_ids is None or sync_index is None:  # custom pipeline: nothing to preload
             return 0
         indexed = 0
+        warm_sketches = getattr(self.store, "warm_token_sketches", None) if sketches else None
         for agent_id in agent_ids:
             indexed += len(sync_index(agent_id, allowed_ids(agent_id, SessionFilter())))
+            if warm_sketches is not None:
+                warm_sketches(agent_id)
         return indexed
 
     def save_vector_snapshots(self) -> int:
