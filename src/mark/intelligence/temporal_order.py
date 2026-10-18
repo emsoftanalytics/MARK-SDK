@@ -16,6 +16,7 @@ from mark.intelligence.query_understanding import (
     _contains_anchor,
     _content_stems,
     _content_terms,
+    _coverage,
     detect_temporal_intent,
     query_anchors,
 )
@@ -147,11 +148,11 @@ def _band(query: str, fragments: list[MemoryFragment]) -> list[int]:
     """
     anchors = query_anchors(query)
     if not anchors:
-        top = _content_stems(fragments[0].content)
-        terms = [t for t in _content_terms(query) if t in top]
+        # Full matches only: "living room" is not about where I "live".
+        terms = [t for t in _content_terms(query) if _coverage([t], fragments[0].content) >= 1.0]
         if not terms:
             return []
-        return [i for i, f in enumerate(fragments) if all(t in _content_stems(f.content) for t in terms)]
+        return [i for i, f in enumerate(fragments) if _coverage(terms, f.content) >= 1.0]
     anchor_words = {word for anchor in anchors for word in anchor.split()}
     attribute_terms = [t for t in _content_terms(query) if t not in anchor_words]
     subject: list[int] = []

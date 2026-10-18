@@ -36,10 +36,12 @@ from mark.intelligence.fusion_scoring import (
     scored_text,
     uses_score_fusion,
 )
-from mark.intelligence.query_intent import retirement_applies
+from mark.intelligence.kind_intent import KindAsk, apply_kind
+from mark.intelligence.query_intent import quoted_by, retirement_applies
 from mark.intelligence.query_understanding import _coverage, _relevance, query_anchors
 from mark.intelligence.retrieval_time import DateRange, matches_dates
 from mark.intelligence.reranker import RerankResult
+from mark.intelligence.supersession import is_superseded
 from mark.intelligence.retrieval_policy import (
     _RETRIEVABLE_STATES,
     RRF_K,
@@ -95,13 +97,16 @@ class _FusionMixin:
         depth: int,
         date_ranges: list[DateRange] | None = None,
         extra: dict[str, MemoryFragment] | None = None,
+        kind_ask: KindAsk | None = None,
     ) -> tuple[dict[str, MemoryFragment], dict[str, float], dict[str, float]]:
         """Fetch the strongest fused candidates and score them.
 
         ``date_ranges`` (dates the query names) count as one more query term,
         matched by a memory's event date or a date in its text; ``extra``
         candidates (memories from those dates) join the pool even without
-        channel hits. Returns (fragments by id, calibrated relevance, seed score).
+        channel hits; ``kind_ask`` (a listing of one note kind) gives memories of
+        that kind full evidence (``kind_intent``). Returns (fragments by id,
+        calibrated relevance, seed score).
         """
         # RRF picks the pool for both strategies, so recall does not change;
         # only the scoring of the pool depends on the embedder.
@@ -149,6 +154,8 @@ class _FusionMixin:
             seed_scores = {fid: score if fid in in_window else score * OUT_OF_WINDOW
                            for fid, score in seed_scores.items()}
             relevance = {fid: rel if fid in in_window else rel * OUT_OF_WINDOW for fid, rel in relevance.items()}
+        if kind_ask is not None:
+            apply_kind(kind_ask, fragments_by_id, relevance, seed_scores)
         return fragments_by_id, relevance, seed_scores
 
     def _expand_seeds(
@@ -216,6 +223,11 @@ class _FusionMixin:
             if fid in fragments_by_id and fragments_by_id[fid].state in _RETRIEVABLE_STATES
         ]
         candidates = _dedupe_content(candidates)
+        demote = retirement_applies(query)
+        # A pasted error message is answered by the memory that quotes it, resolved
+        # or not; a superseded statement stays demoted (the newer one answers).
+        quoting = {fid for fid in quoted_by(query, {c.fragment_id: c.content for c in candidates})
+                   if not is_superseded(fragments_by_id[fid])} if demote else set()
 
         scorer = self._plugins.get(HOOK_SCORING)
         if scorer:
@@ -233,7 +245,8 @@ class _FusionMixin:
             recency_weight=0.5 if getattr(analysis, "has_temporal", False) else 0.0,
             # Superseded / resolved memories rank by relevance for history and
             # problem questions ("why did X fail", error text); demoted otherwise.
-            demote_retired=retirement_applies(query),
+            demote_retired=demote,
+            keep_retired=quoting,
         )
 
 

@@ -34,6 +34,8 @@ TIME_SCOPED_FLOOR = 0.2
 # Memories stored as canon (importance >= this, e.g. a block's style guide) are never floored.
 PINNED = 0.9
 RELATIVE_FLOOR = 0.3
+# Shown score of a memory a newer statement or the current fact value replaced.
+OUTDATED_FACTOR = 0.8
 # Words of a "what happened / what's new" listing question: no topic to match.
 _LISTING_TERMS = frozenset(_content_terms(
     "happen happened do did done new news change changes changed update updates updated discuss discussed "
@@ -65,9 +67,21 @@ def materialise(ranked, fragments_by_id: dict, relevance: dict, fetch, retrievab
 
 
 def sort_by_display(fragments: list[MemoryFragment], scores: list[float], relevances: list[float]):
-    """Stable sort by displayed relevance; equal values keep the ranking order."""
-    order = sorted(range(len(fragments)), key=lambda i: -relevances[i])
+    """Sort by displayed relevance; ties by ranking score (3 decimals), then newest, then id.
+
+    The ranking score is rounded because reinforcement nudges it slightly on
+    every recall, which made tied results swap places between calls.
+    """
+    order = sorted(range(len(fragments)), key=lambda i: (-round(relevances[i], 6), -round(scores[i], 3),
+                                                         -_when(fragments[i]), fragments[i].id))
     return [fragments[i] for i in order], [scores[i] for i in order], [relevances[i] for i in order]
+
+
+def _when(fragment: MemoryFragment) -> float:
+    """Event time (declared, else stored) as a POSIX timestamp, for tie-breaks."""
+    from mark.intelligence.temporal_order import event_time
+
+    return event_time(fragment).timestamp()
 
 
 def diversify(fragments: list[MemoryFragment], scores: list[float], relevances: list[float], top_k: int,
@@ -100,6 +114,21 @@ def display_scores(relevances: list[float]) -> list[float]:
     for i in range(len(shown) - 2, -1, -1):
         shown[i] = max(shown[i], shown[i + 1])
     return shown
+
+
+def demote_outdated(fragments: list[MemoryFragment], scores: list[float], relevances: list[float],
+                    outdated: set[str]):
+    """Show outdated memories at ``OUTDATED_FACTOR`` of their score, moved down only as far as that puts them.
+
+    The rest keep their (non-increasing) order: the stable sort only moves
+    the lowered outdated entries past results that now show more evidence.
+    """
+    if not outdated or not any(f.id in outdated for f in fragments):
+        return fragments, scores, relevances
+    shown = [rel * OUTDATED_FACTOR if f.id in outdated else rel for f, rel in zip(fragments, relevances)]
+    order = sorted(range(len(fragments)), key=lambda i: -shown[i])
+    # Ranking scores stay non-increasing down the list, as for every other reorder.
+    return [fragments[i] for i in order], sorted(scores, reverse=True), [shown[i] for i in order]
 
 
 def apply_floor(query: str, fragments: list[MemoryFragment], scores: list[float], relevances: list[float],

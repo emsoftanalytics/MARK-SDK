@@ -19,6 +19,10 @@ its fix, so those rank by relevance like any other memory.
 
 A problem question wins over "still": "Why did expired links still resolve?"
 asks about a bug, not about the present.
+
+A query that *quotes* a memory (error text pasted as the question: "No
+module named spendlog.__main__", "File must be opened in binary mode") is
+answered by that memory whatever its state: :func:`quoted_by` finds it.
 """
 from __future__ import annotations
 
@@ -54,6 +58,35 @@ def _open_state_re() -> re.Pattern[str]:
 def is_problem_query(query: str) -> bool:
     """True when the question is about an error, a failure or how one was fixed."""
     return _problem_re().search(query) is not None and _open_state_re().search(query) is None
+
+
+@cache
+def _quote_word_re() -> re.Pattern[str]:
+    return re.compile(r"\w+")
+
+
+# A quote needs this many words, or one long distinctive token (an id, a float).
+_QUOTE_MIN_WORDS = 3
+_QUOTE_MIN_TOKEN = 8
+
+
+def _quote_key(text: str) -> str:
+    """Lowercase words joined by single spaces: punctuation and quoting styles don't matter."""
+    return " ".join(_quote_word_re().findall(text.lower()))
+
+
+def quoted_by(query: str, contents: dict[str, str]) -> set[str]:
+    """Ids whose content contains the whole query word for word (the query is a quote of it).
+
+    Short queries only count when one token is long and distinctive
+    ("0.30000000000000004", "EntryPoints"): two common words occur everywhere.
+    """
+    key = _quote_key(query)
+    words = key.split()
+    if not words or (len(words) < _QUOTE_MIN_WORDS and max(map(len, words)) < _QUOTE_MIN_TOKEN):
+        return set()
+    padded = f" {key} "
+    return {fid for fid, content in contents.items() if padded in f" {_quote_key(content)} "}
 
 
 def retirement_applies(query: str) -> bool:

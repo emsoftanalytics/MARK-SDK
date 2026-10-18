@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any, Collection, Mapping
 
 from mark.index import VectorSearchResult
 from mark.intelligence.supersession import is_retired
@@ -79,6 +79,7 @@ class MemoryReranker:
         recency_weight: float = 0.0,
         now: datetime | None = None,
         demote_retired: bool = True,
+        keep_retired: Collection[str] = (),
     ) -> list[RerankResult]:
         """Rerank candidates and return the top results.
 
@@ -86,6 +87,7 @@ class MemoryReranker:
         recency_weight  0.0–1.0 share of the prior given to recency (temporal queries)
         demote_retired  halve the score of superseded / resolved memories
                         (False for history and problem questions; see query_intent)
+        keep_retired    ids never demoted as retired (memories the query quotes)
         """
         del query
         contradiction_ids = contradiction_ids or set()
@@ -109,7 +111,8 @@ class MemoryReranker:
             demotion = 1.0
             if contradiction:
                 demotion *= self._CONTRADICTION_FACTOR
-            retired = demote_retired and fragment is not None and is_retired(fragment)
+            retired = (demote_retired and fragment is not None and candidate.fragment_id not in keep_retired
+                       and is_retired(fragment))
             if retired:
                 demotion *= self._RETIRED_FACTOR
             # The model's own replies and stored bare questions rank below what the user stated.
