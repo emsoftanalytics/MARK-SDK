@@ -48,7 +48,10 @@ class _StoreCompatMixin:
                 found[fid] = fragment
         return found
 
-    def _index_add(self, fragment_id: str, vector: list[float], content: str, agent_id: str) -> None:
+    def _index_add(self, fragment_id: str, vector: list[float] | None, content: str, agent_id: str) -> None:
+        if vector is None:  # stored while the embedder was down: embedded by a later sync
+            self.__dict__.setdefault("_pending_agents", set()).add(agent_id)
+            return
         try:
             self._index.add(fragment_id, vector, content, agent_id=agent_id)
         except TypeError:  # legacy/custom index without agent partitions
