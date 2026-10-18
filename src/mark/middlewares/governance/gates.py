@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
+from mark.security.lazy_regex import lazy_compile
 
 
 @dataclass
@@ -17,20 +18,20 @@ class GateResult:
 
 # Patterns that strongly indicate content is an error/failure artifact, not memory.
 _FAILURE_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"Traceback \(most recent call last\)"),
-    re.compile(r'^\s*\{\s*"error"\s*:', re.M),
-    re.compile(r"^\s*Error:\s+\w", re.M),
-    re.compile(r"<error>"),
-    re.compile(r"\bHTTP\s+[45]\d{2}\b"),
-    re.compile(r"\bRESOURCE_EXHAUSTED\b", re.I),
-    re.compile(r"\bPAYMENT_REQUIRED\b", re.I),
-    re.compile(r"\binsufficient balance\b", re.I),
-    re.compile(r"\bno image\b", re.I),
-    re.compile(r"\bmissing image\b", re.I),
-    re.compile(r"\bimage artifact failed\b", re.I),
-    re.compile(r"\bgeneration failed\b", re.I),
-    re.compile(r"\breview error\b", re.I),
-    re.compile(r"\bvideo assembly failed\b", re.I),
+    lazy_compile(r"Traceback \(most recent call last\)"),
+    lazy_compile(r'^\s*\{\s*"error"\s*:', re.M),
+    lazy_compile(r"^\s*Error:\s+\w", re.M),
+    lazy_compile(r"<error>"),
+    lazy_compile(r"\bHTTP\s+[45]\d{2}\b"),
+    lazy_compile(r"\bRESOURCE_EXHAUSTED\b", re.I),
+    lazy_compile(r"\bPAYMENT_REQUIRED\b", re.I),
+    lazy_compile(r"\binsufficient balance\b", re.I),
+    lazy_compile(r"\bno image\b", re.I),
+    lazy_compile(r"\bmissing image\b", re.I),
+    lazy_compile(r"\bimage artifact failed\b", re.I),
+    lazy_compile(r"\bgeneration failed\b", re.I),
+    lazy_compile(r"\breview error\b", re.I),
+    lazy_compile(r"\bvideo assembly failed\b", re.I),
 ]
 
 

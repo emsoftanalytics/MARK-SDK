@@ -83,7 +83,9 @@ def test_same_day_sequence_keeps_every_step_in_order() -> None:
     runtime = _runtime(fact_extractor="patterns")
     memory = runtime.memory("a")
     memory.store_many_sync(LOG)
-    assert _history(memory, "atlas-core", "port") == [("4444", "2026-03-10"), ("5100", "2026-03-10")]
+    # "moved from port 9239" also records 9239 as the value held before the move.
+    assert _history(memory, "atlas-core", "port") == [("9239", "2026-03-10"), ("4444", "2026-03-10"),
+                                                      ("5100", "2026-03-10")]
     assert _history(memory, "atlas-core", "owner") == [("Hana Sato", "2026-03-01"), ("Samir Khan", "2026-03-12")]
     assert memory.facts.as_of("atlas-core", "owner", "2026-03-05").value == "Hana Sato"
     runtime.shutdown()
@@ -99,9 +101,11 @@ def test_reingesting_the_same_log_is_idempotent() -> None:
     for line in LOG:
         memory.store_sync(line)  # and line by line
     assert [(f.subject, f.attribute, f.value, f.valid_from) for f in memory.facts.current()] == first
-    assert _history(memory, "atlas-core", "port") == [("4444", "2026-03-10"), ("5100", "2026-03-10")]
+    # "moved from port 9239" also records 9239 as the value held before the move.
+    assert _history(memory, "atlas-core", "port") == [("9239", "2026-03-10"), ("4444", "2026-03-10"),
+                                                      ("5100", "2026-03-10")]
     rows = runtime.store._fetchall("SELECT COUNT(*) FROM facts WHERE retracted_at IS NULL")
-    assert rows[0][0] == 5  # owner x2, port x2, region x1 — no duplicates recorded
+    assert rows[0][0] == 6  # owner x2, port x3 (9239 from "moved from"), region x1 — no duplicates recorded
     runtime.shutdown()
 
 

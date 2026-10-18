@@ -14,11 +14,12 @@ import re
 from dataclasses import dataclass
 
 from mark.security.redaction import RedactionPolicy, redact
+from mark.security.lazy_regex import lazy_compile
 
 # Governance is opt-in and strict: secrets plus all contact PII.
 STRICT_POLICY = RedactionPolicy(secrets=True, pii=True)
 
-_INLINE_SPACE_RUN = re.compile(r"(?<=\S)[ \t]{2,}")
+_INLINE_SPACE_RUN = lazy_compile(r"(?<=\S)[ \t]{2,}")
 
 
 @dataclass(frozen=True)

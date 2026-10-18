@@ -33,7 +33,7 @@ _SIGNATURES: tuple[tuple[bytes, str], ...] = (
     (b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"), (b"GIF87a", "image/gif"),
     (b"GIF89a", "image/gif"), (b"II*\x00", "image/tiff"), (b"MM\x00*", "image/tiff"),
     (b"%PDF-", "application/pdf"), (b"ID3", "audio/mpeg"), (b"OggS", "audio/ogg"), (b"fLaC", "audio/flac"),
-    (b"\x1a\x45\xdf\xa3", "video/webm"), (b"PK\x03\x04", "application/zip"),
+    (b"\x1a\x45\xdf\xa3", "video/webm"),
 )
 _RIFF = {b"WEBP": "image/webp", b"WAVE": "audio/wav", b"AVI ": "video/x-msvideo"}
 _FTYP_AUDIO = (b"M4A ", b"M4B ", b"F4A ")
@@ -42,9 +42,12 @@ _FTYP_IMAGE = (b"heic", b"heix", b"mif1", b"avif")
 
 def sniff(path: str | Path) -> str:
     """Media type of a file from its content: "image/png", "application/pdf", "audio/wav",
-    "video/mp4", "text/plain", or "application/octet-stream" when unknown."""
+    "video/mp4", "text/plain" (UTF-8, Latin-1 or Windows-1252), an Office type (docx/xlsx/pptx),
+    "application/zip", or "application/octet-stream" when unknown."""
     with open(path, "rb") as handle:
         head = handle.read(_SNIFF)
+    if head.startswith(b"PK\x03\x04"):
+        return _zip_type(path)
     for signature, media_type in _SIGNATURES:
         if head.startswith(signature):
             return media_type
@@ -61,6 +64,25 @@ def sniff(path: str | Path) -> str:
     return "text/plain" if _looks_like_text(head) else "application/octet-stream"
 
 
+def _zip_type(path: str | Path) -> str:
+    """An Office file (docx/xlsx/pptx) by the parts it contains, else plain zip."""
+    import zipfile  # only zips pay for the import
+
+    from mark.documents.office import office_type
+
+    try:
+        with zipfile.ZipFile(path) as archive:
+            return office_type(archive.namelist()) or "application/zip"
+    except (zipfile.BadZipFile, OSError):
+        return "application/zip"
+
+
+# Bytes that are control characters in every 8-bit text encoding (tab, newline,
+# form feed and carriage return excepted), plus the five bytes Windows-1252
+# leaves undefined: a file full of them is binary, not Latin-1 text.
+_CONTROL = frozenset(b for b in range(32) if b not in (9, 10, 12, 13)) | {0x7F, 0x81, 0x8D, 0x8F, 0x90, 0x9D}
+
+
 def _looks_like_text(head: bytes) -> bool:
     if not head:
         return True
@@ -70,8 +92,22 @@ def _looks_like_text(head: bytes) -> bool:
         head.decode("utf-8")
     except UnicodeDecodeError as exc:
         # A multi-byte character cut by the read limit is still text.
-        return exc.start >= len(head) - 3 and len(head) == _SNIFF
+        if exc.start >= len(head) - 3 and len(head) == _SNIFF:
+            return True
+        return _looks_like_8bit_text(head)
     return True
+
+
+def _looks_like_8bit_text(head: bytes) -> bool:
+    """Latin-1 / Windows-1252 text: (almost) no control bytes and mostly ASCII.
+
+    Cheap and conservative: European text in these encodings is mostly ASCII
+    with a few accented letters and typographic quotes, while binary formats
+    are full of control bytes.
+    """
+    controls = sum(1 for b in head if b in _CONTROL)
+    high = sum(1 for b in head if b >= 0x80)
+    return controls <= len(head) // 200 and high <= len(head) * 0.3
 
 
 def require_image(path: str | Path) -> str:

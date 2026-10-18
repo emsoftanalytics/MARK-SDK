@@ -14,35 +14,36 @@ from datetime import datetime, timezone
 from typing import Iterator
 
 from mark.intelligence.fact_extraction.labels import is_id_label, label_kind
+from mark.security.lazy_regex import lazy_compile
 
 # Abbreviations whose full stop does not end a sentence ("Dr. Bello").
 _ABBREVIATIONS = ("Dr", "Mr", "Mrs", "Ms", "Mx", "Prof", "Sr", "Jr", "St", "Mt", "Capt", "Gen", "Col", "Lt",
                   "Rev", "Hon", "vs", "approx", "e.g", "i.e", "cf", "No", "Fig", "Inc", "Ltd", "Co", "Corp")
-_SENTENCE_SPLIT = re.compile(
+_SENTENCE_SPLIT = lazy_compile(
     r"\n+|" + "".join(rf"(?<!\b{re.escape(a)}\.)" for a in _ABBREVIATIONS) + r"(?<=[.!?])\s+")
-_STAMP = re.compile(r"^\s*\[?(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?)Z?)?\]?\s*[:\-–—]?\s*")
+_STAMP = lazy_compile(r"^\s*\[?(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?)Z?)?\]?\s*[:\-–—]?\s*")
 # Upper-case log labels: "CHANGE:", "HR:", "DECISION ADR-7:" (all-caps tokens only).
-_LABEL = re.compile(r"^(?P<label>[A-Z][A-Z0-9_/&-]*(?:\s+[A-Z][A-Z0-9_/&-]*){0,2})\s*:\s+")
-LEADING_FILLER = re.compile(
+_LABEL = lazy_compile(r"^(?P<label>[A-Z][A-Z0-9_/&-]*(?:\s+[A-Z][A-Z0-9_/&-]*){0,2})\s*:\s+")
+LEADING_FILLER = lazy_compile(
     r"^(?:today|yesterday|tonight|this\s+(?:morning|afternoon|evening|week)|earlier\s+today|now|then"
     r"|finally|also|meanwhile|later|afterwards|after\s+that|subsequently|eventually|update|fyi|note|btw"
     r"|by\s+the\s+way|oh|ok|okay|so|well)\b[\s,:-]*",
     re.IGNORECASE)
-_QUESTION_START = re.compile(
+_QUESTION_START = lazy_compile(
     r"^(?:did|does|do|is|are|was|were|will|would|should|can|could|has|have|had|shall|may|might"
     r"|when|what|which|who|whom|whose|why|how|where)\b", re.IGNORECASE)
-CONDITIONAL = re.compile(
+CONDITIONAL = lazy_compile(
     r"\b(?:if|unless|whether|suppose|supposing|assuming|in\s+case|hypothetically|imagine"
     r"|would|could|might|should|maybe|perhaps|probably)\b", re.IGNORECASE)
-NEGATION = re.compile(
+NEGATION = lazy_compile(
     r"\b(?:not|never|no\s+longer|no\s+more|neither|nor|cannot|failed\s+to|refused\s+to|used\s+to)\b|n['’]t\b",
     re.IGNORECASE)
-INTENT = re.compile(
+INTENT = lazy_compile(
     r"\b(?:will|shall|going\s+to|plan(?:s|ned)?\s+to|planning|intends?\s+to|expected\s+to|expects?\s+to"
     r"|scheduled\s+to|about\s+to|propose[sd]?|proposal|wants?\s+to|would\s+like|to\s+be|soon|someday"
     r"|one\s+day|hope\s+to|hoping\s+to|thinking\s+(?:of|about)|consider(?:s|ing)?)\b|['’]d\s+(?:like|love)\b",
     re.IGNORECASE)
-INLINE_DATE = re.compile(r"\b(?:on|effective|as\s+of|since)\s+(\d{4}-\d{2}-\d{2})\b", re.IGNORECASE)
+INLINE_DATE = lazy_compile(r"\b(?:on|effective|as\s+of|since)\s+(\d{4}-\d{2}-\d{2})\b", re.IGNORECASE)
 
 
 @dataclass
@@ -55,6 +56,8 @@ class Sentence:
     record_subject: str | None = None
     #: The body after a TODO/DONE/FIX label, for ticket status facts.
     labelled_body: str | None = None
+    #: A ticket id written inside a kind label ("TODO HAL-12: ..." -> "HAL-12").
+    label_id: str | None = None
 
 
 def iter_sentences(text: str, occurred_at: datetime | None) -> Iterator[Sentence]:
@@ -70,6 +73,7 @@ def iter_sentences(text: str, occurred_at: datetime | None) -> Iterator[Sentence
         kinds: list[str] = []
         record: str | None = None
         body: str | None = None
+        label_id: str | None = None
         for index, raw in enumerate(_SENTENCE_SPLIT.split(line)):
             sentence = raw.strip()
             if not sentence:
@@ -86,10 +90,13 @@ def iter_sentences(text: str, occurred_at: datetime | None) -> Iterator[Sentence
                 if kind and kind not in kinds:
                     kinds.append(kind)
                     body = sentence[label.end():]
+                    rest = name.split(None, 1)[1] if len(name.split()) > 1 else ""
+                    label_id = rest if rest and is_id_label(rest) else label_id
                 if is_id_label(name):
                     record = name
                 sentence = sentence[label.end():]
-            yield Sentence(sentence, when, list(kinds), record, body if index == 0 else None)
+            yield Sentence(sentence, when, list(kinds), record, body if index == 0 else None,
+                           label_id if index == 0 else None)
 
 
 def is_question(sentence: str) -> bool:
