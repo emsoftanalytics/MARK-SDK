@@ -29,11 +29,14 @@ def resolve_db(path: str | Path | None) -> Path:
 def build_server(db: str | Path | None = None, *, agent_id: str = "__mark__", briefing: bool = False,
                  preset: str = "default", allowed_agent_ids: Sequence[str] | None = None,
                  tools: Sequence[str] | None = None, name: str = "mark-memory",
-                 user_subject: str | None = None) -> tuple[Any, Any]:
+                 user_subject: str | None = None, extract_facts: bool = False) -> tuple[Any, Any]:
     """``(server, runtime)`` over the store at *db*; the caller shuts the runtime down.
 
     ``user_subject`` names who "I" is and is stored with the store; without
     it the stored subject (``mark config user-subject``) is applied.
+    ``extract_facts=True`` gives the runtime the built-in pattern extractor,
+    so every MCP write records the facts it states ("I live in Lisbon" ->
+    "<user subject> city = Lisbon").
     """
     from mark.adapters.backend import LocalMarkBackend
     from mark.adapters.mcp import create_mark_mcp_server
@@ -43,7 +46,7 @@ def build_server(db: str | Path | None = None, *, agent_id: str = "__mark__", br
 
     file = resolve_db(db)
     ensure_private_dir(file.parent)  # 0700 when created here, as Mark.local and the CLI do
-    runtime = MarkRuntime.local(store_path=file)
+    runtime = MarkRuntime.local(store_path=file, fact_extractor="patterns" if extract_facts else None)
     try:
         from mark.runtime_config import apply_user_subject
 
@@ -81,11 +84,20 @@ def parser() -> argparse.ArgumentParser:
                     help="restrict clients to these namespaces (repeatable)")
     ap.add_argument("--tools", help=f"comma-separated subset of: {', '.join(ALL_TOOLS)}")
     ap.add_argument("--user-subject", help="who 'I'/'my' is in memories (stored with the store)")
+    ap.add_argument("--extract-facts", action="store_true",
+                    help="record facts stated in every write (built-in patterns, stored user subject)")
     return ap
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    args = parser().parse_args(argv)
+    from mark.adapters.mcp import ALL_TOOLS
+
+    ap = parser()
+    args = ap.parse_args(argv)
     tools = [t.strip() for t in args.tools.split(",") if t.strip()] if args.tools else None
+    unknown = sorted(set(tools or ()) - set(ALL_TOOLS))
+    if unknown:  # one line on stderr and exit 2, never a traceback
+        ap.error(f"unknown tool(s) {', '.join(unknown)} in --tools; choose from: {', '.join(ALL_TOOLS)}")
     run_mcp(args.db, agent_id=args.agent, briefing=args.briefing, preset=args.preset,
-            allowed_agent_ids=args.allowed, tools=tools, user_subject=args.user_subject)
+            allowed_agent_ids=args.allowed, tools=tools, user_subject=args.user_subject,
+            extract_facts=args.extract_facts)

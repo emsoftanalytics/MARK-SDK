@@ -144,6 +144,7 @@ class _EvidenceSkill(Skill):
 
 def test_retrieve_escalation_and_heal_retries_preserve_filters(store) -> None:
     pipeline = _RecordingPipeline(store)
+    store.unknown_block_ids = lambda agent_id, ids: []  # "block-123" counts as an existing block
     with ThreadPoolExecutor(max_workers=1) as executor:
         mem = MarkMemory(agent_id=AGENT, store=store, pipeline=pipeline,
                          embedder=None, executor=executor)  # type: ignore[arg-type]

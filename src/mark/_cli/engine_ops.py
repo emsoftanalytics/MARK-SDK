@@ -57,22 +57,45 @@ class EngineOpsMixin:
         raise ValueError(f"id {memory_id!r} is ambiguous; give more characters")
 
     def cmd_forget(self, agent: str, id: str | None = None, match: str | None = None,  # noqa: A002
-                   secure: bool = False) -> dict[str, Any]:
+                   secure: bool = False, dry_run: bool = False, all: bool = False) -> dict[str, Any]:  # noqa: A002
+        from mark.memory.facade.forget_match import FORGET_MATCH_CAP
+
         memory = self._memory(agent)
+        if dry_run:  # what `forget --match` would delete: count + preview lines
+            found = memory.forget(self._full_id(agent, id) if id is not None else None,
+                                  match=match, dry_run=True)
+            return {"match": found.match, "count": found.count, "previews": found.previews,
+                    "over_cap": found.over_cap, "cap": FORGET_MATCH_CAP}
         if id is not None:
             forgotten = memory.forget(self._full_id(agent, id), secure=secure)
         else:
-            forgotten = memory.forget(match=match, secure=secure)
+            forgotten = memory.forget(match=match, secure=secure, all=all)
         if secure and forgotten:
             memory.vacuum()  # the CLI promise: the text is gone from disk when this returns
         return {"forgotten": forgotten, "secure": secure}
 
     def cmd_resolve(self, agent: str, id: str, note: str | None = None) -> dict[str, Any]:  # noqa: A002
-        return {"id": self._memory(agent).resolve(self._full_id(agent, id), note=note)}
+        from mark.kinds import TAG_RESOLVED
+
+        memory = self._memory(agent)
+        asked = self._full_id(agent, id)
+        if TAG_RESOLVED in memory.get(asked).tags:
+            return {"id": asked, "already": True,
+                    "resolved_at": memory.get(asked).metadata.get("resolved_at")}
+        current = memory.current_version(asked)  # a superseded TODO resolves its newest version
+        result: dict[str, Any] = {"id": memory.resolve(current, note=note)}
+        if current != asked:
+            result["followed_from"] = asked
+        return result
 
     def cmd_supersede(self, agent: str, id: str, text: str) -> dict[str, Any]:  # noqa: A002
-        old = self._full_id(agent, id)
-        return {"id": self._memory(agent).supersede(old, text), "superseded": old}
+        asked = self._full_id(agent, id)
+        # Never fork history: an already superseded memory hands over to its newest version.
+        old = self._memory(agent).current_version(asked)
+        result = {"id": self._memory(agent).supersede(old, text), "superseded": old}
+        if old != asked:
+            result["followed_from"] = asked
+        return result
 
     def cmd_list(self, agent: str, kind: str | None = None, open: bool = False,  # noqa: A002
                  limit: int = 20, offset: int = 0, tags: list[str] | None = None) -> dict[str, Any]:
@@ -122,8 +145,12 @@ class EngineOpsMixin:
             return {"text": fallback_brief(memory, int(budget)), "source": "fallback"}
         result = brief(memory, budget_tokens=int(budget))
         payload = {**result.to_dict(), "source": "brief"}
-        if not str(payload.get("text") or "").strip():
-            payload["text"] = "(memory is empty)"  # say so rather than print nothing
+        if str(payload.get("text") or "").strip() in ("", "(memory is empty)"):
+            # Say so rather than print nothing, and never call a non-empty store empty.
+            stored = memory.count()
+            payload["text"] = "(memory is empty)" if not stored else (
+                f"(nothing to brief within --budget {int(budget)}: {stored} "
+                f"memor{'y' if stored == 1 else 'ies'} stored; raise --budget or use `mark list`)")
         return payload
 
 

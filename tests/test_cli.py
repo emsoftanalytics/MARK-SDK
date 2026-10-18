@@ -35,7 +35,7 @@ def test_in_process_round_trip(tmp_path: Path, capsys) -> None:
     assert "port 4444" in out.splitlines()[1]
     data = json.loads(_run(capsys, "--db", db, "--no-server", "recall", "Who is Marcus Webb?", "--json"))
     assert data["gap"] == "high" and data["missing"] == ["marcus webb"]
-    assert "2 memories, 1 current facts" in _run(capsys, "--db", db, "--no-server", "stats")
+    assert "2 memories, 1 current fact" in _run(capsys, "--db", db, "--no-server", "stats")
 
 
 def test_recall_many_accepts_lines_and_json(tmp_path: Path, capsys, monkeypatch) -> None:
@@ -133,7 +133,7 @@ def test_mismatched_server_build_falls_back_in_process(tmp_path: Path, monkeypat
 def test_fact_retract_command(tmp_path: Path, capsys) -> None:
     db = str(tmp_path / "r.db")
     _run(capsys, "--db", db, "--no-server", "fact", "set", "test_x", "foo", "bar")
-    assert "retracted 1 fact(s)" in _run(capsys, "--db", db, "--no-server", "fact", "retract", "test_x")
+    assert "retracted 1 fact" in _run(capsys, "--db", db, "--no-server", "fact", "retract", "test_x")
     assert "(no facts)" in _run(capsys, "--db", db, "--no-server", "fact", "get", "test_x")
 
 
@@ -148,7 +148,8 @@ def test_ingest_extract_facts_in_process_and_served(tmp_path: Path, capsys, monk
     assert "stored 3 new memories (3 facts extracted)" in out
     assert _run(capsys, "--db", db, "--no-server", "fact", "get", "atlas-core", "port").startswith(
         "atlas-core port = 4444 (since 2026-03-30)")
-    _run(capsys, "--db", db, "--no-server", "ingest", str(log), "--extract-facts")  # idempotent
+    again = _run(capsys, "--db", db, "--no-server", "ingest", str(log), "--extract-facts")  # idempotent
+    assert "(3 already present, 0 facts extracted)" in again   # only facts this call created
     assert len(_run(capsys, "--db", db, "--no-server", "fact", "history", "atlas-core", "port").splitlines()) == 2
     assert "stored 0 new memories (3 already present)\n" == _run(capsys, "--db", db, "--no-server",
                                                                     "ingest", str(log))

@@ -55,7 +55,7 @@ def test_serve_stop_without_a_server_fails(db: str, capsys) -> None:
 
 
 def test_brief_on_an_empty_store(db: str, capsys) -> None:
-    assert run(db, "remember", "x") == 0 and run(db, "forget", "--match", "x") == 0
+    assert run(db, "remember", "xyzzy") == 0 and run(db, "forget", "--match", "xyzzy", "--yes") == 0
     capsys.readouterr()
     assert run(db, "brief") == 0
     assert capsys.readouterr().out.strip() == "(memory is empty)"
@@ -125,3 +125,12 @@ def test_serve_client_never_imports_ssl_or_urllib(tmp_path: Path) -> None:
     out = subprocess.run([sys.executable, "-c", code, str(tmp_path / "x.db.server.json")],
                          capture_output=True, text=True, check=True).stdout
     assert out.strip() == "[]"
+
+
+def test_brief_never_calls_a_non_empty_store_empty(db: str, capsys) -> None:
+    for i in range(30):
+        assert run(db, "remember", f"Plain note number {i} about the garden shed.") == 0
+    capsys.readouterr()
+    assert run(db, "brief", "--budget", "10") == 0
+    out = capsys.readouterr().out
+    assert "(memory is empty)" not in out and out.strip()

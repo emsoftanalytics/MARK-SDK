@@ -16,6 +16,7 @@ from __future__ import annotations
 import functools
 import inspect
 from dataclasses import replace
+from datetime import datetime
 from typing import Any, Callable
 
 from mark.kinds import DEFAULT_CONFIDENCE, DEFAULT_IMPORTANCE
@@ -62,6 +63,7 @@ class SimpleVerbsMixin:
     aupdate = _forward("aupdate")
     resolve = _forward("resolve")
     aresolve = _forward("aresolve")
+    current_version = _forward("current_version")
     timeline = _forward("timeline")
     vacuum = _forward("vacuum")
     export_jsonl = _forward("export_jsonl")
@@ -71,6 +73,25 @@ class SimpleVerbsMixin:
     store_document = _forward("store_document")
     remember_file = _forward("remember_file")
     store_many_sync = _forward("store_many_sync")
+    # Runtime-level read/write verbs used by ContextWatch, MarkChat and the
+    # agent loop, so they accept ``mark.memory`` as well as a MarkMemory.
+    store_sync = _forward("store_sync")
+    retrieve_sync = _forward("retrieve_sync")
+    retrieve_many_sync = _forward("retrieve_many_sync")
+    retrieve_many = _forward("retrieve_many")
+
+    @property
+    def agent_id(self) -> str:
+        """The reserved agent that owns every ``mark.memory`` write (``"__mark__"``)."""
+        return self._mark_memory.agent_id
+
+    @property
+    def _store(self) -> Any:
+        return self._mark_memory._store
+
+    @property
+    def _pipeline(self) -> Any:  # the user subject lives here (ContextWatch reads it)
+        return self._mark_memory._pipeline
 
     @property
     def images(self) -> Any:
@@ -101,20 +122,26 @@ class SimpleVerbsMixin:
         tags: list[str] | None = None,
         importance: float = DEFAULT_IMPORTANCE,
         confidence: float = DEFAULT_CONFIDENCE,
+        session_id: str | None = None,
+        occurred_at: datetime | str | None = None,
+        source: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        extract_facts: bool | None = None,
         **options: Any,
     ) -> str:
         """Store one memory; returns its id. ``block`` files it in a named block.
 
-        Same arguments as :meth:`mark.memory.mark_memory.MarkMemory.remember`
-        (``kind``, ``tags``, ``session_id``, ``occurred_at``, ``extract_facts``...).
+        Same arguments as :meth:`mark.memory.mark_memory.MarkMemory.remember`;
+        other keywords (``scope``, ``state``, ``ttl_seconds``) go to it unchanged.
         """
         all_tags = list(tags or [])
         if block:
             self._known_blocks.add(block)
             all_tags.append(_BLOCK_TAG + block)
         return self._mark_memory.remember(
-            text, kind=kind, tags=all_tags or None, importance=importance,
-            confidence=confidence, **options,
+            text, kind=kind, tags=all_tags or None, importance=importance, confidence=confidence,
+            session_id=session_id, occurred_at=occurred_at, source=source, metadata=metadata,
+            extract_facts=extract_facts, **options,
         )
 
     async def aremember(self, text: str, **kwargs: Any) -> str:
@@ -133,7 +160,23 @@ class SimpleVerbsMixin:
             all_tags.append(_BLOCK_TAG + block)
         return self._mark_memory.remember_many(texts, tags=all_tags or None, **options)
 
-    def recall(self, query: str, *, blocks: list[str] | None = None, k: int | None = None, **options: Any) -> Any:
+    def recall(
+        self,
+        query: str,
+        *,
+        blocks: list[str] | None = None,
+        k: int | None = None,
+        kind: str | None = None,
+        tags: list[str] | None = None,
+        session_id: str | None = None,
+        session_prefix: str | None = None,
+        since: datetime | str | None = None,
+        until: datetime | str | None = None,
+        policy: Any = None,
+        order: str = "relevance",
+        open: bool | None = None,  # noqa: A002 - mirrors `mark recall --open`
+        **options: Any,
+    ) -> Any:
         """Search memory; returns a :class:`~mark.intelligence.retrieval.RetrievalResult`.
 
         ``blocks`` restricts the search to named blocks (each block is searched
@@ -142,10 +185,12 @@ class SimpleVerbsMixin:
         :class:`mark.errors.UnknownBlockError`. Other arguments as for
         :meth:`mark.memory.mark_memory.MarkMemory.recall`.
         """
+        options.update(kind=kind, session_id=session_id, session_prefix=session_prefix, since=since,
+                       until=until, policy=policy, order=order, open=open)
         if not blocks:
-            return self._mark_memory.recall(query, k=k, **options)
+            return self._mark_memory.recall(query, k=k, tags=tags, **options)
         self._check_blocks(blocks)
-        tags = list(options.pop("tags", None) or [])
+        tags = list(tags or [])
         results = [self._mark_memory.recall(query, k=k, tags=[*tags, _BLOCK_TAG + b], **options)
                    for b in dict.fromkeys(blocks)]
         best: dict[str, tuple[Any, float, float]] = {}

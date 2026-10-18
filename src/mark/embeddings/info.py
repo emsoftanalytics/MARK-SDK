@@ -7,6 +7,9 @@ is semantic, and its ``source``:
 * ``"spec"``    named explicitly (``embedder="model2vec"``, ``"ollama:<model>"``...);
 * ``"env"``     selected by the ``MARK_EMBEDDER`` environment variable;
 * ``"default"`` nothing configured: the zero-dependency hash embedder;
+* ``"store"``   the embedder the store was created with (``mark.runtime_embedder``);
+  when it cannot be loaded here, ``name`` ends with "(unavailable)" and
+  ``semantic`` is False (recall is keyword-only until it is installed);
 * ``"custom"``  a provider instance passed in by the caller.
 """
 from __future__ import annotations
@@ -44,6 +47,8 @@ def embedder_info(embedder: object | None = None) -> EmbedderInfo:
     model = getattr(provider, "model_name", None) or getattr(provider, "model", None)
     kind = "hash" if isinstance(provider, HashEmbeddingProvider) else fingerprint.split(":", 1)[0]
     name = f"{kind}:{model}" if isinstance(model, str) and model else kind
+    if type(provider).__name__ == "UnavailableEmbedder":
+        name = f"{getattr(provider, 'spec', None) or fingerprint} (unavailable)"
     return EmbedderInfo(
         name=name,
         dim=getattr(provider, "dim", None),

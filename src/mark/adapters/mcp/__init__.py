@@ -42,7 +42,9 @@ if TYPE_CHECKING:
 CORE_TOOLS = ("mark_retrieve", "mark_observe", "mark_write")
 MEMORY_TOOLS = ("mark_fact", "mark_timeline", "mark_brief", "mark_list", "mark_resolve",
                 "mark_supersede", "mark_forget")
-ALL_TOOLS = CORE_TOOLS + MEMORY_TOOLS
+#: The opt-in push-context tool: exposed with ``briefing=True`` or when ``tools=`` names it.
+BRIEFING_TOOL = "mark_briefing"
+ALL_TOOLS = CORE_TOOLS + MEMORY_TOOLS + (BRIEFING_TOOL,)
 
 
 def _require_mcp() -> Any:
@@ -93,7 +95,8 @@ def create_mark_mcp_server(
     - ``mark_list(kind, open)`` — memories by kind (e.g. open TODOs) with short ids.
     - ``mark_resolve(id)`` / ``mark_supersede(id, content)`` — close or replace one.
     - ``mark_forget(memory_id | match, secure)`` — delete memories.
-    - ``mark_briefing`` (opt-in, ``briefing=True``) — push context per session.
+    - ``mark_briefing`` (opt-in: ``briefing=True`` or named in ``tools=``) — push
+      context per session.
 
     Ids in every output are 8-character short ids, accepted back as input.
 
@@ -118,7 +121,9 @@ def create_mark_mcp_server(
                           ``mark://briefing/{session_id}`` resource).
         briefing_sessions: Sessions kept (LRU; evicted watches are closed).
         briefing_preset:  ``"default"``, ``"small"`` or ``"tiny"`` (model size).
-        tools:            Names of the tools to expose (default: ``ALL_TOOLS``).
+        tools:            Names of the tools to expose (default: ``ALL_TOOLS``
+                          except ``mark_briefing``, which needs ``briefing=True``
+                          or its name in this list). Unknown names raise ValueError.
 
     Returns:
         The SDK's server instance. Call ``.run()`` to start it (stdio by
@@ -131,7 +136,10 @@ def create_mark_mcp_server(
     enabled = set(ALL_TOOLS if tools is None else tools)
     unknown = enabled - set(ALL_TOOLS)
     if unknown:
-        raise ValueError(f"unknown MCP tools {sorted(unknown)}; expected some of {ALL_TOOLS}")
+        raise ValueError(f"unknown MCP tool(s) {', '.join(sorted(unknown))}; "
+                         f"expected some of: {', '.join(ALL_TOOLS)}")
+    # mark_briefing is opt-in: briefing=True, or named in an explicit tools= list.
+    briefing = briefing or (tools is not None and BRIEFING_TOOL in enabled)
 
     def _resolve_agent(agent_id: str) -> tuple[str, str | None]:
         resolved = agent_id or default_agent_id
@@ -215,6 +223,7 @@ def run_mcp(*args: Any, **kwargs: Any) -> None:
 
 __all__ = [
     "ALL_TOOLS",
+    "BRIEFING_TOOL",
     "create_mark_mcp_server",
     "create_mark_mcp_server_from_local",
     "run_mcp",
