@@ -52,7 +52,7 @@ Data and processes
                                                  and which embedder is active
     serve [start|stop] [--host H] [--port N]     keep MARK warm (loopback only)
     mcp [--db P] [--agent ID] [--briefing] [--preset default|small|tiny]
-        [--tools T,...] [--allow-agent ID ...] [--user-subject NAME]
+        [--tools T,...] [--allow-agent ID ...] [--user-subject NAME] [--extract-facts]
                                                  run the MCP server (stdio) on this store
     config show [--json] | config user-subject NAME
                                                  store settings; the user subject (who

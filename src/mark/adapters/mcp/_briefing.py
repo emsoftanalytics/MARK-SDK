@@ -151,6 +151,9 @@ def _briefing_sync(
 ) -> str:
     """Observe the new input and render the session's briefing (blocking; run off-loop)."""
     fresh = (agent_id, session_id) not in sessions.keys()
+    if fresh and not text.strip() and not any(m.get("content") for m in messages or []):
+        # Re-reading a running session's briefing needs no input; starting one does.
+        fail("mark_briefing needs the latest message as text, or the recent chat as messages")
     watch = sessions.get(agent_id, session_id)
     if watch is None:
         fail(_UNAVAILABLE)
@@ -163,6 +166,20 @@ def _briefing_sync(
         watch.observe(text, role=role)
     brief = watch.briefing(wait=wait, budget_tokens=budget_tokens)
     return brief.text or "<mark_briefing>\nNothing relevant in memory yet.\n</mark_briefing>"
+
+
+def _check_input(text: str, messages: Any) -> None:
+    """``messages`` must be [{role, content}] (a new session also needs text or messages)."""
+    if messages is not None:
+        if not isinstance(messages, list):
+            fail("messages must be a list of {role, content} objects")
+        for index, message in enumerate(messages):
+            content = message.get("content") if isinstance(message, dict) else None
+            role = message.get("role", "user") if isinstance(message, dict) else None
+            if not isinstance(role, str) or not isinstance(content, (str, list)):
+                fail(f"messages[{index}] must be an object with a string role and a content "
+                     "(text or a list of parts)")
+
 
 
 def register_briefing(
@@ -214,7 +231,10 @@ def register_briefing(
             fail(f"MARK briefing failed: {denied}")
         if role not in ("user", "assistant", "tool"):
             fail("MARK briefing failed: role must be user, assistant or tool")
-        session = (session_id or "default")[:_MAX_SESSION_ID]
+        if len(session_id or "") > _MAX_SESSION_ID:
+            fail(f"session_id is {len(session_id)} characters; the limit is {_MAX_SESSION_ID}")
+        _check_input(text, messages)
+        session = session_id or "default"
         try:
             return await run_off_loop(
                 _briefing_sync, sessions, resolved, session, text or "", role, messages,

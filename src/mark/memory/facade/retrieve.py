@@ -18,6 +18,7 @@ import asyncio
 from dataclasses import replace
 
 from mark.intelligence.retrieval import RetrievalPolicy, RetrievalResult, SessionFilter
+from mark.memory.facade.block_check import check_block_ids
 from mark.memory.facade.healing import HealingMixin
 from mark.middlewares.skills.base import Skill
 from mark.types import MemoryScope, MemoryTier
@@ -101,6 +102,7 @@ class RetrieveMixin(HealingMixin):
 
         if order not in ORDERS:  # validate before doing any work
             raise ValueError(f"order must be one of {ORDERS}, got {order!r}")
+        check_block_ids(self._store, self.agent_id, block_id, block_ids)
         if self._middleware is not None and self._runtime is not None:
             return apply_order(self._middleware.run(
                 "retrieve",
@@ -165,6 +167,7 @@ class RetrieveMixin(HealingMixin):
         Shares scope filtering and index sync across the batch. With
         registered middleware each query runs through retrieve_sync instead.
         """
+        check_block_ids(self._store, self.agent_id, block_id, block_ids)
         filters = dict(
             session_id=session_id, session_prefix=session_prefix, tags=tags, tier=tier,
             scope=scope, block_id=block_id, block_ids=block_ids,

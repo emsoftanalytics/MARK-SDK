@@ -92,3 +92,26 @@ class PagingStoreMixin:
             (agent_id, prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"),
         )
         return sorted(str(row[0]) for row in rows)
+
+    def known_block_ids(self, agent_id: str, limit: int | None = None) -> list[str]:
+        """Graph block ids of an agent: blocks it created and blocks its fragments belong to."""
+        sql = ("SELECT id FROM blocks WHERE agent_id = ? UNION "
+               "SELECT DISTINCT block_id FROM fragments WHERE agent_id = ? AND block_id IS NOT NULL ORDER BY 1")
+        params: list[object] = [agent_id, agent_id]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        return [str(row[0]) for row in self._fetchall(sql, params)]
+
+    def unknown_block_ids(self, agent_id: str, block_ids: list[str]) -> list[str]:
+        """The ids in *block_ids* that are no block of *agent_id* (see :meth:`known_block_ids`)."""
+        wanted = list(dict.fromkeys(str(b) for b in block_ids if b))
+        found: set[str] = set()
+        for chunk in _chunks(wanted, _SQL_CHUNK):
+            marks = ",".join("?" for _ in chunk)
+            rows = self._fetchall(
+                f"SELECT id FROM blocks WHERE agent_id = ? AND id IN ({marks}) UNION "
+                f"SELECT DISTINCT block_id FROM fragments WHERE agent_id = ? AND block_id IN ({marks})",
+                [agent_id, *chunk, agent_id, *chunk])
+            found |= {str(row[0]) for row in rows}
+        return [b for b in wanted if b not in found]
