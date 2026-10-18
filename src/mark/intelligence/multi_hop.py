@@ -35,7 +35,9 @@ from mark.intelligence.query_anchors import (
     query_anchors,
 )
 from mark.intelligence.query_understanding import _coverage, _relevance
-from mark.intelligence.supersession import is_update_statement, supersedes
+from mark.intelligence.state_change import update_lookups
+from mark.intelligence.supersession import _near, is_update_statement, supersedes
+from mark.intelligence.temporal_order import event_time
 from mark.types import MemoryFragment
 
 _MAX_SOURCES = 3
@@ -49,6 +51,8 @@ _WEAK_MATCH = 0.25
 # A result must carry some query evidence before its entities are followed
 # for superseding updates.
 _MIN_SOURCE_RELEVANCE = 0.25
+# Results whose entities are followed to superseding updates.
+_SUPERSEDER_SOURCES = 3
 
 _Ranked = list[tuple[MemoryFragment, float, float]]  # (fragment, score, relevance)
 
@@ -144,21 +148,48 @@ class _MultiHopMixin:
             return fragments, scores, relevances
         query_norm = _anchor_norm(query)
         out: _Ranked = list(zip(fragments, scores, relevances))
-        for source, relevance in list(zip(fragments, relevances))[:1]:
+        # The best three: equally strong matches (ties are common) may each have an update.
+        for source, relevance in list(zip(fragments, relevances))[:_SUPERSEDER_SOURCES]:
             if relevance < _MIN_SOURCE_RELEVANCE:
                 continue
             entities = [e for e in content_entities(source.content) if not _contains_anchor(query_norm, e)]
+            # Values next to the asked attribute first: "live in Porto" -> "porto".
+            source_norm = _anchor_norm(source.content)
+            entities.sort(key=lambda e: not _near(source_norm, e, set(query_terms), window=2))
             for entity in entities[:2]:
                 for candidate in self._lookup(cache, entity, query, query_terms, agent_id, allowed_ids, scope_ids):
                     if is_update_statement(candidate.content) and supersedes(candidate, source, query):
-                        # An update of the best match always earns a slot (evidence 1.0).
-                        _place_after(out, source, candidate, query_terms, top_k, 1.0, move=False)
+                        # An update of a best match always earns a slot (evidence 1.0) and
+                        # shows the evidence of the memory it updates.
+                        _place_after(out, source, candidate, query_terms, top_k, 1.0, move=False, shown=relevance)
+        self._pull_unnamed_updates(query, query_terms, out, agent_id, allowed_ids, scope_ids, top_k, cache)
         out = out[:top_k]
         return [f for f, _, _ in out], [s for _, s, _ in out], [r for _, _, r in out]
 
+    def _pull_unnamed_updates(self, query, query_terms, out: _Ranked, agent_id, allowed_ids, scope_ids,
+                              top_k, cache) -> None:
+        """Updates that name neither the question's words nor the old value ("I moved to Porto").
+
+        Found through the change words of the asked attribute ("moved" for
+        "Where do I live?"), kept only when they are about the same subject
+        and attribute and newer than the best match they follow.
+        """
+        lookups = update_lookups(query)
+        if lookups is None or not out:
+            return
+        words, member = lookups
+        source, _, relevance = next(((f, s, r) for f, s, r in out if member(f.content)), (None, 0.0, 0.0))
+        if source is None or relevance < _MIN_SOURCE_RELEVANCE:
+            return
+        for word in words:
+            for candidate in self._lookup(cache, word, query, query_terms, agent_id, allowed_ids, scope_ids):
+                if (candidate.id != source.id and is_update_statement(candidate.content)
+                        and member(candidate.content) and event_time(candidate) > event_time(source)):
+                    _place_after(out, source, candidate, query_terms, top_k, 1.0, move=False, shown=relevance)
+
 
 def _place_after(out: _Ranked, source: MemoryFragment, candidate: MemoryFragment, query_terms: list[str],
-                 top_k: int, evidence: float, *, move: bool = True) -> bool:
+                 top_k: int, evidence: float, *, move: bool = True, shown: float | None = None) -> bool:
     """Put *candidate* right behind *source* (after earlier hops of it), sharing its score.
 
     A candidate already ranked above its source stays put; one ranked below
@@ -178,14 +209,19 @@ def _place_after(out: _Ranked, source: MemoryFragment, candidate: MemoryFragment
         entry = out.pop(current)
     else:
         tail = out[top_k - 1][2] if len(out) >= top_k else 0.0
-        if tail >= _WEAK_MATCH and tail >= evidence:
+        if tail >= _WEAK_MATCH and tail > evidence:  # an update (evidence 1.0) always earns a slot
             return False
-        entry = (candidate, 0.0, _relevance(query_terms, candidate.content, 0.0))
+        # A hop shows the evidence it inherits when that beats its own words:
+        # the displayed score is what put it in the list.
+        inherited = evidence if shown is None else shown
+        entry = (candidate, 0.0, max(inherited, _relevance(query_terms, candidate.content, 0.0)))
     # Behind the source, the hops already placed behind it (same score), and
     # any direct match at least as strong as the evidence the hop inherits.
     score = out[at][1]
     position = at + 1
-    while position < len(out) and (out[position][1] == score or out[position][2] >= evidence):
+    # An update goes right behind what it updates (ordering then puts it first);
+    # a hop also waits behind direct matches at least as strong as its evidence.
+    while shown is None and position < len(out) and (out[position][1] == score or out[position][2] >= evidence):
         position += 1
     out.insert(position, (entry[0], out[position - 1][1], entry[2]))
     return True

@@ -37,3 +37,18 @@ class _PipelineConfigMixin:
         """Set the fact subject that first-person questions ("Where do I live?") map to."""
         self._user_subject = subject
 
+
+    def _without_tags(self, agent_id: str, allowed_ids: set[str], tags: list[str]) -> set[str]:
+        """*allowed_ids* minus memories carrying any of *tags* (``SessionFilter.exclude_tags``).
+
+        Applied before scoring, so excluded memories (resolved TODOs for an
+        "open only" recall) never take a top-k slot.
+        """
+        id_set = getattr(self._store, "retrievable_id_set", None) or getattr(self._store, "retrievable_ids", None)
+        excluded: set[str] = set()
+        for tag in tags:
+            if id_set is not None:
+                excluded |= set(id_set(agent_id, tags=[tag]))
+            else:  # custom stores: filter the fetched fragments
+                excluded |= {fid for fid, f in self._get_many(allowed_ids).items() if tag in (f.tags or ())}
+        return allowed_ids - excluded if excluded else allowed_ids

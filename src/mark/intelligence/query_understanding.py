@@ -18,6 +18,7 @@ import re
 from enum import Enum
 from functools import lru_cache
 
+from mark.intelligence._lazy_re import lazy
 from mark.intelligence.classifier import _STOP_WORDS
 from mark.intelligence.date_parsing import find_dates
 from mark.intelligence.query_anchors import (  # noqa: F401  (historical import location)
@@ -48,7 +49,7 @@ _CURRENT_RE = re.compile(
 )
 _ORIGINAL_RE = re.compile(
     r"\b(original(?:ly)?|initial(?:ly)?|first|earliest|oldest|at first|before any|previous(?:ly)?"
-    r"|formerly|to begin with|in the beginning"
+    r"|formerly|to begin with|in the beginning|(?:['’]s|\bmy|\bhis|\bher|\btheir|\bour)\s+old"
     r"|(?<!\bis )(?<!\bare )(?<!\bwas )(?<!\bwere )(?<!\bbe )(?<!\bget )used to"
     r"|before(?:\s+(?:that|then|the\s+(?:change|switch|move|migration)))?(?=\s*[?.!]*\s*$))\b",
     re.I,
@@ -106,6 +107,15 @@ def is_blank_query(query: str) -> bool:
     return not any(is_symbol(char) for char in text)
 
 
+_CAMEL_WORD_RE = lazy(r"\b[A-Za-z]*[a-z][A-Z][A-Za-z]*\b")
+_CAMEL_PART_RE = lazy(r"[A-Z]?[a-z]{2,}")
+# Everyday irregular past forms, so "How much rent do I pay?" matches "paid on the 1st".
+_IRREGULAR = {"paid": "pay", "bought": "buy", "sold": "sell", "met": "meet", "went": "go", "gone": "go",
+              "ran": "run", "taught": "teach", "brought": "bring", "kept": "keep",
+              "lost": "lose", "spent": "spend", "sent": "send", "built": "build", "wrote": "write",
+              "written": "write", "chose": "choose", "chosen": "choose", "began": "begin", "begun": "begin"}
+
+
 @lru_cache(maxsize=65536)
 def _stem(token: str) -> str:
     """Tiny suffix stemmer applied to a fixpoint, then final-e removal.
@@ -116,6 +126,8 @@ def _stem(token: str) -> str:
     "titanium". Query and content are stemmed identically, so an occasional
     over-merge only widens a match.
     """
+    if token in _IRREGULAR:
+        return _stem(_IRREGULAR[token])
     if len(token) < 4 or not token.isalpha():
         return token
     previous = None
@@ -156,6 +168,13 @@ def _content_terms(text: str) -> list[str]:
         if token in _STOP_WORDS or token in _TEMPORAL_WORDS or (len(token) < 2 and not token.isdigit()):
             continue
         terms.setdefault(_stem(token), None)
+    if not text.isascii():
+        # Emoji and other symbols are searchable terms ("🦉"), matched literally.
+        from mark.embeddings.segments import is_symbol
+
+        for char in text:
+            if is_symbol(char):
+                terms.setdefault(char, None)
     return list(terms)
 
 
@@ -166,15 +185,53 @@ def _content_stems(content: str) -> frozenset[str]:
     Cached by content: one retrieval scores the same candidates in several
     stages (fusion, hops, ordering, facts).
     """
-    return frozenset(_stem(token) for token in set(_TOKEN_RE.findall(content.lower())))
+    tokens = set(_TOKEN_RE.findall(content.lower()))
+    # snake_case identifiers also count as their words: "code_length" answers "code length".
+    tokens |= {part for token in tokens if "_" in token for part in token.split("_") if len(part) > 1}
+    # So do CamelCase ones: "TypeError" answers "what error ...".
+    tokens |= {part.lower() for part in _camel_parts(content)}
+    return frozenset(_stem(token) for token in tokens)
+
+
+def _camel_parts(content: str) -> list[str]:
+    """Words inside CamelCase identifiers ("OperationalError" -> Operational, Error)."""
+    if content.islower():
+        return []
+    return [part for word in _CAMEL_WORD_RE.findall(content) for part in _CAMEL_PART_RE.findall(word)]
 
 
 def _coverage(query_terms: list[str], content: str) -> float:
-    """Fraction of the query's content terms that occur (stemmed) in the memory."""
+    """Fraction of the query's content terms that occur (stemmed) in the memory.
+
+    Terms an English stemmer cannot split are matched literally: a symbol
+    ("🦉") as a substring, and a CJK run ("我的中文老师是谁") by the share of its
+    character bigrams found in the memory, since CJK text has no spaces and
+    the run is rarely written out whole.
+    """
     if not query_terms:
         return 0.0
     stems = _content_stems(content)
-    return sum(1 for term in query_terms if term in stems) / len(query_terms)
+    lowered: str | None = None
+    found = 0.0
+    for term in query_terms:
+        if term in stems:
+            found += 1
+        elif not term.isascii():
+            lowered = content.lower() if lowered is None else lowered
+            found += _literal_share(term, lowered)
+    return found / len(query_terms)
+
+
+def _literal_share(term: str, content: str) -> float:
+    """1 when *term* occurs in *content*; for a CJK run, the share of its bigrams that do."""
+    if term in content:
+        return 1.0
+    from mark.embeddings.segments import CJK_RUN, cjk_bigrams
+
+    if len(term) < 3 or CJK_RUN.search(term) is None:
+        return 0.0
+    grams = cjk_bigrams(term)
+    return sum(1 for gram in grams if gram in content) / len(grams)
 
 
 def _relevance(query_terms: list[str], content: str, cosine: float) -> float:

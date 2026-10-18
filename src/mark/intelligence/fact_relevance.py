@@ -15,10 +15,14 @@ in now?" returned its port and owner. Selection per subject, in order:
    kept only when their value mentions it ("Which team ..." -> lead =
    "platform team"); a head noun matching nothing means the facts hold no
    answer, so none are returned (the memories still answer it);
-4. otherwise (open questions: "Tell me about atlas-core", "What is
-   atlas-core?", "Who is Mei Lin?") the subject's facts are kept, unless
-   the subject was only inferred (``allow_open=False``: the user subject of
-   an "I/my" question, or a subject found in the matched memories).
+4. otherwise, open questions about the subject itself ("Tell me about
+   atlas-core", "What is atlas-core?", "Who is Mei Lin?": no other topic
+   word) keep the subject's facts, unless the subject was only inferred
+   (``allow_open=False``: the user subject of an "I/my" question, or a
+   subject found in the matched memories);
+5. a question about something else ("Why did expired links still
+   resolve?") keeps only facts whose value it names, usually none: a fixed
+   handful of unrelated facts is noise.
 
 At most ``cap`` facts per subject are returned (``DEFAULT_FACT_CAP``), the
 ones sharing most words with the query first, then the most recent; asking
@@ -114,6 +118,13 @@ _SYNONYM_GROUPS = (
     "born birthday birth age old",
     "contact email phone number call reach",
     "like likes love prefer prefers favourite favorite hate dislike preference",
+    # People around the user, as everyday speech names them ("Who is my boss?").
+    "boss manager supervisor",
+    "mother mum mom",
+    "father dad",
+    "spouse wife husband partner married",
+    "doctor gp physician",
+    "salary income wage pay",
 )
 
 
@@ -137,7 +148,10 @@ def select_facts(
 ) -> list[Any]:
     """Filter one subject's current fact rows (``attribute``/``value`` keys) for *query*."""
     terms = set(_content_terms(query))
-    named = [row for row in rows if set(_content_terms(_attribute_text(row))) & _expand(terms)]
+    expanded = _expand(terms)
+    # CJK questions are one unspaced token: a CJK attribute ("城市") is named when it occurs in the text.
+    named = [row for row in rows if set(_content_terms(_attribute_text(row))) & expanded
+             or (not _attribute_text(row).isascii() and _attribute_text(row) in query)]
     if named:
         selected = named
     else:
@@ -148,11 +162,27 @@ def select_facts(
                         if verb in {_agent_stem(stem) for stem in _content_stems(_attribute_text(row))}]
         elif head is not None:
             selected = [row for row in rows if head in _content_stems(str(row["value"]))]
-        else:
+        elif not _residual_terms(terms, subject) or wants_everything(query):
+            # Open questions about the subject itself: "What is atlas-core?".
             selected = list(rows) if allow_open else []
+        else:
+            # The question is about something else ("Why did expired links still
+            # resolve?"): only facts whose value it names, never a fixed few.
+            residual = _expand(_residual_terms(terms, subject))
+            selected = [row for row in rows if _content_stems(str(row["value"])) & residual]
     if cap is None or len(selected) <= cap or wants_everything(query):
         return selected
     return _ranked(selected, terms)[:cap]
+
+
+# Question words that carry no topic ("What is X?", "Tell me about X").
+_OPEN_WORDS = frozenset(_content_terms(
+    "tell know about thing things info information details everything overview happened happen going new news update"))
+
+
+def _residual_terms(terms: set[str], subject: str) -> set[str]:
+    """Query terms that are neither the subject's words nor open-question words."""
+    return terms - _content_stems(subject) - set(_content_terms(subject)) - _OPEN_WORDS
 
 
 def attribute_named(query: str, rows: Sequence[Any]) -> list[Any]:

@@ -151,6 +151,11 @@ class _Query:
 def _supersedes(new: _Profile, old: _Profile, query: _Query) -> bool:
     if new.fragment.id == old.fragment.id or not new.update or not _is_newer(new.fragment, old.fragment):
         return False
+    # Chunks of one document are parts of one text, never updates of each other
+    # ("change to the plan" in one room's notes does not retire another room's).
+    doc = (new.fragment.metadata or {}).get("document_id")
+    if doc and doc == (old.fragment.metadata or {}).get("document_id"):
+        return False
     # Two records naming different subjects (atlas-gate vs atlas-core) are
     # never about the same thing, however alike their wording; and a query
     # about a subject only compares records about that subject.
@@ -207,8 +212,13 @@ def order_by_supersession(
     fragments: list[MemoryFragment],
     scores: list[float],
     relevances: list[float],
+    outdated: set[str] | None = None,
 ) -> tuple[list[MemoryFragment], list[float], list[float]]:
-    """Swap superseding / superseded pairs for the query's point in time (see module docstring)."""
+    """Swap superseding / superseded pairs for the query's point in time (see module docstring).
+
+    ``outdated`` (optional) collects the ids of superseded memories for
+    present-tense questions, so renderers can mark them.
+    """
     if len(fragments) < 2:
         return fragments, scores, relevances
     asked = _Query(query)
@@ -221,6 +231,8 @@ def order_by_supersession(
     if not pairs:
         return fragments, scores, relevances
     original = intent == TemporalIntent.ORIGINAL
+    if outdated is not None and not original:
+        outdated.update(fragments[old].id for _, old in pairs)
     for new, old in pairs:
         first, second = (old, new) if original else (new, old)
         if order.index(first) > order.index(second):

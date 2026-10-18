@@ -69,6 +69,19 @@ class MemoryFragment(BaseModel):
         return ensure_utc(v)
 
     @property
+    def kind(self) -> Optional[str]:
+        """The memory's kind from its ``kind:<k>`` tag ("todo", "bug", ...), else None.
+
+        Read-only view of the tag ``remember(kind=...)`` writes; see
+        :func:`mark.kinds.kind_of` for the variant that also reads a leading
+        "TODO:" label.
+        """
+        for tag in self.tags or ():
+            if tag.startswith("kind:") and len(tag) > 5:
+                return tag[5:]
+        return None
+
+    @property
     def is_working_memory(self) -> bool:
         """True if this fragment is short-term (has a TTL)."""
         return self.ttl_seconds is not None or self.tier == MemoryTier.WORKING

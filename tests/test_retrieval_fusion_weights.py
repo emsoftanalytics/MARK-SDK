@@ -81,10 +81,15 @@ def test_semantic_paraphrase_beats_stray_word_distractor() -> None:
     assert ranked[0] == GOLD
 
 
-def test_equal_rrf_reproduces_the_distractor_failure() -> None:
-    # Guards the test above: legacy fusion really does lose this case.
-    ranked = _ranked(ConceptEmbedder(), [GOLD, DISTRACTOR, *FILLER], PARAPHRASE, FusionConfig(mode="rrf"))
-    assert ranked[0] == DISTRACTOR
+def test_equal_rrf_seed_scores_reproduce_the_distractor_failure() -> None:
+    # Guards the test above: legacy RRF seed scoring really does prefer the
+    # distractor (the final list is then sorted by displayed relevance).
+    from mark.intelligence.fusion_scoring import max_rrf, rrf_seed_score
+
+    best = max_rrf(1)
+    distractor = rrf_seed_score(2 / 61, best, 0.5)   # rank 1 in both channels, half the terms
+    gold = rrf_seed_score(1 / 61, best, 0.45)        # rank 1 in one channel only
+    assert distractor > gold
 
 
 # ── Exact identifiers the embedder cannot see ─────────────────────────────────

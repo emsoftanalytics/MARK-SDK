@@ -16,34 +16,36 @@ fact subjects. Two levels:
 from __future__ import annotations
 
 import re
+
+from mark.intelligence._lazy_re import lazy  # compiled on first use (cold start)
 from functools import lru_cache
 
 from mark.intelligence.classifier import _STOP_WORDS
 from mark.intelligence.date_parsing import find_dates
 from mark.embeddings.segments import CJK_RUN
 
-_TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+_TOKEN_RE = lazy(r"\w+", re.UNICODE)
 
 # Distinctive anchors: compound identifiers (atlas-core, HAL-1234, eu-west-1,
 # v2.3.1), tokens with digits, and multi-word capitalised names.
-_COMPOUND_RE = re.compile(r"\b\w+(?:[-_.:/]\w+)+\b")
-_DIGIT_TOKEN_RE = re.compile(r"\b(?=\w*\d)\w{3,}\b")
+_COMPOUND_RE = lazy(r"\b\w+(?:[-_.:/]\w+)+\b")
+_DIGIT_TOKEN_RE = lazy(r"\b(?=\w*\d)\w{3,}\b")
 # Code identifiers: snake_case (a "_" between word characters, so "_private"
 # alone is not one) and CamelCase / camelCase (a lower-to-upper transition).
-_SNAKE_RE = re.compile(r"\b_*[A-Za-z][A-Za-z0-9]*(?:_+[A-Za-z0-9]+)+\b")
-_CAMEL_RE = re.compile(r"\b[A-Za-z]*[a-z][A-Z][A-Za-z0-9]*\b")
+_SNAKE_RE = lazy(r"\b_*[A-Za-z][A-Za-z0-9]*(?:_+[A-Za-z0-9]+)+\b")
+_CAMEL_RE = lazy(r"\b[A-Za-z]*[a-z][A-Z][A-Za-z0-9]*\b")
 # Bare numbers, decimals, dates and times ("8080", "2025", "1.5", "2026-03-01",
 # "10:30") are values the query mentions, not subjects: a port or a year missing
 # from memory is not a gap. Dotted quads (IP addresses) have four groups and stay.
-_BARE_NUMBER_RE = re.compile(r"\d+(?:[.,:/-]\d+){0,2}")
-_NUMBER_WITH_UNIT_RE = re.compile(r"\d+(?:s|st|nd|rd|th|ms|us|ns|k|kb|mb|gb|tb|m|h|x|px|pc|pct|am|pm)", re.I)
+_BARE_NUMBER_RE = lazy(r"\d+(?:[.,:/-]\d+){0,2}")
+_NUMBER_WITH_UNIT_RE = lazy(r"\d+(?:s|st|nd|rd|th|ms|us|ns|k|kb|mb|gb|tb|m|h|x|px|pc|pct|am|pm)", re.I)
 # Title-case words only ("Mei Lin", "Liam O'Connor"); ALL-CAPS log labels such
 # as "TICKET HAL" are not names.
-_NAME_RE = re.compile(r"\b([A-Z][a-z][\w'’]*(?:\s+[A-Z][a-z'’][\w'’]*)+)\b")
+_NAME_RE = lazy(r"\b([A-Z][a-z][\w'’]*(?:\s+[A-Z][a-z'’][\w'’]*)+)\b")
 # A single title-case word (gap anchors only), and what may precede it for it
 # to count as "inside a sentence" rather than capitalised by position.
-_TITLE_WORD_RE = re.compile(r"(?<![\w'’.-])([A-Z][a-z][a-z'’]+)\b(?![-_.:/]\w)")
-_SENTENCE_START_RE = re.compile(r"(?:^|[.!?:;\"“(\[]\s*|\n\s*)$")
+_TITLE_WORD_RE = lazy(r"(?<![\w'’.-])([A-Z][a-z][a-z'’]+)\b(?![-_.:/]\w)")
+_SENTENCE_START_RE = lazy(r"(?:^|[.!?:;\"“(\[]\s*|\n\s*)$")
 # Leading words of a title-cased run that are not part of a name
 # ("Has Alice Smith moved?", "Tell Me About billing", "The Platform Team").
 _NAME_LEAD_WORDS = {
@@ -64,7 +66,7 @@ _NOT_PROPER = {
     "yoruba", "igbo", "hausa", "swahili", "european", "american", "british", "african", "asian",
     "christmas", "easter", "ok", "okay", "yes", "no", "hi", "hello", "thanks", "please",
 }
-_POSSESSIVE_RE = re.compile(r"(?<=\w)['’]s\b")
+_POSSESSIVE_RE = lazy(r"(?<=\w)['’]s\b")
 # Entities are read from the head of a memory: enough for statements, bounded for documents.
 _ENTITY_SCAN_CHARS = 2000
 
@@ -93,7 +95,7 @@ def _query_anchors(query: str) -> tuple[str, ...]:
         query = query[: span.pos[0]] + " " + query[span.pos[1]:]
     anchors: list[str] = []
     for match in _COMPOUND_RE.findall(query):
-        if _is_identifier(match) and not _BARE_NUMBER_RE.fullmatch(match):
+        if _is_identifier(match) and not _BARE_NUMBER_RE.fullmatch(match) and not _is_descriptive(match):
             anchors.append(match)
     for pattern in (_SNAKE_RE, _CAMEL_RE):
         for match in pattern.findall(query):
@@ -172,6 +174,28 @@ def _is_identifier(compound: str) -> bool:
     return all(len(p) >= 2 for p in parts) and any(p not in _STOP_WORDS for p in parts)
 
 
+# Last parts of hyphenated adjectives ("well-known", "dairy-free", "4-year-old").
+_ADJECTIVE_TAILS = {"old", "known", "like", "free", "based", "sized", "size", "long", "wide", "term", "time",
+                    "friendly", "proof", "made", "aged", "style", "looking", "level", "only", "way", "end"}
+
+
+def _is_descriptive(compound: str) -> bool:
+    """Hyphenated adjectives and quantities are descriptions, not identifiers.
+
+    "4-year-old", "3-day", "10-minute" (a number then lowercase words) and
+    lowercase compounds ending in a participle or a common adjective tail
+    ("paper-lined", "well-known", "dairy-free") were read as ids and then
+    reported "not in memory" when a user introduced them.
+    """
+    if not re.fullmatch(r"[0-9a-z]+(?:-[a-z]+)+", compound):
+        return False
+    parts = compound.split("-")
+    if parts[0].isdigit():
+        return True
+    tail = parts[-1]
+    return tail in _ADJECTIVE_TAILS or (len(tail) >= 4 and tail.endswith("ed"))
+
+
 def _anchor_norm(text: str) -> str:
     """Normalise identifiers so 'Atlas-Core', 'atlas core', 'atlas_core' compare equal."""
     return " ".join(_TOKEN_RE.findall(text.lower().replace("’", "'").replace("_", " ")))
@@ -221,3 +245,48 @@ def anchor_present(content_norm: str, anchor: str) -> bool:
         return True
     parts = anchor.split()
     return len(parts) > 1 and all(_contains_anchor(content_norm, part) for part in parts)
+
+
+# Capitalised words that may precede a name without being part of it ("Yesterday Joao called").
+_NOT_NAME_PREFIX = {"yesterday", "today", "tomorrow", "also", "then", "now", "dear", "hi", "hey", "friend"}
+
+
+def name_mentioned(content: str, name: str) -> bool:
+    """Whole-name match: *name* (normalised) occurs in *content* as that name, not inside a longer one.
+
+    "Joao" is not mentioned by "nurse at Sao Joao hospital" (a capitalised
+    word right before it makes it part of another name), while "Sao Joao" is;
+    "Joao Silva" still mentions "Joao" (given names come first). Matching is
+    case-insensitive; a lowercase neighbour never extends a name. CJK names
+    fall back to :func:`_contains_anchor`.
+    """
+    tokens = name.split()
+    if not tokens:
+        return False
+    if not name.isascii():
+        return _contains_anchor(_anchor_norm(content), name)
+    pattern = r"(?<![\w-])" + r"[\s\-_.'’]+".join(re.escape(t) for t in tokens) + r"(?![\w-])"
+    for match in re.finditer(pattern, content, re.I):
+        before = re.search(r"([^\W\d_][\w'’]*)[\s]+$", content[max(0, match.start() - 40):match.start()])
+        if before is None or not before.group(1)[0].isupper():
+            return True
+        word = before.group(1).lower()
+        if word in _STOP_WORDS or word in _NAME_LEAD_WORDS or word in _NOT_PROPER or word in _NOT_NAME_PREFIX:
+            return True
+    return False
+
+
+def surface_form(query: str, anchor: str) -> str:
+    """The anchor as the user wrote it ("quuxinator 9000" -> "Quuxinator-9000"), else *anchor*.
+
+    Gap reports quote what was not found; the normalised form ("hal 1234")
+    reads like a different thing than the "HAL-1234" the user asked about.
+    """
+    text = _POSSESSIVE_RE.sub("", query)
+    spans = [m.span() for m in _TOKEN_RE.finditer(text)]
+    size = len(anchor.split())
+    for i in range(len(spans) - size + 1):
+        start, end = spans[i][0], spans[i + size - 1][1]
+        if _anchor_norm(text[start:end]) == anchor:
+            return text[start:end]
+    return anchor

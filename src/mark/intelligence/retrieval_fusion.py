@@ -25,21 +25,19 @@ import heapq
 from mark.index import VectorSearchResult
 from mark.intelligence.classifier import QueryAnalysis
 from mark.intelligence.fusion_scoring import (
+    OUT_OF_WINDOW,
     lexical_share,
+    literal_hit,
     max_rrf,
     merge_max,
     normalised_cosines,
     rrf_seed_score,
     score_fusion_seed,
+    scored_text,
     uses_score_fusion,
 )
-from mark.intelligence.query_understanding import (
-    TemporalIntent,
-    _coverage,
-    _relevance,
-    detect_temporal_intent,
-    query_anchors,
-)
+from mark.intelligence.query_intent import retirement_applies
+from mark.intelligence.query_understanding import _coverage, _relevance, query_anchors
 from mark.intelligence.retrieval_time import DateRange, matches_dates
 from mark.intelligence.reranker import RerankResult
 from mark.intelligence.retrieval_policy import (
@@ -113,16 +111,17 @@ class _FusionMixin:
             if fid not in fragments_by_id:
                 fragments_by_id[fid] = fragment
                 seed_ids.append(fid)
+        # A document chunk is judged by its body: the "# Title › Section" line
+        # repeats in every chunk and would let all of them tie on title words.
         coverage = {
-            fid: _coverage(query_terms, fragments_by_id[fid].content)
+            fid: _coverage(query_terms, scored_text(fragments_by_id[fid]))
             for fid in seed_ids if fid in fragments_by_id
         }
+        in_window: set[str] = set()
         if date_ranges:
             terms = len(query_terms)
-            coverage = {
-                fid: (cov * terms + matches_dates(fragments_by_id[fid], date_ranges)) / (terms + 1)
-                for fid, cov in coverage.items()
-            }
+            in_window = {fid for fid in coverage if matches_dates(fragments_by_id[fid], date_ranges)}
+            coverage = {fid: (cov * terms + (fid in in_window)) / (terms + 1) for fid, cov in coverage.items()}
         # Calibrated relevance (gap detection, reinforcement) is the same
         # under either strategy: max of cosine and term coverage.
         relevance = {fid: max(0.0, min(1.0, max(cosine.get(fid, 0.0), cov))) for fid, cov in coverage.items()}
@@ -130,6 +129,10 @@ class _FusionMixin:
             weight = lexical_share(
                 self._fusion, query_anchors(query), (fragments_by_id[fid].content for fid in coverage),
             )
+            if literal_hit(query_terms, coverage):
+                # Emoji / CJK / symbols are out of vocabulary for most embedders:
+                # an exact literal hit is stronger evidence than the vector channel.
+                weight = max(weight, self._fusion.anchor_lexical_weight)
             seed_scores = {
                 fid: score_fusion_seed(vector_norm.get(fid, 0.0), cov, weight)
                 for fid, cov in coverage.items()
@@ -139,6 +142,13 @@ class _FusionMixin:
             # ranking stays query-aware even when one channel is empty.
             best = max_rrf(query_count)
             seed_scores = {fid: rrf_seed_score(fused.get(fid, 0.0), best, relevance[fid]) for fid in relevance}
+        if in_window:
+            # A date in the question ("in November", "yesterday") is a soft
+            # window: memories inside it go first, the rest stay reachable
+            # (and show the same penalty in their displayed score).
+            seed_scores = {fid: score if fid in in_window else score * OUT_OF_WINDOW
+                           for fid, score in seed_scores.items()}
+            relevance = {fid: rel if fid in in_window else rel * OUT_OF_WINDOW for fid, rel in relevance.items()}
         return fragments_by_id, relevance, seed_scores
 
     def _expand_seeds(
@@ -171,15 +181,20 @@ class _FusionMixin:
                 # The graph may reach fragments outside the caller's scope.
                 if fid in allowed_ids and score > expanded_scores.get(fid, 0.0):
                     expanded_scores[fid] = score
+                    if fid in relevance:
+                        # Shown evidence: what the graph carried, when above its own words.
+                        relevance[fid] = max(relevance[fid], min(1.0, score))
             contradiction_ids = self._expander.contradiction_penalty_ids(list(top_seeds))
             missing = [fid for fid in expanded_scores if fid not in fragments_by_id]
             if missing:
                 fragments_by_id.update(self._get_many(missing))
                 for fid in missing:
                     if fid in fragments_by_id:
-                        relevance[fid] = _relevance(
-                            query_terms, fragments_by_id[fid].content, cosine.get(fid, 0.0),
-                        )
+                        # A neighbour shows the (damped) evidence that reached it
+                        # when its own words carry less.
+                        relevance[fid] = max(min(1.0, expanded_scores[fid]), _relevance(
+                            query_terms, scored_text(fragments_by_id[fid]), cosine.get(fid, 0.0),
+                        ))
         return expanded_scores, contradiction_ids
 
     def _rank(
@@ -216,8 +231,9 @@ class _FusionMixin:
             fragments=fragments_by_id,
             # Temporal queries ("latest deploy") give recency real weight.
             recency_weight=0.5 if getattr(analysis, "has_temporal", False) else 0.0,
-            # Superseded / resolved memories answer "original" questions only.
-            demote_retired=detect_temporal_intent(query) != TemporalIntent.ORIGINAL,
+            # Superseded / resolved memories rank by relevance for history and
+            # problem questions ("why did X fail", error text); demoted otherwise.
+            demote_retired=retirement_applies(query),
         )
 
 
