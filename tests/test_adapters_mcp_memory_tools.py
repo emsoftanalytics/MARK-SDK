@@ -109,7 +109,7 @@ def test_timeline_brief_and_forget(mark) -> None:
     error, _ = _client_call(server, "mark_forget", {"memory_id": other.id})
     assert error                                   # another namespace's memory is not deletable
     error, text = _client_call(server, "mark_forget", {"memory_id": target.id[:12]})
-    assert not error and target.id in text
+    assert not error and text == "Forgot 1 memory."       # a10: short ids, accepted as input
     assert all(f.id != target.id for f in memory.list())
 
 
