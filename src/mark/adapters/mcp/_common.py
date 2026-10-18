@@ -139,7 +139,7 @@ def render_retrieval(result: Any, *, max_results: int, budget_tokens: int = 0,
     that does not fit is cut to the remaining room, later ones are counted
     in a final line. When the gap report is high/critical, memories below
     :data:`RELEVANCE_FLOOR` are left out (they are not the answer).
-    Each memory shows its relevance ("score 0.82") and, when it is not
+    Each memory shows its relevance ("[abcd1234 score 0.82]") and, when it is not
     current, "(superseded)", "(resolved)" or "(outdated)" (*states*, see
     :mod:`mark.memory.result_states`; lifecycle tags are read when omitted).
     """
@@ -165,9 +165,9 @@ def render_retrieval(result: Any, *, max_results: int, budget_tokens: int = 0,
         lines.append("Memories (most relevant first):")
         for fragment in fragments:
             text, _ = window(" ".join(guard(fragment.content).split()), query_text, max_item_chars)
-            score = f"score {relevance[fragment.id]:.2f} " if fragment.id in relevance else ""
+            score = f" score {relevance[fragment.id]:.2f}" if fragment.id in relevance else ""
             state = f"({labels[fragment.id]}) " if fragment.id in labels else ""
-            lines.append(f"- {_date(fragment)}[{short(fragment.id)}] {score}{state}{_label(fragment)}{text}")
+            lines.append(f"- {_date(fragment)}[{short(fragment.id)}{score}] {state}{_label(fragment)}{text}")
     if not lines:
         lines.append("Nothing in memory matches this query.")
     if severity in ("high", "critical"):
