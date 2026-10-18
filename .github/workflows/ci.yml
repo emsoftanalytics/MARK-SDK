@@ -63,8 +63,7 @@ jobs:
   scale:
     name: Scale benchmark (20k memories)
     runs-on: ubuntu-latest
-    # Wall-clock budgets on shared runners can be noisy: report, do not block.
-    continue-on-error: true
+    # Gated on CPU time (stable on shared runners); wall-clock budgets only warn.
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6

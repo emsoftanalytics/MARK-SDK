@@ -48,8 +48,13 @@ WHY = ["after a memory spike", "for the quarterly audit", "due to a bad config",
        "during the freeze", "because of a CVE", "after latency alarms", "to test failover"]
 NEEDLES = 20
 # Metrics where lower is better and that the budget file may bound.
-CHECKED = ("store_us_per_item", "recall_p50_ms", "recall_p95_ms", "cold_start_ms", "timeline_warm_ms",
-           "write_recall_p50_ms", "write_recall_p95_ms")
+# GATED metrics are CPU time: they stay stable on loaded or shared machines,
+# so --check fails on them. ADVISORY metrics are wall-clock: they swing with
+# machine load (several-fold on busy CI runners), so they only print warnings.
+GATED = ("cold_start_cpu_ms", "write_recall_cpu_p50_ms")
+ADVISORY = ("store_us_per_item", "recall_p50_ms", "recall_p95_ms", "cold_start_ms", "timeline_warm_ms",
+            "write_recall_p50_ms", "write_recall_p95_ms")
+CHECKED = GATED + ADVISORY
 
 
 def _rss_mb() -> int:
@@ -208,13 +213,20 @@ def _cold_in_child(path: Path, argv: list[str]) -> dict:
 
 
 def _check(out: dict, thresholds: Path) -> list[str]:
-    """Return a failure line per metric that exceeds its budget (2x the reference run)."""
+    """Return a failure line per CPU metric over budget (2x the reference run).
+
+    Wall-clock metrics over budget are printed as warnings only (see GATED).
+    """
     budgets = json.loads(thresholds.read_text()).get(str(out["n"]), {})
     failures = []
     for metric in CHECKED:
         limit = budgets.get(metric)
         if limit is not None and out.get(metric) is not None and out[metric] > limit:
-            failures.append(f"{metric}={out[metric]} exceeds budget {limit} (2x reference)")
+            line = f"{metric}={out[metric]} exceeds budget {limit} (2x reference)"
+            if metric in GATED:
+                failures.append(line)
+            else:
+                print(f"warning (wall clock, not gated): {line}", file=sys.stderr)
     if out.get("needle_hit@5", "0/0").split("/")[0] != str(2 * NEEDLES):
         failures.append(f"needle_hit@5={out.get('needle_hit@5')} (every needle must be found)")
     return failures
