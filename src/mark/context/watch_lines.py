@@ -19,7 +19,13 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable
 
-from mark.context.provenance import UNTRUSTED_TAG, is_assistant, is_question_record
+from mark.context.provenance import (
+    UNTRUSTED_TAG,
+    is_assistant,
+    is_error_record,
+    is_question_record,
+    is_request_record,
+)
 
 _WORD = re.compile(r"\w+")
 _ROLE_PREFIX = re.compile(r"^\s*(user said|user|assistant replied|assistant said)\s*:\s*", re.IGNORECASE)
@@ -33,11 +39,17 @@ _SMALL_TALK = re.compile(
 _SMALL_TALK_WORDS = 8
 
 
-def fact_line(fact: Any) -> str:
-    """``- user city = Braga (since 2026-10-03)``: one dense line per current fact."""
-    since = getattr(fact, "valid_from", None)
-    when = f" (since {since.date().isoformat()})" if since is not None else ""
-    return f"- {fact.subject} {fact.attribute} = {fact.value}{when}"
+def fact_line(fact: Any, previous: Any = None, *, since: bool = True) -> str:
+    """``- user city = Braga (was Porto; since 2026-10-03)``: one dense line per current fact.
+
+    *previous* is the value it replaced (small models need "was" to answer
+    "where did I live before?" from the fact alone); ``since=False`` drops the date.
+    """
+    when = getattr(fact, "valid_from", None) if since else None
+    parts = [f"was {escape_tags(str(previous))}"] if previous not in (None, "") and previous != fact.value else []
+    parts += [f"since {when.date().isoformat()}"] if when is not None else []
+    tail = f" ({'; '.join(parts)})" if parts else ""
+    return f"- {escape_tags(str(fact.subject))} {escape_tags(str(fact.attribute))} = {escape_tags(str(fact.value))}{tail}"
 
 
 def fact_key(fact: Any) -> tuple[str, str]:
@@ -61,8 +73,10 @@ def is_echo(fragment: Any, task_words: frozenset[str]) -> bool:
 
 
 def trusted(fragment: Any) -> bool:
-    """A record that may be shown as a note: not the model's words, not a bare question."""
-    return not is_assistant(fragment) and not is_question_record(fragment)
+    """A record that may be shown as a note: not the model's words, not a bare
+    question or request, not a failed tool call."""
+    return not (is_assistant(fragment) or is_question_record(fragment)
+                or is_request_record(fragment) or is_error_record(fragment))
 
 
 def small_talk(fragment: Any) -> bool:
@@ -71,13 +85,34 @@ def small_talk(fragment: Any) -> bool:
     return len(text.split()) <= _SMALL_TALK_WORDS and bool(_SMALL_TALK.match(text))
 
 
-def note_text(fragment: Any, line_chars: int) -> str:
-    """``- <content>`` for a briefing; instruction-like memories (``mark:untrusted``,
-    set by the security layer) are labelled so the model reads them as data."""
+def note_text(fragment: Any, line_chars: int, *, outdated: bool = False, prefix: str = "") -> str:
+    """``- <content>`` for a briefing (without a "User said:" prefix).
+
+    Instruction-like memories (``mark:untrusted``, set by the security layer)
+    are labelled "(untrusted)" so the model reads them as data, outdated ones
+    "(outdated)"; boundary-tag lookalikes in the text are escaped.
+    """
     from mark.context.watch_support import _one_line
 
-    label = "(untrusted) " if UNTRUSTED_TAG in (getattr(fragment, "tags", None) or ()) else ""
-    return f"- {label}{_one_line(getattr(fragment, 'content', '') or '', line_chars)}"
+    label = "(untrusted) " if is_untrusted(fragment) else ""
+    label += "(outdated) " if outdated else ""
+    body = escape_tags(strip_role(getattr(fragment, "content", "") or ""))
+    return f"- {label}{prefix}{_one_line(body, line_chars)}"
+
+
+def is_untrusted(fragment: Any) -> bool:
+    return UNTRUSTED_TAG in (getattr(fragment, "tags", None) or ())
+
+
+#: Text that could pass for a MARK block boundary (``</mark_briefing>``,
+#: ``[/MARK project memory]``): a stored memory must never close the block early.
+_BOUNDARY = re.compile(r"<\s*/?\s*mark[\w\s:-]*>|\[\s*/?\s*mark\b[^\]]*\]", re.IGNORECASE)
+
+
+def escape_tags(text: str) -> str:
+    """*text* with MARK boundary-tag lookalikes defused (``<mark_briefing>`` -> ``‹mark_briefing›``)."""
+    return _BOUNDARY.sub(lambda m: m.group(0).replace("<", "‹").replace(">", "›")
+                         .replace("[", "⟦").replace("]", "⟧"), text or "")
 
 
 class Deduper:

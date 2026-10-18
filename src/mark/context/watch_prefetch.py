@@ -1,7 +1,7 @@
 """Background side of the context watch: anchor detection, prefetch and claim checks.
 
 Threading model: the watch owns at most one worker thread
-(``ThreadPoolExecutor(max_workers=1)``), so prefetches run one at a time and
+(``WatchWorker``, ``watch_worker``), so prefetches run one at a time and
 in submission order. Shared state (anchors, results, corrections, pending
 futures) is only touched under ``_lock``; the retrieval itself runs outside
 the lock so ``observe()`` and ``briefing()`` never wait on search. A failed
@@ -22,6 +22,7 @@ from dataclasses import replace
 from typing import Any
 
 from mark.context.provenance import USER_TAG
+from mark.context.watch_changes import _CHANGE_STATEMENT, _STATE_QUESTION, _change_lane, _previous_values  # noqa: F401
 from mark.context.watch_lines import trusted
 from mark.context.watch_support import _TOKEN_RE, _Anchor, _label_for, _mentions_value
 
@@ -78,33 +79,10 @@ def _with_user_lane(memory: Any, batch: list[str], results: list[Any]) -> list[A
     return merged
 
 
-#: Questions about a value now, before or since it changed.
-_STATE_QUESTION = re.compile(
-    r"\b(now|current(ly)?|before|originally|original|old|previous(ly)?|used to|chang\w*|"
-    r"still|any ?more|latest|new|moved|switched)\b", re.IGNORECASE)
-#: Statements that replace an earlier value ("moved from Porto to Braga").
-_CHANGE_STATEMENT = re.compile(
-    r"\b(moved|changed|switched|no longer|actually|now|new|instead|stopped|started|"
-    r"replaced|renamed|correction|not \w+ any ?more)\b", re.IGNORECASE)
-_CHANGE_QUERY = "moved changed switched now no longer actually new instead stopped started replaced"
-
-
-def _change_lane(memory: Any, task: str, limit: int) -> list[Any]:
-    """The user's change statements, for questions about current or earlier values.
-
-    "Which city do I live in now?" shares no word with "I moved from Porto
-    to Braga", so relevance search alone misses the one line that answers
-    it (a10 replay, llama3.2:3b). For such questions the user's statements
-    that replace an earlier value are fetched as their own small group.
-    """
-    if limit <= 0 or not _STATE_QUESTION.search(task):
-        return []
-    try:
-        lane = memory.retrieve_many_sync([_CHANGE_QUERY], tags=[USER_TAG])[0]
-    except Exception as exc:
-        logger.warning("change-statement retrieval failed: %s", exc)
-        return []
-    return [f for f in lane.fragments if trusted(f) and _CHANGE_STATEMENT.search(f.content)][:limit]
+#: Hyphenated describing words ("4-year-old", "paper-lined", "gluten-free") are
+#: not subjects; anchoring them produced "Not in memory: paper-lined" (a10).
+_DESCRIPTIVE = re.compile(r"^(\d+|[a-z]+)(-[a-z]+)*-(old|lined|based|free|like|style|sized|long|time|"
+                          r"made|aged|year|day|week|month|ish|\w+ed)$")
 
 
 class _WatchPrefetchMixin:
@@ -116,7 +94,9 @@ class _WatchPrefetchMixin:
 
         found: dict[str, str] = {}
         for key in query_anchors(text):
-            found.setdefault(key, _label_for(text, key))
+            label = _label_for(text, key)
+            if not _DESCRIPTIVE.match(label):
+                found.setdefault(key, label)
         # Known fact subjects are anchors even when written plainly ("pulse metrics").
         normalised = _anchor_norm(text)
         for subject in self._known_subjects():
@@ -157,6 +137,8 @@ class _WatchPrefetchMixin:
 
     def _schedule(self, queries: list[str], task: str | None) -> None:
         """Run a prefetch inline (background=False) or queue it on the single worker."""
+        if getattr(self, "_closed", False):
+            return
         if self._executor is None:
             self._prefetch(queries, task)
             return
@@ -169,9 +151,21 @@ class _WatchPrefetchMixin:
         """Worker-thread callback: forget the future; log (never raise) its failure."""
         with self._lock:
             self._pending.discard(future)
+        if future.cancelled():   # dropped by close()
+            return
         error = future.exception()
-        if error is not None:
-            logger.warning("context watch prefetch failed: %s", error)
+        if error is None:
+            return
+        from mark.errors import StoreClosedError
+
+        if isinstance(error, StoreClosedError):
+            # The host closed the store first (shutdown): not a failure worth a
+            # warning, but nothing will work again, so the watch stops itself
+            # and its worker thread exits (integration N8, agent N5).
+            logger.debug("context watch stopped: %s", error)
+            self.close()
+            return
+        logger.warning("context watch prefetch failed: %s", error)
 
     def _prefetch(self, queries: list[str], task: str | None) -> None:
         """Retrieve anchors (and the current task) in one batch, then store results under the lock.
@@ -197,10 +191,15 @@ class _WatchPrefetchMixin:
                         links.extend(self._links_from(anchor, result))
             if task:
                 self._task_results = {task: results[-1]}
+        previous = _previous_values(self._memory, results)
         if task:
-            changes = _change_lane(self._memory, task, getattr(self, "change_lines", 0))
+            changes, pool = _change_lane(self._memory, task, getattr(self, "change_lines", 0))
             with self._lock:
                 self._task_changes = {task: changes}
+                self._task_pool = {task: pool}
+        if previous and hasattr(self, "_previous"):
+            with self._lock:
+                self._previous.update(previous)
         if links:
             self._prefetch(links, None)
 
