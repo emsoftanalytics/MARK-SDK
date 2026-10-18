@@ -196,6 +196,12 @@ class FernetEncryptionProvider(EncryptionProvider):
         if self._passphrase is not None:
             salt = data[: self._SALT_SIZE]
             token = data[self._SALT_SIZE :]
+            if not token.startswith(b"gAAAA"):
+                # Not a Fernet token (e.g. plaintext written by a keyless older
+                # MARK): fail before PBKDF2, which costs seconds per new salt.
+                from cryptography.fernet import InvalidToken
+
+                raise InvalidToken
             return self._derive(salt).decrypt(token)
         return self._fernet.decrypt(data)
 
