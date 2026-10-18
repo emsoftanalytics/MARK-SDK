@@ -198,9 +198,17 @@ def remember_embedder(store: Any, provider: Any) -> None:
 
 
 def open_store(store_path: Any, encryption: Any, requested: object | None) -> tuple[Any, EmbeddingProvider]:
-    """``(LocalMemoryStore, embedder)`` for ``MarkRuntime.local``; the store is closed on failure."""
+    """``(LocalMemoryStore, embedder)`` for ``MarkRuntime.local``; the store is closed on failure.
+
+    A store in MARK's own ``.mark`` folder left group/world-readable by an
+    older version is made private first (:func:`mark._private_fs.tighten_mark_store`).
+    """
+    from mark._private_fs import tighten_mark_store
     from mark.store.sqlite import LocalMemoryStore
 
+    if str(store_path) != ":memory:":
+        for path in tighten_mark_store(store_path):
+            logger.info("made %s private (owner-only), as MARK creates it", path)
     store = LocalMemoryStore(store_path, encryption=encryption)
     try:
         return store, embedder_for_store(store, requested)

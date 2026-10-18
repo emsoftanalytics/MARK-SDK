@@ -51,3 +51,36 @@ def ensure_private_db_file(path: str | Path) -> None:
     except FileExistsError:
         return
     os.close(fd)
+
+
+def tighten_mark_store(db_file: str | Path) -> list[Path]:
+    """Make an existing store in MARK's own ``.mark`` folder private again; returns what changed.
+
+    Stores written by 0.2.0a8 and earlier were left 0644 (file) and 0775
+    (folder). On open, a store whose folder is named ``.mark`` gets the
+    folder tightened to 0700 and the database (and its -wal/-shm) to 0600,
+    but only paths owned by the current user and only bits for group/other
+    are removed. Stores elsewhere keep the permissions their owner chose.
+    """
+    if not _POSIX:
+        return []
+    path = Path(db_file).expanduser()
+    if path.parent.name != ".mark":
+        return []
+    changed: list[Path] = []
+    uid = os.getuid()
+    candidates = [(path.parent, DIR_MODE)] + [
+        (path.with_name(path.name + suffix), FILE_MODE) for suffix in ("", "-wal", "-shm")]
+    for item, wanted in candidates:
+        try:
+            info = item.lstat()
+        except OSError:
+            continue
+        if info.st_uid != uid or (info.st_mode & 0o077) == 0 or os.path.islink(item):
+            continue
+        try:
+            os.chmod(item, info.st_mode & wanted & 0o7777)
+            changed.append(item)
+        except OSError:
+            pass
+    return changed
