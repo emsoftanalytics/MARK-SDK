@@ -39,6 +39,7 @@ _S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 _A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 _R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 _PKG = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+_P = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
 
 
 def office_type(names: list[str]) -> str | None:
@@ -189,13 +190,43 @@ def _cell_text(cell: ElementTree.Element, shared: list[str]) -> str:
 # ── pptx ─────────────────────────────────────────────────────────────────────
 
 def _pptx(archive: zipfile.ZipFile) -> str:
-    slides = sorted((n for n in archive.namelist() if re.fullmatch(r"ppt/slides/slide\d+\.xml", n)),
+    """Slide text as "## Slide N" sections, each followed by its speaker notes ("Notes: ...")."""
+    names = set(archive.namelist())
+    slides = sorted((n for n in names if re.fullmatch(r"ppt/slides/slide\d+\.xml", n)),
                     key=lambda n: int(re.findall(r"\d+", n)[-1]))
     sections = []
     for number, name in enumerate(slides, 1):
-        paragraphs = ["".join(t.text or "" for t in p.iter(f"{_A}t")).strip()
-                      for p in _xml(archive, name).iter(f"{_A}p")]
-        text = "\n".join(p for p in paragraphs if p)
+        text = "\n".join(_paragraphs(_xml(archive, name)))
+        notes = _slide_notes(archive, name, names)
+        if notes:
+            text = f"{text}\n\nNotes: {notes}" if text else f"Notes: {notes}"
         if text:
             sections.append(f"## Slide {number}\n\n{text}")
     return "\n\n".join(sections)
+
+
+def _paragraphs(root: ElementTree.Element) -> list[str]:
+    paragraphs = ["".join(t.text or "" for t in p.iter(f"{_A}t")).strip() for p in root.iter(f"{_A}p")]
+    return [p for p in paragraphs if p]
+
+
+def _slide_notes(archive: zipfile.ZipFile, slide: str, names: set[str]) -> str:
+    """The speaker notes of *slide*: its notesSlide part (found through the slide's rels), body text only.
+
+    Notes parts also hold the slide image, header/footer and slide-number
+    placeholders; only the ``body`` placeholder is what the speaker wrote.
+    """
+    rels = f"ppt/slides/_rels/{slide.rsplit('/', 1)[1]}.rels"
+    if rels not in names:
+        return ""
+    target = next((rel.get("Target", "") for rel in _xml(archive, rels).iter(f"{_PKG}Relationship")
+                   if rel.get("Type", "").endswith("/notesSlide")), "")
+    part = "ppt/" + target.split("../", 1)[1] if target.startswith("../") else target.lstrip("/")
+    if part not in names:
+        return ""
+    lines: list[str] = []
+    for shape in _xml(archive, part).iter(f"{_P}sp"):
+        placeholder = next(shape.iter(f"{_P}ph"), None)
+        if placeholder is not None and placeholder.get("type") == "body":
+            lines += _paragraphs(shape)
+    return " ".join(lines)

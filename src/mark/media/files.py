@@ -48,6 +48,8 @@ def sniff(path: str | Path) -> str:
         head = handle.read(_SNIFF)
     if head.startswith(b"PK\x03\x04"):
         return _zip_type(path)
+    if _bom_text(head):
+        return "text/plain"  # before the signatures: FF FE also starts an MPEG frame sync
     for signature, media_type in _SIGNATURES:
         if head.startswith(signature):
             return media_type
@@ -62,6 +64,31 @@ def sniff(path: str | Path) -> str:
     if len(head) > 1 and head[0] == 0xFF and head[1] & 0xE0 == 0xE0 and b"\x00\x00\x00" not in head[:64]:
         return "audio/mpeg"  # MPEG audio frame sync without an ID3 tag
     return "text/plain" if _looks_like_text(head) else "application/octet-stream"
+
+
+# Byte-order marks, longest first (the UTF-32 LE mark starts with the UTF-16 LE one).
+BOMS: tuple[tuple[bytes, str], ...] = (
+    (b"\xff\xfe\x00\x00", "utf-32-le"), (b"\x00\x00\xfe\xff", "utf-32-be"), (b"\xef\xbb\xbf", "utf-8"),
+    (b"\xff\xfe", "utf-16-le"), (b"\xfe\xff", "utf-16-be"),
+)
+
+
+def bom_encoding(data: bytes) -> tuple[str, int] | None:
+    """(codec, BOM length) when *data* starts with a Unicode byte-order mark."""
+    return next(((codec, len(bom)) for bom, codec in BOMS if data.startswith(bom)), None)
+
+
+def _bom_text(head: bytes) -> bool:
+    """A BOM followed by text that decodes in that encoding, without control characters."""
+    found = bom_encoding(head)
+    if found is None:
+        return False
+    codec, skip = found
+    body = head[skip:]
+    unit = 4 if codec.startswith("utf-32") else 2 if codec.startswith("utf-16") else 1
+    body = body[: len(body) - len(body) % unit]  # the read limit may cut a code unit
+    text = body.decode(codec, errors="ignore" if len(head) == _SNIFF else "strict") if body else ""
+    return not any(ord(ch) < 32 and ch not in "\t\n\f\r" for ch in text)
 
 
 def _zip_type(path: str | Path) -> str:

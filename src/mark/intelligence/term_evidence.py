@@ -10,6 +10,7 @@ Two rules keep the evidence honest:
 
 - a dotted number with a long part ("0.30000000000000004") is one term, so
   a float artefact never matches a version such as "0.3.0" piece by piece;
+- accents are folded on both sides ("Oyinbo" covers "Ọ̀yìnbó");
 - a term matched only through an "-ing" form ("live" vs "living room")
   earns ``INFLECTION_CREDIT``, not a full match: the gerund is often a
   different word, and a full match showed unrelated memories at 1.000.
@@ -93,6 +94,8 @@ def _stem_once(token: str) -> str:
 def _content_terms(text: str) -> list[str]:
     """Salient query terms: lowercase stems without stopwords or temporal words."""
     terms: dict[str, None] = {}  # ordered set: linear even for long memories
+    original = text
+    text = fold_accents(text)  # "Ọ̀yìnbó" and "Oyinbo" are one term
     longs = _long_numbers(text)
     for number in longs:
         terms.setdefault(number, None)
@@ -107,11 +110,11 @@ def _content_terms(text: str) -> list[str]:
             term = _Term(stem)
             term.surface = token
             terms[term] = None
-    if not text.isascii():
+    if not original.isascii():
         # Emoji and other symbols are searchable terms ("🦉"), matched literally.
         from mark.embeddings.segments import is_symbol
 
-        for char in text:
+        for char in original:
             if is_symbol(char):
                 terms.setdefault(char, None)
     return list(terms)
@@ -131,6 +134,8 @@ def _content_stems(content: str) -> frozenset[str]:
 def _content_forms(content: str) -> dict[str, frozenset[str]]:
     """Stem -> the surface words of *content* that have it (see ``_content_stems``)."""
     tokens = set(_TOKEN_RE.findall(content.lower()))
+    if not content.isascii():
+        tokens |= set(_TOKEN_RE.findall(fold_accents(content).lower()))
     # snake_case identifiers also count as their words: "code_length" answers "code length".
     tokens |= {part for token in tokens if "_" in token for part in token.split("_") if len(part) > 1}
     # So do CamelCase ones: "TypeError" answers "what error ...".
@@ -141,6 +146,29 @@ def _content_forms(content: str) -> dict[str, frozenset[str]]:
     for number in _long_numbers(content):  # whole, as _content_terms keeps them
         forms.setdefault(number, set()).add(number)
     return {stem: frozenset(words) for stem, words in forms.items()}
+
+
+def fold_accents(text: str) -> str:
+    """*text* with accents removed from Latin, Greek and Cyrillic letters ("Ọ̀yìnbó" -> "Oyinbo").
+
+    Stacked marks (a letter with a dot below plus a tone mark) are stripped
+    too. CJK and Hangul are left alone: decomposing a Hangul syllable would
+    turn it into jamo that no longer match the literal text.
+    """
+    if text.isascii():
+        return text
+    import unicodedata
+
+    out = []
+    for char in text:
+        code = ord(char)
+        if 0x300 <= code <= 0x36F:
+            continue  # a combining mark on its own
+        if 0x80 <= code < 0x2000:
+            out.append("".join(c for c in unicodedata.normalize("NFKD", char) if not unicodedata.combining(c)))
+        else:
+            out.append(char)
+    return "".join(out)
 
 
 def _long_numbers(text: str) -> list[str]:
