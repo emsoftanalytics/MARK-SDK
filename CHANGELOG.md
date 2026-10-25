@@ -67,8 +67,10 @@ a million memories.
 - **Safe upgrades with a verified backup.** Opening a store written by an
   older MARK (from Python, the CLI, `mark serve` or MCP) first checks free
   space, copies the store with SQLite's online backup API into an
-  owner-only file that never overwrites another, and compares row counts and
-  an integrity check before migrating. The migration runs in one
+  owner-only file that never overwrites another, and verifies it (row
+  counts, plus an integrity check, or a page-by-page compare above 200 MB)
+  before migrating; at 1M memories (1.7 GB) the backup takes about 13 s and
+  the check about 19 s. The migration runs in one
   transaction and is checked again (no memories, facts or documents lost);
   on failure it is rolled back, or restored from the backup if it had been
   saved. `Mark.local()` and `MarkRuntime.local()` take `backup_on_upgrade=`

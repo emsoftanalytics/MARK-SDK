@@ -343,8 +343,9 @@ the server. Treat it like the database file itself.
   `0600` with `O_EXCL` (never replacing an existing file); the store's
   folder keeps its permissions, and a `backup_dir` MARK creates is `0700`.
   An encrypted store's backup is a raw copy and stays encrypted with the
-  same key; MARK never decrypts it. The backup is checked (row counts and an
-  integrity check) before the migration starts, and a failed migration is
+  same key; MARK never decrypts it. The backup is checked (row counts, and
+  an integrity check or a page-by-page compare with the store) before the
+  migration starts, and a failed migration is
   rolled back or restored from it. Forgetting a memory later, even with
   `secure=True`, does not touch existing backups: delete backups you no
   longer need (`mark backups` lists them). `mark backups restore` keeps the
