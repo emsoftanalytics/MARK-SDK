@@ -151,6 +151,10 @@ def main(argv: list[str] | None = None) -> int:
 
             run_mcp(_db_path(args.mcp_db) if args.mcp_db else db, args.mcp_agent or agent, args)
             return 0
+        if args.cmd in ("migrate", "backups"):
+            from mark._cli.upgrade_cmd import run as run_upgrade
+
+            return run_upgrade(args, db)
         cmd, payload = _request(args, agent)
         if cmd in _READ_ONLY and not db.exists():
             raise FileNotFoundError(f"no store at {db} (`mark remember TEXT` creates one; "
