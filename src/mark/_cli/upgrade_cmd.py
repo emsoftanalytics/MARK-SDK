@@ -71,6 +71,12 @@ def _migrate(args: argparse.Namespace, db: Path) -> int:
         print(f"schema:  {msg.schema_label(current)}: already current, nothing to upgrade")
         return 0
     print(f"schema:  {msg.schema_label(current or 0)} -> {msg.schema_label(target)}")
+    if _marked_encrypted(db):
+        # The command line opens stores without a key, and an encrypted store is
+        # refused before any backup or change: say so instead of "upgrading".
+        print("encrypted: yes -> the mark command cannot upgrade an encrypted store; open it once from "
+              "Python with its key (Mark.local(..., encryption=...)) to upgrade it with a backup", file=sys.stderr)
+        return 1
     with_backup = not args.no_backup and backups_enabled()
     space = ub.space_check(db, args.backup_dir)
     held, pid = foreign_server(str(db))
@@ -87,23 +93,34 @@ def _migrate(args: argparse.Namespace, db: Path) -> int:
         return 0 if (space.ok or not with_backup) and not held else 1
     from mark.store.sqlite import LocalMemoryStore
 
-    encrypted = False
     quiet = logging.getLogger("mark.store.sqlite")
     level = quiet.level
     quiet.setLevel(logging.ERROR)  # the success line is printed below, on stdout
     try:
         LocalMemoryStore(db, backup_on_upgrade=with_backup, backup_dir=args.backup_dir).close()
-    except StoreEncryptionError:
-        encrypted = True  # upgraded (the schema needs no key), then refused for reading without one
+    except StoreEncryptionError as exc:
+        # Never report an upgrade that did not happen: re-read the schema.
+        print(f"not upgraded: {exc} (schema is still {msg.schema_label(read_schema(db) or 0)})", file=sys.stderr)
+        return 1
     finally:
         quiet.setLevel(level)
     record = last_upgrade(db) or {}
     print(f"upgraded {db}: {msg.record_summary(record, with_path=False)}")
     if record.get("backup"):
         print(f"backup kept at {record['backup']}")
-    if encrypted:
-        print("note: the store is encrypted; open it with its key (encryption=...) to use it")
     return 0
+
+
+def _marked_encrypted(db: Path) -> bool:
+    """True when the store says it is encrypted at rest (read-only, no MARK import)."""
+    import sqlite3
+
+    try:
+        with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as conn:
+            row = conn.execute("SELECT value FROM schema_info WHERE key = 'encrypted_at_rest'").fetchone()
+    except sqlite3.Error:
+        return False
+    return row is not None and str(row[0]) == "1"
 
 
 def _list(args: argparse.Namespace, db: Path) -> int:
