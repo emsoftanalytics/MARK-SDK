@@ -39,7 +39,6 @@ friend roommate flatmate doctor dentist therapist lawyer teacher dog cat pet pet
 bicycle motorbike house flat apartment home address phone laptop passport licence license
 plate birthday anniversary email
 """.split())
-_SEQUENCE = re.compile(r"\b(step|steps|day|days|part|phase|stage|week|round)\s+\d+", re.IGNORECASE)
 _MY_THING = re.compile(r"\bmy\s+((?:[a-z]+\s+){0,2}?[a-z]+?)(?:'s\b|\b)", re.IGNORECASE)
 _INTRODUCING = re.compile(r"\bmy\s+[a-z]+(?:'s)?\s+(?:[A-Z][a-z]+\s+)?(is|are|was|were|has|had|will|'s)\b",
                           re.IGNORECASE)
@@ -89,7 +88,9 @@ def above_floor(pairs: list[tuple[Any, float]], task: str, ratio: float) -> list
     """Records of *pairs* (fragment, score; best first) worth briefing for *task*.
 
     A record that shares a content word with the question is kept down to
-    half the best score; one that shares none must reach *ratio* of it. When
+    half the best score; one that shares none must reach *ratio* of it. A
+    part of a numbered sequence ("Step 2", "days 4 to 6") that shares a word
+    is always kept, and so are the other parts of a kept sequence. When
     the best record itself shares no word with a question that has content
     words, it is kept alone (a lexical embedder's best guess is often noise,
     a semantic one's is often right: "pets" -> "a cat named Pixel").
@@ -104,17 +105,28 @@ def above_floor(pairs: list[tuple[Any, float]], task: str, ratio: float) -> list
     kept = []
     for fragment, score in pairs:
         shared = len(content_words(getattr(fragment, "content", "")) & question)
-        if score >= ratio * top or (shared and score >= 0.5 * top):
+        if score >= ratio * top or (shared and (score >= 0.5 * top or is_sequence(fragment))):
             # Each shared question word is worth a quarter of the best score:
             # "my gym locker number" ranks the locker line above "Joao's number".
             kept.append((score / top + 0.25 * shared, fragment))
+    units = {sequence_unit(fragment) for _, fragment in kept} - {None}
+    if units:   # the rest of each kept sequence, ranked by its own score
+        have = {id(fragment) for _, fragment in kept}
+        kept += [(score / top, f) for f, score in pairs if id(f) not in have and sequence_unit(f) in units]
     kept.sort(key=lambda pair: -pair[0])
     return [fragment for _, fragment in kept]
 
 
 def is_sequence(fragment: Any) -> bool:
     """True for one part of a multi-turn sequence ("Step 2: ...", "days 4 to 6 in Kyoto")."""
-    return bool(_SEQUENCE.search(getattr(fragment, "content", "") or ""))
+    return sequence_unit(fragment) is not None
+
+
+def sequence_unit(fragment: Any) -> str | None:
+    """The sequence a part belongs to ("step", "day", …), or None (same rule as the retrieval floor)."""
+    from mark.intelligence.retrieval_finish import sequence_unit as unit_of
+
+    return unit_of(getattr(fragment, "content", "") or "")
 
 
 def sequence_order(fragments: list[Any], key: Any) -> list[Any]:

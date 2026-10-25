@@ -341,6 +341,9 @@ a million memories.
   `.pgpass` lines, Hindi prose passwords and door, gate, alarm, safe or
   locker codes ("the door code for the server room is …"); status, error,
   postal and country codes are left alone.
+- Briefings keep every part of a multi-part sequence ("Step 2: …", "days 4 to
+  6 in Kyoto"): once one part is shown, the others are too, instead of the
+  middle parts falling under the relevance floor.
 
 ## 0.2.0a9 - 2026-10-15
 
