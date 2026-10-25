@@ -11,7 +11,7 @@ the agent a short, token-budgeted brief before it starts.
 ## Quickstart (60 seconds)
 
 ```bash
-pip install mark-sdk          # Python 3.10+; the core depends only on pydantic
+pip install mark-sdk          # Python 3.11+; the core depends only on pydantic
 ```
 
 ```python

@@ -12,6 +12,9 @@ a million memories.
 
 ### Upgrade notes
 
+- **Python 3.11 or newer is required.** Python 3.10 reached end of life in
+  October 2026, and the patched versions of optional dependencies (Pillow 13,
+  filelock 4.2) need 3.11; on Python 3.10, stay on 0.2.0a9.
 - **Back up first.** Copy `memory.db` (with its `-wal` and `-shm` files)
   before the first open with 0.2.0a10. The store is upgraded in place to
   schema version 6.
