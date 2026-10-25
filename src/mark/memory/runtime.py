@@ -8,7 +8,6 @@ the adapter offload pool and closes the store (then ``StoreClosedError``).
 from __future__ import annotations
 
 import sys
-
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -125,6 +124,8 @@ class MarkRuntime(ClosersMixin, MaintenanceMixin):
         max_memory_bytes: int | None = DEFAULT_MAX_MEMORY_BYTES,
         redact: object = True,
         injection: str = "tag",
+        backup_on_upgrade: bool = True,
+        backup_dir: str | Path | None = None,
     ) -> "MarkRuntime":
         """Construct a local instance.
 
@@ -137,10 +138,12 @@ class MarkRuntime(ClosersMixin, MaintenanceMixin):
         ``max_memory_bytes``: largest single memory a write accepts (default
         1 MB; None = no limit); longer text belongs in ``store_document``.
         ``redact``: True (default secret redaction), False, a RedactionPolicy or
-        a WritePolicy. ``injection``: "tag" (default), "quarantine" or "off".
+        a WritePolicy. ``injection``: "tag" (default), "quarantine" or "off". An older store is
+        upgraded after a verified backup (``backup_on_upgrade``, ``backup_dir``; mark.store._sqlite.upgrade).
         """
         registry = PluginRegistry()
-        store, provider = open_store(store_path, encryption or NoOpEncryptionProvider(), embedder)
+        store, provider = open_store(store_path, encryption or NoOpEncryptionProvider(), embedder,
+                                     backup_on_upgrade=backup_on_upgrade, backup_dir=backup_dir)
         runtime = cls(
             store=store,
             embedder=provider,
@@ -161,8 +164,7 @@ class MarkRuntime(ClosersMixin, MaintenanceMixin):
         )
         for plugin in plugins or []:
             registry.register(plugin, runtime=runtime)
-        # Direct users (scripts, the LangChain backend) get the user subject saved
-        # with the store (``mark config``), like Mark.local and the CLI do.
+        # Scripts and the LangChain backend get the stored user subject too (``mark config``).
         from mark.runtime_config import apply_user_subject
 
         apply_user_subject(runtime)
@@ -246,12 +248,8 @@ class MarkRuntime(ClosersMixin, MaintenanceMixin):
     def global_bus(self) -> GlobalMemoryBus:
         """Return the shared global memory bus."""
         if self._global_bus is None:
-            self._global_bus = GlobalMemoryBus(
-                store=self.store,
-                pipeline=self.pipeline,
-                embedder=self.embedder,
-                executor=self.executor,
-            )
+            self._global_bus = GlobalMemoryBus(store=self.store, pipeline=self.pipeline,
+                                               embedder=self.embedder, executor=self.executor)
         return self._global_bus
 
     def trust_bus(self):

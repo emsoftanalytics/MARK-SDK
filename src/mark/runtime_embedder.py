@@ -197,11 +197,13 @@ def remember_embedder(store: Any, provider: Any) -> None:
         set_meta(STORE_EMBEDDER_KEY, value)
 
 
-def open_store(store_path: Any, encryption: Any, requested: object | None) -> tuple[Any, EmbeddingProvider]:
+def open_store(store_path: Any, encryption: Any, requested: object | None,
+               **upgrade: Any) -> tuple[Any, EmbeddingProvider]:
     """``(LocalMemoryStore, embedder)`` for ``MarkRuntime.local``; the store is closed on failure.
 
     A store in MARK's own ``.mark`` folder left group/world-readable by an
     older version is made private first (:func:`mark._private_fs.tighten_mark_store`).
+    *upgrade* (``backup_on_upgrade``, ``backup_dir``) goes to the store.
     """
     from mark._private_fs import tighten_mark_store
     from mark.store.sqlite import LocalMemoryStore
@@ -209,7 +211,7 @@ def open_store(store_path: Any, encryption: Any, requested: object | None) -> tu
     if str(store_path) != ":memory:":
         for path in tighten_mark_store(store_path):
             logger.info("made %s private (owner-only), as MARK creates it", path)
-    store = LocalMemoryStore(store_path, encryption=encryption)
+    store = LocalMemoryStore(store_path, encryption=encryption, **upgrade)
     try:
         return store, embedder_for_store(store, requested)
     except BaseException:
