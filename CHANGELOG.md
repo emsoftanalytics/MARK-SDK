@@ -327,6 +327,7 @@ a million memories.
   server closes the connection while stopping; `--no-server` is accepted after
   the sub-command; `brief` on an empty store says so; no more "same day"
   notes.
+- `mark --version` prints the installed version (`mark-sdk 0.2.0a10`).
 
 ## 0.2.0a9 - 2026-10-15
 

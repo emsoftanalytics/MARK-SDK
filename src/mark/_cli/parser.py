@@ -9,6 +9,7 @@ import argparse
 from typing import Any
 
 from mark._cli.config import DEFAULT_AGENT
+from mark._version import __version__
 from mark.kinds import KINDS
 
 
@@ -33,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--db", help="SQLite store path (default: $MARK_DB or ./.mark/memory.db)")
     parser.add_argument("--agent", help=f"agent namespace (default: $MARK_AGENT or {DEFAULT_AGENT})")
     parser.add_argument("--no-server", action="store_true", help="always run in-process")
+    parser.add_argument("--version", action="version", version=f"mark-sdk {__version__}")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("ingest", help="store each non-empty line of FILE")

@@ -1,6 +1,7 @@
 """``mark`` command line: local memory for agents and scripts.
 
     mark [--db PATH] [--agent ID] [--no-server] <command> ...
+    mark --version                       prints the installed version (mark-sdk X)
 
 Write and revise
     remember TEXT [--kind K] [--tag T ...] [--importance X] [--extract-facts]
