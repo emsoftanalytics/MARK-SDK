@@ -113,6 +113,15 @@ class UpgradeMixin:
         if held:
             self.close()
             raise StoreInUseError(self.db_path, pid)
+        # A store already marked encrypted cannot be read without its key: refuse
+        # before any backup or migration rather than upgrading and then refusing.
+        if not self._encrypting:
+            marker = self._fetchone("SELECT value FROM schema_info WHERE key = 'encrypted_at_rest'")
+            if marker is not None and str(marker[0]) == "1":
+                from mark.errors import EncryptionRequiredError
+
+                self.close()
+                raise EncryptionRequiredError(self.db_path)
 
     def _upgrade_begin(self, conn: sqlite3.Connection) -> UpgradePlan | None:
         """Inside the write transaction, before any DDL: plan (and back up for) a due upgrade."""
