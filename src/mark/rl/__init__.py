@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors — v1.4 RL data pipeline
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi — v1.4 RL data pipeline
 #
 # Apache-2.0 (open SDK): open-contract data structures for collecting training signals.
 # Developers can inspect exactly what is being recorded about their agents.

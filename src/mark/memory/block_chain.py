@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Tamper-evident sealing and chaining of memory blocks.
 
 Sealing a block computes a deterministic SHA-256 content hash over the

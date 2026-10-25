@@ -16,9 +16,12 @@ Invariants:
   thread stopped) outside the LRU lock. Session ids and input text are
   length-capped.
 * **Never blocks the event loop, never waits long.** All watch work runs on
-  MARK's shared worker pool (``run_off_loop``); the prefetch wait is clamped
-  to ``_MAX_WAIT_S``.
-* **Never raises into the client.** Failures come back as a short text.
+  MARK's shared worker pool (``run_off_loop``); ``wait`` is 0-``_MAX_WAIT_S``
+  seconds. A session's first call waits at least ``_FIRST_WAIT_S`` so a cold
+  call does not answer "Nothing relevant" before its lookups ran.
+* **Clear failures.** A denied namespace, a bad role, a backend without
+  local memory or an internal error comes back as an ``isError=True``
+  result with one sentence (never a traceback, never a "success" text).
 * ``allowed_agent_ids`` is enforced exactly as for the other tools.
 
 The optional resource ``mark://briefing/{session_id}`` returns the current
@@ -32,13 +35,16 @@ import logging
 import threading
 from collections import OrderedDict
 from collections.abc import Callable
-from typing import Any
+from typing import Annotated, Any
 
 from mark.adapters.backend import run_off_loop
+from mark.adapters.mcp._common import AgentId, bounded, fail, tool_error_class
 
 logger = logging.getLogger("mark.adapters.mcp")
 
-_MAX_WAIT_S = 2.0            # upper bound on how long one call waits for prefetches
+_MAX_WAIT_S = 10.0           # upper bound on how long one call waits for prefetches
+_FIRST_WAIT_S = 2.0          # a new session's first call waits at least this long
+_BUDGET = (50, 4000)         # budget_tokens bounds (0 = the preset's own size)
 _MAX_TEXT = 8000             # only the tail of very long conversation text is scanned
 _MAX_SESSION_ID = 200
 _UNAVAILABLE = "MARK briefing unavailable: this backend has no local memory."
@@ -133,9 +139,7 @@ def _watch_factory(backend: Any, preset: str) -> Callable[[str], Any]:
             return None
         from mark.context.watch import ContextWatch
 
-        if preset == "small":
-            return ContextWatch.for_small_models(memory)
-        return ContextWatch(memory)
+        return ContextWatch.for_preset(memory, preset)
 
     return factory
 
@@ -146,9 +150,15 @@ def _briefing_sync(
     budget_tokens: int | None = None,
 ) -> str:
     """Observe the new input and render the session's briefing (blocking; run off-loop)."""
+    fresh = (agent_id, session_id) not in sessions.keys()
+    if fresh and not text.strip() and not any(m.get("content") for m in messages or []):
+        # Re-reading a running session's briefing needs no input; starting one does.
+        fail("mark_briefing needs the latest message as text, or the recent chat as messages")
     watch = sessions.get(agent_id, session_id)
     if watch is None:
-        return _UNAVAILABLE
+        fail(_UNAVAILABLE)
+    if fresh:
+        wait = max(wait, _FIRST_WAIT_S)  # first call: let the session's lookups finish
     if messages:
         watch.observe_messages(messages)
     text = text.strip()[-_MAX_TEXT:]
@@ -156,6 +166,20 @@ def _briefing_sync(
         watch.observe(text, role=role)
     brief = watch.briefing(wait=wait, budget_tokens=budget_tokens)
     return brief.text or "<mark_briefing>\nNothing relevant in memory yet.\n</mark_briefing>"
+
+
+def _check_input(text: str, messages: Any) -> None:
+    """``messages`` must be [{role, content}] (a new session also needs text or messages)."""
+    if messages is not None:
+        if not isinstance(messages, list):
+            fail("messages must be a list of {role, content} objects")
+        for index, message in enumerate(messages):
+            content = message.get("content") if isinstance(message, dict) else None
+            role = message.get("role", "user") if isinstance(message, dict) else None
+            if not isinstance(role, str) or not isinstance(content, (str, list)):
+                fail(f"messages[{index}] must be an object with a string role and a content "
+                     "(text or a list of parts)")
+
 
 
 def register_briefing(
@@ -168,45 +192,59 @@ def register_briefing(
     preset: str = "default",
 ) -> BriefingSessions:
     """Add the ``mark_briefing`` tool (and the briefing resource) to *server*."""
-    if preset not in ("default", "small"):
-        raise ValueError("briefing preset must be 'default' or 'small'")
+    if preset not in ("default", "small", "tiny"):
+        raise ValueError("briefing preset must be 'default', 'small' or 'tiny'")
     sessions = BriefingSessions(_watch_factory(backend, preset), max_sessions)
 
     @server.tool()
     async def mark_briefing(
-        text: str = "",
-        session_id: str = "default",
-        role: str = "user",
-        messages: list[dict[str, Any]] | None = None,
-        agent_id: str = "",
-        wait: float = 0.5,
-        budget_tokens: int = 0,
+        text: Annotated[str, bounded("The latest message (user, assistant or tool text).")] = "",
+        session_id: Annotated[str, bounded("Stable id of this conversation; one briefing state per id.",
+                                           maxLength=_MAX_SESSION_ID)] = "default",
+        role: Annotated[str, bounded("Who wrote text: user, assistant or tool.",
+                                     enum=["user", "assistant", "tool"])] = "user",
+        messages: Annotated[list[dict[str, Any]] | None,
+                            bounded("Recent chat as [{role, content}] instead of text.")] = None,
+        agent_id: AgentId = "",
+        wait: Annotated[float, bounded("Seconds (0-10) to let running lookups finish; a session's "
+                                       "first call waits at least 2.", minimum=0, maximum=_MAX_WAIT_S)] = 0.5,
+        budget_tokens: Annotated[int, bounded("Size cap in tokens (chars/4), 50-4000; 0 = the preset's "
+                                              "size.", minimum=0, maximum=_BUDGET[1])] = 0,
     ) -> str:
-        """Get MARK's briefing for this conversation: put it in your context before answering.
+        """Memory briefing for an ongoing conversation, meant for the context window.
 
         Pass the latest message as ``text`` (``role`` user, assistant or tool),
         or the recent chat as ``messages`` (role/content dicts), and a stable
         ``session_id`` per conversation. Returns current facts about the
-        subjects being discussed, corrections of outdated values and the
-        subjects memory knows nothing about (say so rather than guessing).
-        ``budget_tokens`` > 0 caps the briefing at that many tokens (estimated
-        as characters / 4), keeping corrections and unknowns first.
+        subjects being discussed, related notes, corrections of outdated
+        values and the subjects memory knows nothing about. ``budget_tokens``
+        > 0 caps the briefing (tokens estimated as characters / 4), keeping
+        corrections and unknowns first. ``wait`` (0-10 s) lets running
+        lookups finish.
         """
+        if isinstance(wait, bool) or not 0 <= wait <= _MAX_WAIT_S:
+            fail(f"wait must be between 0 and {_MAX_WAIT_S:g} seconds (got {wait!r})")
+        if budget_tokens and not _BUDGET[0] <= budget_tokens <= _BUDGET[1]:
+            fail(f"budget_tokens must be 0 (preset size) or between {_BUDGET[0]} and {_BUDGET[1]}")
         resolved, denied = resolve_agent(agent_id)
         if denied:
-            return f"MARK briefing failed: {denied}"
+            fail(f"MARK briefing failed: {denied}")
         if role not in ("user", "assistant", "tool"):
-            return "MARK briefing failed: role must be user, assistant or tool"
-        session = (session_id or "default")[:_MAX_SESSION_ID]
+            fail("MARK briefing failed: role must be user, assistant or tool")
+        if len(session_id or "") > _MAX_SESSION_ID:
+            fail(f"session_id is {len(session_id)} characters; the limit is {_MAX_SESSION_ID}")
+        _check_input(text, messages)
+        session = session_id or "default"
         try:
             return await run_off_loop(
                 _briefing_sync, sessions, resolved, session, text or "", role, messages,
-                min(max(float(wait), 0.0), _MAX_WAIT_S),
-                int(budget_tokens) if budget_tokens and int(budget_tokens) > 0 else None,
+                float(wait), int(budget_tokens) or None,
             )
-        except Exception as exc:  # anticipation is best-effort, never fatal for the client
+        except tool_error_class():
+            raise
+        except Exception as exc:  # reported as a tool error, never as a traceback
             logger.warning("mark_briefing failed: %s", exc)
-            return f"MARK briefing failed: {type(exc).__name__}"
+            fail(f"MARK briefing failed: {type(exc).__name__}")
 
     _register_resource(server, sessions, default_agent_id)
     return sessions

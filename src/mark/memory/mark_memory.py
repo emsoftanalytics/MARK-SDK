@@ -15,9 +15,16 @@ mixin                       responsibility
 ``TimelineMixin``           timeline(): a subject's whole ordered history
 ``ObserveMixin``            observe() and optional graph structuring
 ``GraphMixin``              node / attach_node / link_nodes / neighborhood
-``LifecycleMixin``          list / forget / promote / clear
+``VerbsMixin``              remember / recall and the a-prefixed async twins
+``RevisionsMixin``          supersede / update / resolve (history kept)
+``LifecycleMixin``          get / list / count / forget (cascading) / vacuum
+``PortabilityMixin``        export_jsonl / import_jsonl (backup, restore)
 ``ViewsMixin``              character / session / blocks / chain helpers
 ==========================  ==============================================
+
+Naming convention: plain verbs are synchronous and an ``a`` prefix marks the
+async twin (``recall``/``arecall``). ``store``/``retrieve`` (async) and
+``store_sync``/``retrieve_sync`` are the historical names and keep working.
 
 This module remains the public home of ``MarkMemory`` and re-exports the
 helper names that historically lived here.
@@ -30,12 +37,16 @@ from typing import Any
 
 from mark.embeddings import EmbeddingProvider
 from mark.intelligence.retrieval import RetrievalPipeline
+from mark.memory.facade.documents import DocumentsMixin
 from mark.memory.facade.graph_ops import _NODE_TYPE_ALIASES, GraphMixin, _resolve_node_type  # noqa: F401
 from mark.memory.facade.lifecycle import LifecycleMixin
 from mark.memory.facade.observing import ObserveMixin
+from mark.memory.facade.portability import PortabilityMixin
 from mark.memory.facade.retrieve import RetrieveMixin
 from mark.memory.facade.retrieve_async import BatchRetrieveMixin
+from mark.memory.facade.revisions import RevisionsMixin
 from mark.memory.facade.timeline import TimelineMixin
+from mark.memory.facade.verbs import VerbsMixin
 from mark.memory.facade.views import ViewsMixin
 from mark.memory.facade.write import WriteMixin
 from mark.memory.facade.write_guard import GuardMixin, MemoryWriteRejection, _with_occurred_at  # noqa: F401
@@ -62,6 +73,9 @@ logger = logging.getLogger(__name__)
 
 
 class MarkMemory(
+    VerbsMixin,
+    RevisionsMixin,
+    PortabilityMixin,
     RetrieveMixin,
     BatchRetrieveMixin,
     TimelineMixin,
@@ -69,6 +83,7 @@ class MarkMemory(
     LifecycleMixin,
     ViewsMixin,
     GraphMixin,
+    DocumentsMixin,
     WriteMixin,
     GuardMixin,
 ):

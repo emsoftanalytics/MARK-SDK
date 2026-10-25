@@ -14,6 +14,10 @@ Usage (standalone server script)::
     server = create_mark_mcp_server(backend)
     server.run()  # starts stdio MCP server
 
+Usage (command line; the same ``--db`` file the CLI uses)::
+
+    python -m mark.adapters.mcp --db .mark/memory.db --briefing
+
 Usage (from a local Mark instance directly)::
 
     from mark.runtime import Mark
@@ -27,20 +31,20 @@ Usage (from a local Mark instance directly)::
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Any
 
-from pydantic import Field
-
-from mark.adapters.backend import call_backend_off_loop as _backend_call
+from mark.adapters.mcp._common import fail
 
 if TYPE_CHECKING:
     from mark.adapters.backend import MarkBackend
 
-
-#: Importance is a normalised score; the JSON schema advertises the bounds so
-#: MCP clients see them, and pydantic rejects out-of-range values.
-Importance = Annotated[float, Field(ge=0.0, le=1.0)]
-
+#: Every tool the server can expose (``tools=`` selects a subset).
+CORE_TOOLS = ("mark_retrieve", "mark_observe", "mark_write")
+MEMORY_TOOLS = ("mark_fact", "mark_timeline", "mark_brief", "mark_list", "mark_resolve",
+                "mark_supersede", "mark_forget")
+#: The opt-in push-context tool: exposed with ``briefing=True`` or when ``tools=`` names it.
+BRIEFING_TOOL = "mark_briefing"
+ALL_TOOLS = CORE_TOOLS + MEMORY_TOOLS + (BRIEFING_TOOL,)
 
 
 def _require_mcp() -> Any:
@@ -75,15 +79,31 @@ def create_mark_mcp_server(
     briefing: bool = False,
     briefing_sessions: int = 64,
     briefing_preset: str = "default",
+    tools: Iterable[str] | None = None,
 ) -> Any:
     """
-    Create a FastMCP server that exposes MARK memory as MCP tools.
+    Create an MCP server that exposes MARK memory as MCP tools.
 
-    The server exposes three tools:
+    Tools (``tools=`` limits the set; default all):
 
-    - ``mark_retrieve(query)`` — semantic search over MARK memory.
-    - ``mark_observe(content)`` — store a new observation.
-    - ``mark_write(content)`` — write a durable memory fragment.
+    - ``mark_retrieve(query)`` — search memory (facts + memories, bounded plain text).
+    - ``mark_observe(content)`` / ``mark_write(content, kind=...)`` — store an
+      event / durable reference knowledge (kind also from a "TODO:" label).
+    - ``mark_fact(action, subject, ...)`` — get / set / history / list of facts.
+    - ``mark_timeline(subject)`` — every event about a subject, oldest first.
+    - ``mark_brief()`` — one-call session brief (facts, TODOs, decisions, bugs).
+    - ``mark_list(kind, open)`` — memories by kind (e.g. open TODOs) with short ids.
+    - ``mark_resolve(id)`` / ``mark_supersede(id, content)`` — close or replace one.
+    - ``mark_forget(memory_id | match, secure)`` — delete memories.
+    - ``mark_briefing`` (opt-in: ``briefing=True`` or named in ``tools=``) — push
+      context per session.
+
+    Ids in every output are 8-character short ids, accepted back as input.
+
+    Failures the caller can act on (empty query, unknown id, out-of-range
+    value, denied namespace, store error) come back as ``isError=True``
+    results with one clear sentence. The fact/timeline/brief/list/resolve/
+    supersede/forget tools need a backend with ``memory_for`` (``LocalMarkBackend``).
 
     Args:
         backend:          A :class:`~mark.adapters.backend.MarkBackend` instance.
@@ -98,31 +118,28 @@ def create_mark_mcp_server(
                           naming any other namespace are rejected.
                           ``default_agent_id`` is always allowed.
         briefing:         Opt in to the ``mark_briefing`` tool (and the
-                          ``mark://briefing/{session_id}`` resource): push
-                          context from a per-session ContextWatch. Needs a
-                          backend with ``memory_for`` (``LocalMarkBackend``).
+                          ``mark://briefing/{session_id}`` resource).
         briefing_sessions: Sessions kept (LRU; evicted watches are closed).
-        briefing_preset:  ``"default"`` or ``"small"`` (small-model preset).
-
-    Namespaces:
-        The ``agent_id`` tool parameter lets MCP clients choose the memory
-        namespace (empty string → ``default_agent_id``). Use
-        ``allowed_agent_ids`` when the server is exposed to untrusted clients.
+        briefing_preset:  ``"default"``, ``"small"`` or ``"tiny"`` (model size).
+        tools:            Names of the tools to expose (default: ``ALL_TOOLS``
+                          except ``mark_briefing``, which needs ``briefing=True``
+                          or its name in this list). Unknown names raise ValueError.
 
     Returns:
-        A ``FastMCP`` server instance. Call ``.run()`` to start it
-        (stdio transport by default) or use it programmatically in tests.
-
-    Example::
-
-        server = create_mark_mcp_server(backend)
-        server.run()               # blocks, speaks MCP stdio
+        The SDK's server instance. Call ``.run()`` to start it (stdio by
+        default), or ``python -m mark.adapters.mcp --db PATH`` (see ``launcher``).
     """
-    FastMCP = _require_mcp()
-    server = FastMCP(name)
+    server = _require_mcp()(name)
     allowed: set[str] | None = (
         None if allowed_agent_ids is None else {*allowed_agent_ids, default_agent_id}
     )
+    enabled = set(ALL_TOOLS if tools is None else tools)
+    unknown = enabled - set(ALL_TOOLS)
+    if unknown:
+        raise ValueError(f"unknown MCP tool(s) {', '.join(sorted(unknown))}; "
+                         f"expected some of: {', '.join(ALL_TOOLS)}")
+    # mark_briefing is opt-in: briefing=True, or named in an explicit tools= list.
+    briefing = briefing or (tools is not None and BRIEFING_TOOL in enabled)
 
     def _resolve_agent(agent_id: str) -> tuple[str, str | None]:
         resolved = agent_id or default_agent_id
@@ -130,118 +147,22 @@ def create_mark_mcp_server(
             return resolved, f"agent_id {resolved!r} is not allowed on this MARK MCP server"
         return resolved, None
 
-    @server.tool()
-    async def mark_retrieve(
-        query: str,
-        agent_id: str = "",
-        session_id: str | None = None,
-        session_prefix: str | None = None,
-        tags: list[str] | None = None,
-        block_id: str | None = None,
-        block_ids: list[str] | None = None,
-    ) -> str:
-        """Call this as your VERY FIRST action before planning or writing any code.
-
-        MARK stores project memory: coding conventions, API patterns, architectural
-        decisions, and past task outcomes. The returned context contains local
-        evidence the agent should use before starting work.
-        Example query: "FastAPI endpoint conventions and project structure".
-        """
+    def resolve(agent_id: str) -> str:
+        """The namespace to use, or a tool error when it is not allowed."""
         resolved, denied = _resolve_agent(agent_id)
         if denied:
-            return f"MARK retrieve failed: {denied}"
-        result = await _backend_call(
-            backend,
-            "retrieve",
-            query,
-            agent_id=resolved,
-            session_id=session_id,
-            session_prefix=session_prefix,
-            tags=tags,
-            block_id=block_id,
-            block_ids=block_ids or default_blocks,
-            compress=compress,
-        )
-        if not result.ok:
-            return f"MARK retrieve failed: {result.error}"
-        value = result.value
-        if hasattr(value, "as_context"):
-            return value.as_context()
-        if hasattr(value, "as_text"):
-            return value.as_text()
-        return str(value)
+            fail(denied)
+        return resolved
 
-    @server.tool()
-    async def mark_observe(
-        content: str,
-        agent_id: str = "",
-        session_id: str | None = None,
-        tags: list[str] | None = None,
-        source: str = "mcp",
-        importance: Importance = 0.5,
-    ) -> str:
-        """Record an episodic observation after completing meaningful work.
+    from mark.adapters.mcp._common import install_error_cleaner
+    from mark.adapters.mcp._tools import register_core_tools
+    from mark.adapters.mcp._tools_more import register_memory_tools
 
-        Call this after finishing a task or making an important decision.
-        MARK structures the observation into memory so future agents can learn from it.
-        Example: "Implemented Product CRUD with Pydantic model in routers/products.py".
-        """
-        resolved, denied = _resolve_agent(agent_id)
-        if denied:
-            return f"MARK observe failed: {denied}"
-        result = await _backend_call(
-            backend,
-            "observe",
-            content,
-            agent_id=resolved,
-            session_id=session_id,
-            tags=tags,
-            source=source,
-            importance=importance,
-        )
-        if not result.ok:
-            return f"MARK observe failed: {result.error}"
-        fragment_id = result.metadata.get("fragment_id", "")
-        return f"MARK observation stored{f' as {fragment_id}' if fragment_id else ''}."
+    install_error_cleaner(server)  # schema errors: one sentence, no pydantic dump
 
-    @server.tool()
-    async def mark_write(
-        content: str,
-        agent_id: str = "",
-        session_id: str | None = None,
-        tags: list[str] | None = None,
-        source: str = "mcp",
-        importance: Importance = 0.8,
-        canonical: bool = False,
-    ) -> str:
-        """Write a durable, reusable memory fragment to MARK.
-
-        Use for recording conventions, patterns, or facts that should always
-        be remembered across future agent runs. Unlike mark_observe (episodic),
-        mark_write stores persistent reference knowledge.
-        """
-        write_tags = list(tags or [])
-        if canonical and "canonical" not in write_tags:
-            write_tags.append("canonical")
-        resolved, denied = _resolve_agent(agent_id)
-        if denied:
-            return f"MARK write failed: {denied}"
-        result = await _backend_call(
-            backend,
-            "write",
-            content,
-            agent_id=resolved,
-            session_id=session_id,
-            tags=write_tags or None,
-            source=source,
-            importance=0.95 if canonical else importance,
-        )
-        if not result.ok:
-            return f"MARK write failed: {result.error}"
-        fragment_id = result.metadata.get("fragment_id", "")
-        label = "canonical memory" if canonical else "memory"
-        return f"MARK {label} written{f' as {fragment_id}' if fragment_id else ''}."
-
+    register_core_tools(server, backend, resolve, default_blocks=default_blocks, compress=compress,
+                        enabled=enabled)
+    register_memory_tools(server, backend, resolve, enabled=enabled)
     if briefing:
         from mark.adapters.mcp._briefing import register_briefing
 
@@ -293,7 +214,17 @@ def create_mark_mcp_server_from_local(
     )
 
 
+def run_mcp(*args: Any, **kwargs: Any) -> None:
+    """Start a stdio MCP server over a store (see :func:`mark.adapters.mcp.launcher.run_mcp`)."""
+    from mark.adapters.mcp.launcher import run_mcp as _run
+
+    _run(*args, **kwargs)
+
+
 __all__ = [
+    "ALL_TOOLS",
+    "BRIEFING_TOOL",
     "create_mark_mcp_server",
     "create_mark_mcp_server_from_local",
+    "run_mcp",
 ]

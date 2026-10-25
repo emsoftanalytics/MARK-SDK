@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Functional tests for the MCP server adapter and LangChain tools adapter.
 
 Both adapters run against the real local backend — no network, no provider
@@ -35,13 +35,19 @@ def _call(server, tool, args):
     return asyncio.run(_run())
 
 
-def test_mcp_server_exposes_three_tools(mark):
+def test_mcp_server_exposes_the_memory_tools(mark):
     server = create_mark_mcp_server(LocalMarkBackend(mark, default_agent_id=AGENT))
+    core = create_mark_mcp_server(LocalMarkBackend(mark), tools=["mark_retrieve", "mark_observe", "mark_write"])
 
-    async def _names():
-        return {t.name for t in await server.list_tools()}
+    async def _names(srv):
+        return {t.name for t in await srv.list_tools()}
 
-    assert asyncio.run(_names()) == {"mark_retrieve", "mark_observe", "mark_write"}
+    assert asyncio.run(_names(server)) == {"mark_retrieve", "mark_observe", "mark_write", "mark_fact",
+                                           "mark_timeline", "mark_brief", "mark_list", "mark_resolve",
+                                           "mark_supersede", "mark_forget"}
+    assert asyncio.run(_names(core)) == {"mark_retrieve", "mark_observe", "mark_write"}
+    with pytest.raises(ValueError):
+        create_mark_mcp_server(LocalMarkBackend(mark), tools=["mark_everything"])
 
 
 def test_mcp_write_then_retrieve_round_trip(mark):

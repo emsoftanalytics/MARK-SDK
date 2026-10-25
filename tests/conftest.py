@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Suite-wide isolation from the developer's environment.
 
 ``MARK_EMBEDDER`` is an explicit operator opt-in that changes the default

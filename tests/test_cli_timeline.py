@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """The `mark timeline` command and `recall --chronological`."""
 from __future__ import annotations
 
@@ -35,8 +35,9 @@ def test_timeline_lists_subject_events_oldest_first(tmp_path: Path, capsys) -> N
     header, *lines = _run(capsys, "--db", db, "--no-server", "timeline", "Dana Kim").splitlines()
     assert header == "Timeline of Dana Kim: 3 events" and len(lines) == 3
     assert "joined the Payments team" in lines[0]
-    assert "same day 1/2" in lines[1] and "to the Search team" in lines[1]
-    assert "same day 2/2" in lines[2] and "to the Billing team" in lines[2]
+    # a10: same-day events keep their order without a "same day k/m" marker.
+    assert "same day" not in "\n".join(lines)
+    assert "to the Search team" in lines[1] and "to the Billing team" in lines[2]
 
 
 def test_timeline_json_limit_and_window(tmp_path: Path, capsys) -> None:

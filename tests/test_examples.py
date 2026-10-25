@@ -31,6 +31,8 @@ def test_live_example_runner_imports_all_examples():
         "07_briefing_any_loop.py",
         "08_visual_continuity.py",
         "09_context_replacement.py",
+    "10_coding_agent_memory.py",
+    "11_documents_and_files.py",
     ]
 
     assert module.EXAMPLES == expected

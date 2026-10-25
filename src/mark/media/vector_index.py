@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """A separate vector partition for image embeddings.
 
 Image vectors (e.g. 512-d CLIP) must never mix with MARK's text embeddings

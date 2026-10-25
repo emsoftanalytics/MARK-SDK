@@ -10,7 +10,16 @@ from mark.types import MemoryState
 
 @dataclass
 class GovernanceMiddleware(BaseMiddleware):
-    """Apply an explicit local governance gate before memory writes."""
+    """Apply an explicit local governance gate before memory writes.
+
+    Defaults (0.2.0a10): the gate redacts secrets and contact PII with whole
+    values replaced, rejects empty/low-confidence content and never
+    truncates. Error text (tracebacks, ``Error:`` lines, HTTP 5xx) is kept;
+    use ``GovernanceMiddleware(gate=ConsolidationGate(failure=FailureFilter()))``
+    to quarantine it. Rejected writes are stored QUARANTINED (not indexed)
+    when ``quarantine_on_reject`` is True. Write-time secret redaction and
+    injection tagging happen independently in the memory write path.
+    """
 
     gate: ConsolidationGate = field(default_factory=ConsolidationGate)
     quarantine_on_reject: bool = True

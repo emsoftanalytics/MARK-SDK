@@ -43,17 +43,24 @@ from mark.store._sqlite.codec import (  # noqa: F401 - re-exported for compatibi
     _unpack_embedding,
 )
 from mark.store._sqlite.connection import ConnectionMixin
+from mark.store._sqlite.document_index import DocumentIndexMixin
 from mark.store._sqlite.encryption_guard import EncryptionGuardMixin
 from mark.store._sqlite.events import EventMixin
 from mark.store._sqlite.fact_jobs import FactJobMixin
+from mark.store._sqlite.fact_import import FactImportMixin
 from mark.store._sqlite.facts import FactMixin
+from mark.store._sqlite.facts_multi import FactMultiMixin
 from mark.store._sqlite.fragment_reads import FragmentReadMixin
 from mark.store._sqlite.fragments import FragmentWriteMixin
 from mark.store._sqlite.graph import GraphMixin
+from mark.store._sqlite.lifecycle import LifecycleStoreMixin
 from mark.store._sqlite.mentions import MentionMixin
 from mark.store._sqlite.rows import RowDecodingMixin
 from mark.store._sqlite.schema import SchemaMixin
 from mark.store._sqlite.search import SearchMixin
+from mark.store._sqlite.sketch_search import SketchSearchMixin
+from mark.store._sqlite.unreadable import UnreadableRowsMixin
+from mark.store._sqlite.upgrade import UpgradeMixin
 
 logger = logging.getLogger(__name__)
 
@@ -61,18 +68,25 @@ __all__ = ["ListenerCallback", "LocalMemoryStore"]
 
 
 class LocalMemoryStore(
+    LifecycleStoreMixin,
     FragmentWriteMixin,
     FragmentReadMixin,
     SearchMixin,
     MentionMixin,
+    SketchSearchMixin,
     BlockMixin,
     GraphMixin,
+    DocumentIndexMixin,
     FactMixin,
+    FactMultiMixin,
+    FactImportMixin,
     FactJobMixin,
     EventMixin,
     RowDecodingMixin,
     SchemaMixin,
+    UpgradeMixin,
     EncryptionGuardMixin,
+    UnreadableRowsMixin,
     ConnectionMixin,
 ):
     """Thread-safe SQLite store for fragments, blocks, documents, nodes, and edges.
@@ -95,8 +109,12 @@ class LocalMemoryStore(
         path: str | Path = ":memory:",
         *,
         encryption: EncryptionProvider | None = None,
+        backup_on_upgrade: bool = True,
+        backup_dir: str | Path | None = None,
     ) -> None:
         self.db_path = str(path)
+        self.backup_on_upgrade = backup_on_upgrade
+        self.backup_dir = backup_dir
         self.encryption = encryption or NoOpEncryptionProvider()
         # Re-entrant: write helpers may call other locked helpers.
         self._lock = threading.RLock()
@@ -104,8 +122,8 @@ class LocalMemoryStore(
         self._generation = 0  # bumped by close() to invalidate thread-local handles
         self._conns: list[sqlite3.Connection] = []
         self._listeners: list[ListenerCallback] = []
-        # retrievable_ids() cache: filter key -> (ids, write_version, deadline).
-        self._ids_cache: dict[tuple, tuple[frozenset[str], int, float]] = {}
+        # retrievable_ids() cache: filter key -> scope_delta._Entry (ids, version, expiry, refresh).
+        self._ids_cache: dict = {}
         self._fts_supported = False
         self._fts_enabled = False
         self._shared_conn: sqlite3.Connection | None = None

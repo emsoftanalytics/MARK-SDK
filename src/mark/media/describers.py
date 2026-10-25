@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Describers: turn an image file into observed attributes.
 
 A describer is any ``callable(path) -> dict | str``. This module ships one
@@ -23,6 +23,7 @@ import urllib.request
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+from mark.security.lazy_regex import lazy_compile
 
 _PROMPT = (
     "Describe the visible attributes of {who} in this image as one flat JSON object "
@@ -30,7 +31,7 @@ _PROMPT = (
     "hair). {focus}Only include what is clearly visible; omit anything you cannot "
     "see. Reply with JSON only."
 )
-_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
+_FENCE = lazy_compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 
 
 class OpenAIVisionDescriber:

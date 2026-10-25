@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """End-to-end: MarkAgentMiddleware anticipates context through a real LangChain agent.
 
 The scripted model never calls a memory tool. MARK must still put the right
@@ -73,7 +73,12 @@ def restart(service: str) -> str:
 
 
 @pytest.fixture
-def mark(tmp_path: Path):
+def mark(tmp_path: Path, monkeypatch):
+    # Deterministic under load: the first briefing waits for the watch's own
+    # prefetch (cold_wait), not for whatever a wall-clock bound allows.
+    from mark.context.watch import ContextWatch
+
+    monkeypatch.setattr(ContextWatch, "cold_wait", 60.0)
     with Mark.local(tmp_path) as instance:
         memory = instance.runtime.memory("__mark__")
         memory.store_many_sync(LOG)
@@ -102,7 +107,7 @@ def test_context_is_anticipated_and_stale_claims_corrected(mark, mode: str) -> N
     # First call: the ticket, plus the linked service's current port, without any memory tool.
     assert "<mark_briefing>" in first
     assert "TICKET HAL-4433 opened" in first
-    assert "port: 4444" in first
+    assert "atlas-core port = 4444" in first
     # Second call: the stale value the model stated is corrected.
     assert "9239 is outdated" in second
     assert second.index("Corrections") < second.index("TICKET HAL-4433")

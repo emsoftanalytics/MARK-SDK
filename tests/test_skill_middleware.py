@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Packaged skill loader, SkillMiddleware battery, and adapter auto-injection."""
 
 from __future__ import annotations
@@ -90,7 +90,7 @@ def test_adapter_middleware_auto_injects_skill():
 
     mw.wrap_model_call(_Request(), handler)
     assert "mark-memory-middleware" in seen["system"], "skill should be auto-injected"
-    assert "[MARK project memory]" in seen["system"], "context block should still inject"
+    assert "[MARK memory]" in seen["system"], "context block should still inject"
 
     # Opt-out keeps the old behavior
     mw_off = MarkAgentMiddleware(backend=_Backend(), agent_id="skill-agent", include_skill=False)

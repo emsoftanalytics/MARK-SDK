@@ -13,7 +13,7 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
 
     Uses the batch endpoint ``POST /api/embed`` and falls back to the legacy
     single-text ``POST /api/embeddings`` when the server answers 404 for the
-    route (Ollama < 0.3). Connection errors and HTTP 429/5xx are retried with
+    route (Ollama < 0.3). Connection errors, read timeouts and HTTP 429/5xx are retried with
     exponential backoff and full jitter. Uses only the standard library.
     """
 

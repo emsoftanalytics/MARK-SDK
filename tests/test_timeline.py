@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Subject timelines (v0.2.0a9 item 2): whole history, ordered, no top-k cap.
 
 Run-2 MH10 motivated this: a person with a dozen transfer records had the
@@ -40,7 +40,7 @@ def test_dated_events_follow_declared_time_and_same_day_storage_order(runtime) -
     assert all(e.dated and e.basis == BASIS_DECLARED for e in tl)
     assert tl.latest().text.endswith("Platform team.")
     text = tl.as_text()
-    assert "2026-04-07 same day 2/2 · HR: Tomasz Nowak transferred to the Platform team." in text
+    assert "2026-04-07 · HR: Tomasz Nowak transferred to the Platform team." in text  # a10: no "same day"
     assert "[2026-04-07]" not in text  # the leading stamp is not repeated
 
 
@@ -56,7 +56,7 @@ def test_undated_record_stored_before_the_dated_log_is_never_latest(runtime) -> 
     tl = mem.timeline("Tomasz Nowak")
 
     assert [e.basis for e in tl] == [BASIS_DECLARED, BASIS_DECLARED, BASIS_UNKNOWN]
-    assert tl.events[-1].label() == "undated"
+    assert tl.events[-1].label().startswith("stored ")  # a10: the stored date, never "undated"
     assert tl.latest().text.endswith("Platform team.")
 
 
@@ -72,7 +72,7 @@ def test_undated_record_stored_after_every_dated_one_is_latest(runtime) -> None:
 
     assert tl.events[-1].basis == BASIS_AFTER_DATED and not tl.events[-1].dated
     assert tl.latest().text.endswith("Security team.")
-    assert "undated, stored later · Update" in tl.as_text()
+    assert "\nstored 20" in tl.as_text() and "undated" not in tl.as_text()
 
 
 def test_only_undated_records_use_storage_order(runtime) -> None:

@@ -3,12 +3,15 @@
 One retrieval runs these stages (each implemented in its own module):
 
     scope filter + index sync      retrieval_index     (_IndexSyncMixin)
+    since / until, query dates     retrieval_time      (_TimeMixin)
     vector + lexical, RRF fusion   retrieval_fusion    (_FusionMixin)
-    graph expansion + reranking    retrieval_fusion    (GraphExpander, MemoryReranker)
-    temporal ordering              temporal_order
+    graph expansion                retrieval_fusion    (GraphExpander)
+    reranking                      reranker            (MemoryReranker)
+    multi-hop, superseding updates multi_hop           (_MultiHopMixin)
+    temporal + supersession order  retrieval_ordering  (_OrderingMixin)
     plasticity feedback            retrieval_feedback  (_ReinforcementMixin)
     facts, anchors, gap report     retrieval_reporting (_ReportingMixin)
-    optional compression           this module
+    optional compression           retrieval_ordering
 
 The pipeline is safe to share between threads: index synchronisation and
 rebuilds are serialised by ``_sync_lock``; everything else works on
@@ -25,7 +28,10 @@ from mark.intelligence.classifier import QueryAnalysis, QueryClassifier
 from mark.intelligence.compressor import ContextualCompressor, NoopCompressor
 from mark.intelligence.graph_expansion import GraphExpander
 from mark.intelligence.query_expander import NoopQueryExpander, QueryExpander
-from mark.intelligence.query_understanding import _content_terms
+from mark.intelligence.fusion_scoring import uses_score_fusion
+from mark.intelligence.kind_intent import asked_kind, kind_candidates
+from mark.intelligence.multi_hop import _MultiHopMixin
+from mark.intelligence.query_understanding import _content_terms, is_blank_query
 from mark.intelligence.reranker import MemoryReranker
 from mark.intelligence.retrieval_feedback import _ReinforcementMixin
 from mark.intelligence.retrieval_fusion import _FusionMixin
@@ -42,16 +48,21 @@ from mark.intelligence.retrieval_policy import (
     RetrievalPolicySpec,
     SessionFilter,
 )
+from mark.intelligence.retrieval_config import _PipelineConfigMixin
+from mark.intelligence.retrieval_finish import materialise
+from mark.intelligence.retrieval_ordering import _OrderingMixin
 from mark.intelligence.retrieval_reporting import _ReportingMixin
 from mark.intelligence.retrieval_result import RetrievalResult
-from mark.intelligence.temporal_order import temporal_order
+from mark.intelligence.retrieval_time import _TimeMixin, query_date_ranges
 from mark.plasticity.hebbian import EdgeCoActivation, HebbianReinforcement
 from mark.plugins import HOOK_POLICY_ENGINE, PluginRegistry
 from mark.store.sqlite import LocalMemoryStore
-from mark.types import MemoryFragment
+from mark.types import GapReport
 
 
-class RetrievalPipeline(_IndexSyncMixin, _FusionMixin, _ReinforcementMixin, _ReportingMixin):
+class RetrievalPipeline(
+    _PipelineConfigMixin, _IndexSyncMixin, _TimeMixin, _FusionMixin, _MultiHopMixin, _OrderingMixin, _ReinforcementMixin, _ReportingMixin,
+):
     """Local hybrid retrieval: lexical (BM25) + vector channels fused with RRF,
     graph expansion, prior-aware reranking, calibrated gap reporting."""
 
@@ -72,6 +83,7 @@ class RetrievalPipeline(_IndexSyncMixin, _FusionMixin, _ReinforcementMixin, _Rep
         top_k_with_llm: int = 20,
         reinforce: ReinforceMode | str = ReinforceMode.RELEVANT,
         fusion: FusionConfig | None = None,
+        user_subject: str = "user",
     ) -> None:
         # VectorIndex defines __len__, so an empty index is falsy: never use `or`.
         self._store = store
@@ -86,34 +98,14 @@ class RetrievalPipeline(_IndexSyncMixin, _FusionMixin, _ReinforcementMixin, _Rep
         self._top_k_with_llm = max(1, top_k_with_llm)
         self._reinforce = ReinforceMode(reinforce)
         self._fusion = fusion if fusion is not None else FusionConfig()
+        # Fact subject that "I / my / me" questions refer to.
+        self._user_subject = user_subject
         self._hebbian = HebbianReinforcement()
         self._coact   = EdgeCoActivation()
         # Serialises index sync / rebuilds; agents whose embedder fingerprint
         # was already checked in this process are remembered.
         self._sync_lock = threading.RLock()
         self._verified_agents: set[str] = set()
-
-    # ── Configuration ─────────────────────────────────────────────────────────
-
-    def configure_compressor(self, compressor: ContextualCompressor) -> None:
-        """Replace the active compressor at runtime (late-binding)."""
-        self._compressor = compressor
-
-    def configure_query_expander(self, expander: QueryExpander) -> None:
-        """Replace the active query expander at runtime (late-binding)."""
-        self._query_expander = expander
-
-    def configure_top_k_with_llm(self, top_k: int) -> None:
-        """Set the candidate pool size used when an LLM compressor is active."""
-        self._top_k_with_llm = max(1, top_k)
-
-    def configure_reinforce(self, mode: ReinforceMode | str) -> None:
-        """Set how retrieval feeds back into plasticity (relevant | all | none)."""
-        self._reinforce = ReinforceMode(mode)
-
-    def configure_fusion(self, fusion: FusionConfig) -> None:
-        """Set how vector and lexical evidence are fused (see FusionConfig)."""
-        self._fusion = fusion
 
     # ── Read path ─────────────────────────────────────────────────────────────
     # (The write path, index_fragment / index_fragments, lives in _IndexSyncMixin.)
@@ -128,11 +120,19 @@ class RetrievalPipeline(_IndexSyncMixin, _FusionMixin, _ReinforcementMixin, _Rep
         compress: bool = False,
         expand: bool = False,
         reinforce: ReinforceMode | str | None = None,
+        since: object = None,
+        until: object = None,
     ) -> RetrievalResult:
-        """Run the full pipeline: filter, lexical + vector search, fuse, expand, rerank."""
+        """Run the full pipeline: filter, lexical + vector search, fuse, expand, rerank.
+
+        since / until  keep only memories whose event time lies in the window
+                       (datetime, date, ISO text or "last week"); same as the
+                       SessionFilter fields of the same name.
+        """
         return self.retrieve_many(
             [query], agent_id, policy,
             session_filter=session_filter, compress=compress, expand=expand, reinforce=reinforce,
+            since=since, until=until,
         )[0]
 
     def retrieve_many(
@@ -145,6 +145,8 @@ class RetrievalPipeline(_IndexSyncMixin, _FusionMixin, _ReinforcementMixin, _Rep
         compress: bool = False,
         expand: bool = False,
         reinforce: ReinforceMode | str | None = None,
+        since: object = None,
+        until: object = None,
     ) -> list[RetrievalResult]:
         """Answer several queries in one pass; results are in query order.
 
@@ -156,26 +158,39 @@ class RetrievalPipeline(_IndexSyncMixin, _FusionMixin, _ReinforcementMixin, _Rep
         # Filters are applied in SQL before scoring so other agents, other
         # sessions, deleted or quarantined memories can never crowd the top-k.
         sf = session_filter or SessionFilter()
+        if since is not None or until is not None:
+            sf = replace(sf, since=since if since is not None else sf.since,
+                         until=until if until is not None else sf.until)
         allowed_ids = self._allowed_ids(agent_id, sf)
-        if not allowed_ids:
-            results = []
-            for query in queries:
-                analysis = self._analyzer.analyze(query)
-                results.append(self._empty_result(
-                    query, agent_id, policy, self._resolve_spec(policy, analysis), analysis,
-                ))
-            return results
+        if sf.exclude_tags:
+            allowed_ids = self._without_tags(agent_id, allowed_ids, sf.exclude_tags)
+        if sf.since is not None or sf.until is not None:
+            allowed_ids = self._time_scope(agent_id, allowed_ids, sf.since, sf.until)
+        if not allowed_ids or all(is_blank_query(q) for q in queries):
+            return [self._no_search_result(query, agent_id, policy) for query in queries]
         indexed_ids = self._sync_index(agent_id, allowed_ids)
         # Unfiltered whole-agent search: skip per-id filtering (one matvec, no
         # id-set intersection) when the index partition is exactly the allowed set.
         scope_ids = None if indexed_ids == allowed_ids else allowed_ids
         return [
-            self._retrieve_one(
+            self._no_search_result(query, agent_id, policy) if is_blank_query(query) else self._retrieve_one(
                 query, agent_id, policy, allowed_ids, scope_ids,
                 compress=compress, expand=expand, reinforce_mode=reinforce_mode,
+                time_scoped=sf.since is not None or sf.until is not None,
             )
             for query in queries
         ]
+
+    def _no_search_result(self, query: str, agent_id: str, policy: RetrievalPolicy) -> RetrievalResult:
+        """Result without a search: a blank query finds nothing; an empty scope may still hold facts."""
+        analysis = self._analyzer.analyze(query)
+        spec = self._resolve_spec(policy, analysis)
+        if not is_blank_query(query):
+            return self._empty_result(query, agent_id, policy, spec, analysis)
+        return RetrievalResult(
+            query=query, fragments=[], scores=[], policy_used=policy, spec_used=spec,
+            gap_report=GapReport(reason="Empty query: nothing to search for."), analysis=analysis,
+        )
 
     def _retrieve_one(
         self,
@@ -188,6 +203,7 @@ class RetrievalPipeline(_IndexSyncMixin, _FusionMixin, _ReinforcementMixin, _Rep
         compress: bool,
         expand: bool,
         reinforce_mode: ReinforceMode,
+        time_scoped: bool = False,
     ) -> RetrievalResult:
         """Run every stage for one query against an already-synced scope."""
         analysis = self._analyzer.analyze(query)
@@ -207,55 +223,50 @@ class RetrievalPipeline(_IndexSyncMixin, _FusionMixin, _ReinforcementMixin, _Rep
         fused, cosine, channels, vector_norm = self._fuse_channels(
             query_texts, agent_id, allowed_ids, scope_ids, depth,
         )
-        query_terms = _content_terms(query)
+        # A date the query names ("last Tuesday", "3rd of May") is matched
+        # against event and written dates, not as words.
+        date_ranges, undated_query = query_date_ranges(query)
+        query_terms = _content_terms(undated_query)
+        kind_ask = asked_kind(query)  # "What TODOs are still open?": a listing of one kind
         fragments_by_id, relevance, seed_scores = self._score_seeds(
             query, query_terms, len(query_texts), fused, cosine, vector_norm, depth,
+            date_ranges=date_ranges, kind_ask=kind_ask,
+            extra={**self._date_candidates(allowed_ids, date_ranges),
+                   **kind_candidates(self._store, agent_id, allowed_ids, kind_ask)},
         )
         expanded_scores, contradiction_ids = self._expand_seeds(
             spec, seed_scores, effective_top_k, agent_id, allowed_ids,
             fragments_by_id, relevance, cosine, query_terms,
         )
+        # Rank a wider pool: per-document diversification may skip chunks.
         ranked = self._rank(
             query, policy, agent_id, analysis, expanded_scores,
-            fragments_by_id, contradiction_ids, effective_top_k,
+            fragments_by_id, contradiction_ids, effective_top_k * 2,
+        )
+        fragments, scores, relevances = materialise(
+            ranked, fragments_by_id, relevance, self._store.get, _RETRIEVABLE_STATES, effective_top_k,
         )
 
-        # Re-check state at materialisation: a plugin scorer may return ids
-        # that were never fetched, or whose state changed since.
-        fragments: list[MemoryFragment] = []
-        scores: list[float] = []
-        relevances: list[float] = []
-        for result in ranked:
-            fragment = fragments_by_id.get(result.fragment_id) or self._store.get(result.fragment_id)
-            if fragment is None or fragment.state not in _RETRIEVABLE_STATES:
-                continue
-            fragments.append(fragment)
-            scores.append(result.score)
-            relevances.append(relevance.get(result.fragment_id, 0.0))
-
-        fragments, scores, relevances, intent = temporal_order(query, fragments, scores, relevances)
-
+        # Follow names / identifiers in the best results (one hop per graph level, max 2).
+        lookups: dict = {}  # entity lookups shared by both stages, for this query only
+        fragments, scores, relevances = self._multi_hop(
+            min(spec.graph_depth, 2), query, query_terms, fragments, scores, relevances,
+            agent_id, allowed_ids, scope_ids, effective_top_k, lookups,
+        )
+        if not date_ranges:
+            fragments, scores, relevances = self._pull_superseders(
+                query, query_terms, fragments, scores, relevances,
+                agent_id, allowed_ids, scope_ids, effective_top_k, lookups,
+            )
+        fragments, scores, relevances, intent, facts, missing, gap_report, outdated, conflicts = (
+            self._order_and_report(query, agent_id, spec, analysis, fragments, scores, relevances,
+                                   date_ranges=date_ranges, time_scoped=time_scoped or bool(date_ranges),
+                                   cosine=cosine if uses_score_fusion(self._fusion, self._embedder) else None))
         self._reinforce_results(fragments, relevances, spec, reinforce_mode)
 
-        facts = self._matching_facts(query, agent_id, intent)
-        missing = self._missing_anchors(query, agent_id, fragments, facts)
-        gap_report = self._gap_report(relevances, spec, analysis, query, missing)
-
-        # Optional contextual compression: filter/rewrite fragments before context injection.
-        was_compressed = False
-        if compress and not isinstance(self._compressor, NoopCompressor):
-            compressed = self._compressor.compress(query, fragments)
-            if len(compressed) != len(fragments) or any(
-                c.content != f.content for c, f in zip(compressed, fragments)
-            ):
-                id_to_score = dict(zip([f.id for f in fragments], scores))
-                id_to_rel = dict(zip([f.id for f in fragments], relevances))
-                fragments = compressed
-                scores = [id_to_score.get(f.id, 0.0) for f in fragments]
-                relevances = [id_to_rel.get(f.id, 0.0) for f in fragments]
-                was_compressed = True
-                gap_report = self._gap_report(relevances, spec, analysis, query, missing)
-
+        fragments, scores, relevances, gap_report, was_compressed = self._maybe_compress(
+            compress, query, spec, analysis, fragments, scores, relevances, missing, gap_report,
+        )
         return RetrievalResult(
             query=query,
             fragments=fragments,
@@ -270,6 +281,8 @@ class RetrievalPipeline(_IndexSyncMixin, _FusionMixin, _ReinforcementMixin, _Rep
             temporal_intent=intent.value,
             missing_anchors=missing,
             facts=facts,
+            outdated=sorted(outdated),
+            conflicts=conflicts,
         )
 
     def _resolve_spec(self, policy: RetrievalPolicy, analysis: QueryAnalysis) -> RetrievalPolicySpec:

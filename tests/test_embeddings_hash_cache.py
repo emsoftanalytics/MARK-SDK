@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Embedding providers: base fingerprinting, HashEmbeddingProvider v2, and the
 thread-safe embedding cache.
 """
@@ -38,8 +38,8 @@ def test_base_fingerprint_default() -> None:
 def test_hash_v2_defaults_and_fingerprint() -> None:
     h = HashEmbeddingProvider()
     assert h.dim == 256
-    assert h.fingerprint == "mark.hash-v2:256"
-    assert HashEmbeddingProvider(dim=64).fingerprint == "mark.hash-v2:64"
+    assert h.fingerprint == "mark.hash-v3:256"
+    assert HashEmbeddingProvider(dim=64).fingerprint == "mark.hash-v3:64"
     with pytest.raises(ValueError):
         HashEmbeddingProvider(dim=0)
 
@@ -69,11 +69,15 @@ def test_hash_v2_speed() -> None:
     text = "Elena carries a brass key into the warehouse."
     h.embed(text)
     n = 2000
-    start = time.perf_counter()
-    for _ in range(n):
-        h.embed(text)
-    per_call_ms = (time.perf_counter() - start) / n * 1000
-    assert per_call_ms < 0.5  # target < 0.1 ms; generous bound for slow CI
+    # Thread CPU time, best of three: wall time swings with machine load, CPU time
+    # of this thread does not, so the bound stays a real regression guard.
+    best = float("inf")
+    for _ in range(3):
+        start = time.thread_time()
+        for _ in range(n):
+            h.embed(text)
+        best = min(best, (time.thread_time() - start) / n * 1000)
+    assert best < 0.5  # target < 0.1 ms; generous bound for slow CI
 
 
 # ── cache ────────────────────────────────────────────────────────────────────

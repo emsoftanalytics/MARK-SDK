@@ -60,6 +60,20 @@ class FragmentWriteMixin:
             self._emit("unretrievable", unretrievable)
         return ids
 
+    def existing_ids(self, ids: Iterable[str]) -> set[str]:
+        """The subset of *ids* that already have a fragment row (any agent, any state).
+
+        Cheap (primary-key lookups, no decryption): used by idempotent bulk
+        writes to skip items a previous, interrupted call already stored.
+        """
+        wanted = list(dict.fromkeys(ids))
+        found: set[str] = set()
+        for chunk in _chunks(wanted, _SQL_CHUNK):
+            placeholders = ",".join("?" for _ in chunk)
+            found.update(str(row[0]) for row in self._fetchall(
+                f"SELECT id FROM fragments WHERE id IN ({placeholders})", chunk))
+        return found
+
     def _store_row(self, conn: sqlite3.Connection, fragment: MemoryFragment) -> tuple[str, bool]:
         """Upsert one fragment; returns (id, whether it left a retrievable state)."""
         # Hash is computed over the plaintext before encryption, so reads can
@@ -98,6 +112,7 @@ class FragmentWriteMixin:
                 "refusing to overwrite it."
             )
         cursor = conn.execute(_UPSERT_FRAGMENT_SQL, params)
+        self._note_changed((fragment.id,))  # lets id caches apply a delta (scope_delta)
         # ON CONFLICT DO UPDATE keeps the rowid; lastrowid is only set on insert.
         rowid = int(existing["rowid"]) if existing is not None else int(cursor.lastrowid or 0)
         became_unretrievable = (
@@ -107,11 +122,14 @@ class FragmentWriteMixin:
         )
         if self._fts_enabled:
             self._fts_upsert(conn, rowid, fragment.id, fragment.agent_id, fragment.content, fragment.tags)
+        elif self._encrypting:  # we hold the plaintext now: sketch it instead of decrypting it later
+            self._sketch_written(rowid, encrypted_content, fragment.content)
         return fragment.id, became_unretrievable
 
     def update_state(self, fragment_id: str, new_state: MemoryState) -> None:
         """Update a fragment's lifecycle state."""
         with self._writing() as conn:
+            self._note_changed((fragment_id,))
             cursor = conn.execute(
                 "UPDATE fragments SET state = ?, updated_at = ? WHERE id = ?",
                 (new_state.value, datetime.now(timezone.utc).isoformat(), fragment_id),
@@ -121,16 +139,21 @@ class FragmentWriteMixin:
             self._emit("unretrievable", [fragment_id])
 
     def update_embedding(self, fragment_id: str, embedding: list[float]) -> None:
-        """Persist a fragment's embedding (float32 blob)."""
+        """Persist a fragment's embedding (float32 blob); a vector snapshot stops serving the old one."""
         with self._writing(structural=False) as conn:
+            # No RETURNING: it needs SQLite 3.35, older than some supported Pythons ship.
+            row = conn.execute("SELECT agent_id FROM fragments WHERE id = ?", (fragment_id,)).fetchone()
             conn.execute(
                 "UPDATE fragments SET embedding_blob = ?, embedding = NULL WHERE id = ?",
                 (_pack_embedding(embedding), fragment_id),
             )
+            if row is not None:
+                self._mark_vector_dirty(conn, str(row[0]), fragment_id)
 
     def delete(self, fragment_id: str) -> bool:
         """Delete by id; returns True when a row was removed."""
         with self._writing() as conn:
+            self._note_changed((fragment_id,))
             row = conn.execute("SELECT rowid FROM fragments WHERE id = ?", (fragment_id,)).fetchone()
             if row is None:
                 return False
@@ -162,6 +185,7 @@ class FragmentWriteMixin:
         now = datetime.now(timezone.utc).isoformat()
         changed: list[str] = []
         with self._writing() as conn:
+            self._note_changed(fragment_ids)
             for fragment_id in fragment_ids:
                 cursor = conn.execute(
                     "UPDATE fragments SET state = ?, updated_at = ? WHERE id = ? AND state != ?",

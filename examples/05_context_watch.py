@@ -10,7 +10,7 @@ from mark import ContextWatch, Mark
 
 with TemporaryDirectory() as folder, Mark.local(folder) as mark:
     ops = mark.runtime.memory("ops")
-    ops.store_sync("[2026-03-12] TICKET HAL-4433: checkout returns 502 errors; affects checkout-api.")
+    ops.remember("[2026-03-12] TICKET HAL-4433: checkout returns 502 errors; affects checkout-api.")
     ops.facts.set("checkout-api", "port", "8080", valid_from="2026-03-01")
     ops.facts.set("checkout-api", "port", "9090", valid_from="2026-03-20")
 

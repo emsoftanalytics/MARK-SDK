@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Maintenance jobs respect sealed blocks (dedup, consolidation, block graph) and
 retrieve/heal retries keep the caller's filters.
 """
@@ -144,6 +144,7 @@ class _EvidenceSkill(Skill):
 
 def test_retrieve_escalation_and_heal_retries_preserve_filters(store) -> None:
     pipeline = _RecordingPipeline(store)
+    store.unknown_block_ids = lambda agent_id, ids: []  # "block-123" counts as an existing block
     with ThreadPoolExecutor(max_workers=1) as executor:
         mem = MarkMemory(agent_id=AGENT, store=store, pipeline=pipeline,
                          embedder=None, executor=executor)  # type: ignore[arg-type]

@@ -19,7 +19,7 @@ Invariants (each one is tested):
   ``prefer="openai:<base_url>|<model>"``, or the same string in the
   ``MARK_EMBEDDER`` environment variable.
 - **Nothing installed, no env var => exactly the hash embedder** (same
-  ``mark.hash-v2:256`` fingerprint as the historical default).
+  ``mark.hash-v3:256`` fingerprint as the historical default).
 - **Lazy.** This module imports only the standard library and the embeddings
   base at import time; optional packages are imported inside candidate builders.
 
@@ -165,11 +165,12 @@ def embedder_from_spec(spec: str, *, allow_download: bool = False) -> EmbeddingP
         from mark.embeddings.model2vec import Model2VecProvider
 
         model = arg or DEFAULT_MODEL2VEC_MODEL
-        return Model2VecProvider(model, local_path=_cached_model2vec_path(model))
+        return _loading(model, lambda: Model2VecProvider(model, local_path=_cached_model2vec_path(model)))
     if kind == "fastembed":
         from mark.embeddings.fastembed import FastEmbedProvider
 
-        return FastEmbedProvider(arg or DEFAULT_FASTEMBED_MODEL)
+        model = arg or DEFAULT_FASTEMBED_MODEL
+        return _loading(model, lambda: FastEmbedProvider(model))
     if kind == "ollama":
         from mark.embeddings.ollama import OllamaEmbeddingProvider
 
@@ -193,6 +194,7 @@ def _auto_local(allow_download: bool) -> EmbeddingProvider:
         logger.debug("auto_embedder: %s not available", name)
     provider = HashEmbeddingProvider()
     logger.info("auto_embedder: no local model available; using %s", provider.fingerprint)
+    _warn_hash_fallback_once()
     return provider
 
 
@@ -209,11 +211,12 @@ def auto_embedder(prefer: str | None = None, *, allow_download: bool = False) ->
         prefer = os.environ.get(ENV_VAR, "").strip() or None
         source = ENV_VAR
     if prefer is None:
-        return _auto_local(allow_download)
+        return _tag(_auto_local(allow_download), SOURCE_AUTO)
     provider = embedder_from_spec(prefer, allow_download=allow_download)
     if parse_embedder_spec(prefer)[0] != "auto":
         logger.info("auto_embedder: using %s from %s=%r", provider.fingerprint, source, prefer)
-    return provider
+        return _tag(provider, SOURCE_ENV if source == ENV_VAR else SOURCE_SPEC)
+    return _tag(provider, SOURCE_AUTO)
 
 
 def resolve_embedder(embedder: object | None) -> EmbeddingProvider:
@@ -227,9 +230,63 @@ def resolve_embedder(embedder: object | None) -> EmbeddingProvider:
     """
     if embedder is None:
         env = os.environ.get(ENV_VAR, "").strip()
-        return auto_embedder(env) if env else HashEmbeddingProvider()
+        if env:
+            return _tag(auto_embedder(env), SOURCE_ENV)
+        return _tag(HashEmbeddingProvider(), SOURCE_DEFAULT)
     if isinstance(embedder, str):
-        return auto_embedder(None if embedder.strip().lower() == "auto" else embedder)
+        auto = embedder.strip().lower() == "auto"
+        provider = auto_embedder(None if auto else embedder)
+        return provider if auto else _tag(provider, SOURCE_SPEC)
     if not isinstance(embedder, EmbeddingProvider) and not hasattr(embedder, "embed"):
         raise TypeError(f"embedder must be an EmbeddingProvider, a spec string or None, got {type(embedder).__name__}")
     return embedder  # type: ignore[return-value]
+
+
+# ── Visibility: how the embedder was chosen (reported by mark.embeddings.info) ──
+
+#: How the active embedder was chosen (``EmbedderInfo.source``).
+SOURCE_AUTO, SOURCE_SPEC, SOURCE_ENV, SOURCE_DEFAULT, SOURCE_CUSTOM = "auto", "spec", "env", "default", "custom"
+_SOURCE_ATTR = "_mark_embedder_source"
+_HF_HINT = (
+    "Check network access and that the Hugging Face cache is writable: set HF_HOME to a writable "
+    "directory (e.g. HF_HOME=~/.cache/huggingface), or pre-download the model there."
+)
+_INSTALL_HINT = (
+    'install a local model for semantic recall: pip install "mark-sdk[model2vec]" and use '
+    'embedder="model2vec" once (downloads ~30 MB), or set MARK_EMBEDDER=model2vec'
+)
+_warned_fallback = False
+
+
+def _tag(provider: EmbeddingProvider, source: str) -> EmbeddingProvider:
+    """Record how *provider* was chosen (best effort: never fails a build)."""
+    try:
+        setattr(provider, _SOURCE_ATTR, source)
+    except (AttributeError, TypeError):  # e.g. __slots__ providers
+        pass
+    return provider
+
+
+def _warn_hash_fallback_once() -> None:
+    # One WARNING per process: "auto" silently meaning lexical-only search was
+    # the most reported surprise, but repeating it on every open is noise.
+    global _warned_fallback
+    if not _warned_fallback:
+        _warned_fallback = True
+        logger.warning("embedder 'auto' found no local model and fell back to the hash embedder "
+                       "(keyword-like matching only); %s", _INSTALL_HINT)
+
+
+def _loading(model: str, build: Callable[[], EmbeddingProvider]) -> EmbeddingProvider:
+    """Build an explicit model provider, turning download/permission errors into a MarkError."""
+    try:
+        return build()
+    except ImportError:
+        raise  # the provider's own message already names the extra to install
+    except Exception as exc:  # huggingface_hub raises OSError/HTTPError/PermissionError subclasses
+        from mark.errors import EmbedderUnavailableError
+
+        raise EmbedderUnavailableError(
+            f"could not load embedding model {model!r} ({type(exc).__name__}: {exc}). {_HF_HINT}"
+        ) from exc
+

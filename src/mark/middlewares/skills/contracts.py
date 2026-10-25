@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Skill contracts: the :class:`Skill` ABC, its manifest and its result type.
 
 Every skill (built-in, packaged, third-party, or SKILL.md-backed) implements

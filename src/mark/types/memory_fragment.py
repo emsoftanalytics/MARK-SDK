@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """MemoryFragment: the atomic, immutable unit of memory in MARK."""
 from __future__ import annotations
 
@@ -67,6 +67,19 @@ class MemoryFragment(BaseModel):
     def _utc_datetimes(cls, v: Optional[datetime]) -> Optional[datetime]:
         """Coerce naive datetimes to UTC."""
         return ensure_utc(v)
+
+    @property
+    def kind(self) -> Optional[str]:
+        """The memory's kind from its ``kind:<k>`` tag ("todo", "bug", ...), else None.
+
+        Read-only view of the tag ``remember(kind=...)`` writes; see
+        :func:`mark.kinds.kind_of` for the variant that also reads a leading
+        "TODO:" label.
+        """
+        for tag in self.tags or ():
+            if tag.startswith("kind:") and len(tag) > 5:
+                return tag[5:]
+        return None
 
     @property
     def is_working_memory(self) -> bool:

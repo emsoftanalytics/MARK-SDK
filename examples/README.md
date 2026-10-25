@@ -1,19 +1,22 @@
 # MARK examples
 
 Short, runnable scripts. Each shows one idea, runs offline, and writes only to
-a temporary directory.
+a temporary directory. They need Python 3.11 or newer and `mark-sdk` installed (or the
+repository's `src` on `PYTHONPATH`).
 
 | Script | What it shows |
 | --- | --- |
-| `01_remember_and_recall.py` | Write memories, then recall them with a question in your own words. |
+| `01_remember_and_recall.py` | `remember()` a few notes, then `recall()` them with a question in your own words. |
 | `02_agent_with_memory.py` | Ask an LLM the same question without and with MARK memory. |
 | `03_sessions.py` | Keep memories per session and recall from a group of sessions. |
 | `04_facts_over_time.py` | Track values that change over time; ask what is true now. |
 | `05_context_watch.py` | Let MARK prepare a briefing before the agent asks, and correct outdated claims. |
-| `06_safe_sync.py` | Prepare memory for sync with secrets redacted (nothing is uploaded). |
+| `06_safe_sync.py` | Secrets are redacted before memory is written; sync envelopes stay redacted (nothing is uploaded). |
 | `07_briefing_any_loop.py` | Put a MARK briefing into a plain OpenAI-style message list, with the small-model preset. |
 | `08_visual_continuity.py` | Remember generated frames and catch one that contradicts a character's facts. |
-| `09_context_replacement.py` | MARK as the context window: the model sees two messages plus a token-budgeted briefing. |
+| `09_context_replacement.py` | MARK as the context window: the model sees two messages plus a 200-token briefing (`MarkChat`, small preset). |
+| `10_coding_agent_memory.py` | Coding-agent memory: kinds, `resolve()` for TODOs and bugs, `supersede()`, and the session `brief()`. |
+| `11_documents_and_files.py` | `store_document()` and `remember_file()` on a Markdown file and an image; recall by section. |
 | `getting_started_with_mark.ipynb` | A longer walkthrough: a coding agent with and without MARK (middleware, tools, MCP). |
 
 Run them all from the repository root:

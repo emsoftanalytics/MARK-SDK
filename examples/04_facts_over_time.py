@@ -19,11 +19,11 @@ with TemporaryDirectory() as folder, Mark.local(folder) as mark:
     print("Mar 15:  ", ops.facts.as_of("checkout-api", "port", "2026-03-15").value)
 
     # Recall understands "now" and attaches the current fact.
-    result = ops.retrieve_sync("Which port does checkout-api use now?")
+    result = ops.recall("Which port does checkout-api use now?")
     print("Recall:  ", [f.as_text() for f in result.facts])
 
     # And says so when it has never heard of something.
-    unknown = ops.retrieve_sync("Which port does billing-api use?")
+    unknown = ops.recall("Which port does billing-api use?")
     print("Unknown: ", unknown.missing_anchors)
 
     assert ops.facts.get("checkout-api", "port").value == "9090"

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Compare what a describer observed in an image with what the facts expect.
 
 The describer is pluggable (``describe(path) -> dict | str``): in production a
@@ -24,17 +24,18 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping
 from typing import Any
+from mark.security.lazy_regex import lazy_compile
 
 Synonyms = Mapping[str, Iterable[str]] | Iterable[Iterable[str]] | None
 
-_WORD = re.compile(r"[a-z0-9]+")
+_WORD = lazy_compile(r"[a-z0-9]+")
 _ARTICLES = frozenset({"a", "an", "the"})
 _NEGATIONS = frozenset({"not", "no", "without", "never", "isn", "isnt", "nor"})
 _UNKNOWN = frozenset({
     "", "unknown", "unclear", "not visible", "n a", "na", "none visible", "cannot tell",
     "can t tell", "not shown", "not sure", "unsure", "unspecified", "null", "none",
 })
-_CLAUSE = re.compile(r"[.;\n]+|,(?=\s)")
+_CLAUSE = lazy_compile(r"[.;\n]+|,(?=\s)")
 
 
 def normalize(text: Any) -> str:

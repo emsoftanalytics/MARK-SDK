@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Shared corpus (FACTS/QUERIES) and fixtures for the retrieval-pipeline tests.
 
 benchmarks/bench_runtime.py imports FACTS and QUERIES via test_retrieval_hybrid.

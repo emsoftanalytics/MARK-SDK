@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """PatternFactExtractor on present-tense descriptions and multi-clause lines.
 
 "X runs on port 8080" or "dana owns X" state a current value just as

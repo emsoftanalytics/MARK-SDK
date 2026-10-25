@@ -10,8 +10,11 @@ from __future__ import annotations
 __all__ = [
     "EncryptionKeyError",
     "EncryptionRequiredError",
+    "InvalidMemoryError",
     "MarkError",
+    "MemoryTooLargeError",
     "PlaintextStoreError",
+    "StoreClosedError",
     "StoreEncryptionError",
     "StoreVersionError",
 ]
@@ -73,3 +76,154 @@ class StoreVersionError(MarkError, RuntimeError):
             f"up to version {supported}; refusing to open it so it is not damaged. "
             "Upgrade mark-sdk (pip install -U mark-sdk) to use this store."
         )
+
+
+# ── API input and lookup errors (W6: API, lifecycle and CLI) ─────────────────
+# Each also subclasses the builtin callers historically caught (ValueError,
+# KeyError, RuntimeError), so existing ``except ValueError`` code keeps working.
+
+__all__ += [
+    "EmbedderUnavailableError",
+    "InvalidInputError",
+    "MemoryNotFoundError",
+    "UnknownBlockError",
+]
+
+
+class InvalidInputError(MarkError, ValueError):
+    """A value passed to a MARK API is invalid (wraps pydantic validation errors)."""
+
+    @classmethod
+    def from_validation(cls, exc: Exception, what: str = "memory") -> "InvalidInputError":
+        """Turn a pydantic ``ValidationError`` into a one-line, field-named MARK error."""
+        errors = getattr(exc, "errors", None)
+        parts: list[str] = []
+        if callable(errors):
+            for item in errors():
+                field = ".".join(str(loc) for loc in item.get("loc", ())) or what
+                parts.append(f"{field}: {item.get('msg', 'invalid value')}")
+        return cls(f"invalid {what}: " + ("; ".join(parts) or str(exc)))
+
+
+class UnknownBlockError(InvalidInputError):
+    """``blocks=[...]`` named a block that has never been created or written."""
+
+    def __init__(self, unknown: list[str], known: list[str]) -> None:
+        listed = ", ".join(sorted(known)) or "(none yet)"
+        super().__init__(
+            f"unknown block(s) {', '.join(repr(name) for name in unknown)}; known blocks: {listed}. "
+            "Create one with memory.block(name) or write to it first."
+        )
+
+
+class MemoryNotFoundError(MarkError, KeyError):
+    """No memory with the given id exists for this agent."""
+
+    def __init__(self, memory_id: str) -> None:
+        super().__init__(memory_id)
+        self.memory_id = memory_id
+
+    def __str__(self) -> str:
+        return f"no memory with id {self.memory_id!r}"
+
+
+class EmbedderUnavailableError(MarkError, RuntimeError):
+    """An embedding model could not be loaded or downloaded."""
+
+
+# ── Store lifecycle and write-path errors (W1: durability) ──────────────────
+
+class StoreClosedError(MarkError, RuntimeError):
+    """The store (or the runtime that owns it) was closed and cannot be used again."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(
+            f"MARK store {path!r} is closed; open a new one "
+            "(e.g. MarkRuntime.local(store_path=...)) instead of reusing it after shutdown()/close()."
+        )
+
+
+class InvalidMemoryError(InvalidInputError):
+    """A value passed to a memory write is not a storable memory.
+
+    An :class:`InvalidInputError` (and so a :class:`ValueError`), so callers that already catch ``ValueError``
+    keep working. ``reason`` is a short machine-friendly code such as
+    ``"empty"``, ``"not_text"``, ``"invalid_unicode"``, ``"too_large"`` or
+    ``"metadata"``.
+    """
+
+    def __init__(self, message: str, *, reason: str = "invalid") -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+class MemoryTooLargeError(InvalidMemoryError):
+    """A single memory exceeds the configured maximum write size."""
+
+    def __init__(self, size: int, limit: int) -> None:
+        super().__init__(
+            f"memory is {size:,} bytes, over the {limit:,}-byte limit for one memory; "
+            "split it or use store_document(...) for long text "
+            "(or raise max_memory_bytes if you really need one huge memory)",
+            reason="too_large",
+        )
+        self.size = size
+        self.limit = limit
+
+
+__all__ += ["StoreInUseError"]
+
+
+class StoreInUseError(MarkError, RuntimeError):
+    """The store needs a migration but a ``mark serve`` process (another build) has it open."""
+
+    def __init__(self, path: str, pid: int | None) -> None:
+        owner = f" (pid {pid})" if pid else ""
+        super().__init__(
+            f"{path} is being served by a MARK server{owner} from another MARK version, and this "
+            f"version needs to upgrade the store first. Stop that server (`mark serve stop`, or end "
+            f"the process), then run this command again; restart `mark serve` with this version."
+        )
+        self.path = path
+        self.pid = pid
+
+
+# ── Upgrade backups (0.2.0a10) ───────────────────────────────────────────────
+# Messages are written by mark.store._sqlite.upgrade_messages (plain words,
+# with sizes); the numbers are also attributes, for programs.
+
+__all__ += ["BackupVerificationError", "BackupWriteError", "InsufficientSpaceError",
+            "UpgradeBackupError", "UpgradeFailedError"]
+
+
+class UpgradeBackupError(MarkError, RuntimeError):
+    """Upgrading an older store (or the safety backup taken first) failed.
+
+    ``path`` is the store; ``store_changed`` is False whenever the store was
+    left exactly as it was (always, except when even a restore failed).
+    """
+
+    def __init__(self, message: str, *, path: str, store_changed: bool = False, **numbers: object) -> None:
+        super().__init__(message)
+        self.path = path
+        self.store_changed = store_changed
+        for name, value in numbers.items():
+            setattr(self, name, value)
+
+
+class InsufficientSpaceError(UpgradeBackupError):
+    """Not enough free disk space for the backup (``store_bytes``, ``wal_bytes``,
+    ``required_bytes``, ``free_bytes``, ``shortfall_bytes``, ``directory``)."""
+
+
+class BackupWriteError(UpgradeBackupError):
+    """The backup file could not be written (``backup_path``, ``errno``, ``strerror``)."""
+
+
+class BackupVerificationError(UpgradeBackupError):
+    """The backup did not match the store (``backup_path``, ``differences``); it was removed."""
+
+
+class UpgradeFailedError(UpgradeBackupError):
+    """The migration failed and was undone (``backup_path``, ``from_version``,
+    ``to_version``, ``restored``: True when the store was restored from the backup)."""

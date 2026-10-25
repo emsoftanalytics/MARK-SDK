@@ -29,6 +29,7 @@ class _Anchor:
     known: bool | None = None   # None until a prefetch has answered
     linked: bool = False        # anticipated via a link, not mentioned by anyone yet
     assistant_only: bool = False  # only the model has named it (may be its own wording)
+    introduced: bool = False    # first named in a user statement: new, so never "Not in memory"
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,21 @@ class Briefing:
 
     def __bool__(self) -> bool:
         return bool(self.text)
+
+    # Same rendering family as RetrievalResult and Timeline.
+    def as_context(self) -> str:
+        """The briefing text, ready to place in a prompt (already budgeted)."""
+        return self.text
+
+    def as_text(self) -> str:
+        """Plain text for terminals and logs (same as :meth:`as_context`)."""
+        return self.text
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-ready summary: text, ids, unknown subjects, corrections and token usage."""
+        usage = self.usage.as_dict() if self.usage is not None and hasattr(self.usage, "as_dict") else None
+        return {"text": self.text, "anchors": list(self.anchors), "corrections": list(self.corrections),
+                "unknown": list(self.unknown), "memory_ids": list(self.memory_ids), "usage": usage}
 
 
 # The three wrappers below import lazily so that importing mark.context does

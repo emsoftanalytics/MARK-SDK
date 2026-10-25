@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 from mark.memory.block import MemoryBlock
 from mark.memory.block_chain import BlockChain, BlockVerification, ChainVerification
 from mark.memory.block_graph import BlockGraph

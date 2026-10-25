@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 #
 # QueryClassifier — heuristic query complexity classifier.
 # Runs in <1 ms with no LLM call. Drives retrieval depth (top_k, graph_depth).
@@ -54,7 +54,7 @@ _STOP_WORDS: Set[str] = {
     "be", "because", "been", "but", "by", "can", "could", "did", "do", "does",
     "each", "for", "from", "get", "got", "had", "has", "have", "he", "her",
     "here", "him", "his", "how", "if", "in", "into", "is", "it", "its",
-    "just", "like", "make", "me", "more", "my", "no", "not", "now", "of",
+    "just", "like", "make", "many", "me", "more", "much", "my", "no", "not", "now", "of",
     "on", "one", "only", "or", "other", "our", "out", "over", "said", "same",
     "she", "should", "so", "some", "than", "that", "the", "their", "them",
     "then", "there", "these", "they", "this", "those", "through", "to", "too",

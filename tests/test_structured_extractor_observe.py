@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Integration: observe() uses LLM structured extraction to create typed nodes,
 edges and tags, falling back to deterministic extraction on malformed output.
 """

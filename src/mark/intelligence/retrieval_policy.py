@@ -146,6 +146,13 @@ class SessionFilter:
     scope           restrict to a specific MemoryScope
     block_id        restrict to fragments belonging to one memory block
     block_ids       restrict to fragments belonging to any listed block
+    since / until   keep memories whose event time (occurred_at, a leading
+                    date stamp, else storage time) lies in the window; each
+                    bound is a datetime, a date, ISO text or a natural
+                    expression ("last week", "2026-10-05", "yesterday").
+                    Both are inclusive; a date-only ``until`` covers that day.
+    exclude_tags    drop memories carrying any listed tag before scoring
+                    (e.g. ["mark:resolved", "mark:superseded"] for open items only)
 
     Pass no arguments for whole-agent retrieval (default, cross-session).
     Fragments inside QUARANTINED blocks are always excluded regardless of
@@ -158,6 +165,9 @@ class SessionFilter:
     scope:          MemoryScope | None = None
     block_id:       str | None         = None
     block_ids:      list[str] | None   = None
+    since:          object             = None
+    until:          object             = None
+    exclude_tags:   list[str] | None   = None
 
 
 # QueryAnalysis is the Pydantic model from intelligence.classifier; any

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """SimpleBlock: a named, tag-scoped memory container for the simple API.
 
 A block is not a stored entity: writes are fragments of the reserved simple
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from mark.kinds import DEFAULT_CONFIDENCE, DEFAULT_IMPORTANCE, normalize_kind
 from mark.memory.record import MemoryRecord, MemoryState
 
 
@@ -40,9 +41,23 @@ class SimpleBlock:
     so they can be scoped during retrieval with blocks=[...].
     """
 
-    def __init__(self, label: str, mark_memory: Any) -> None:
+    def __init__(self, label: str, mark_memory: Any, *, kind: str = "custom",
+                 description: str = "") -> None:
         self._label  = label
         self._memory = mark_memory
+        self._kind = kind or "custom"
+        self._description = description
+        # A block kind that names a memory kind ("preference", "todos"...) is
+        # applied to every write; any other kind is a descriptive label only.
+        try:
+            self._memory_kind = normalize_kind(self._kind) if self._kind != "custom" else None
+        except ValueError:
+            self._memory_kind = None
+
+    @property
+    def kind(self) -> str:
+        """The block's kind label (``"custom"`` unless given to ``block()``)."""
+        return self._kind
 
     @property
     def label(self) -> str:
@@ -58,20 +73,28 @@ class SimpleBlock:
         self,
         content:    str,
         *,
-        importance: float = 0.5,
-        confidence: float = 0.5,
+        importance: float = DEFAULT_IMPORTANCE,
+        confidence: float = DEFAULT_CONFIDENCE,
         metadata:   dict[str, Any] | None = None,
         source:     str = "local",
         state:      MemoryState = MemoryState.RAW,
     ) -> MemoryRecord:
-        """Write content to this block. Returns a MemoryRecord."""
-        frag_id = self._memory.store_sync(
+        """Write content to this block. Returns a MemoryRecord.
+
+        Defaults match every other write API (importance 0.5, confidence 1.0);
+        invalid input raises :class:`mark.errors.InvalidInputError`.
+        """
+        meta = dict(metadata or {})
+        if self._kind != "custom":
+            meta.setdefault("block_kind", self._kind)
+        frag_id = self._memory.remember(
             content,
+            kind       = self._memory_kind,
             importance = importance,
             confidence = confidence,
             tags       = [f"block:{self._label}"],
             source     = source,
-            metadata   = metadata or {},
+            metadata   = meta,
         )
         # Fetch the stored fragment so created_at matches what is persisted
         stored = self._memory._store.get(frag_id)
@@ -94,14 +117,13 @@ class SimpleBlock:
 
     def records(self) -> list[MemoryRecord]:
         """Return all records stored in this block."""
-        tag = f"block:{self._label}"
         return [
             _fragment_to_record(f, self._label)
-            for f in self._memory.list()
-            if tag in f.tags
+            for f in self._memory.list(limit=None, tags=[f"block:{self._label}"])
         ]
 
     def to_dict(self) -> dict[str, Any]:
         """Describe this block as a plain dictionary (records not included)."""
-        return {"id": self._label, "label": self._label, "kind": "simple"}
+        return {"id": self._label, "label": self._label, "kind": self._kind,
+                "description": self._description}
 

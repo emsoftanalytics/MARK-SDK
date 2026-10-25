@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Maintenance pruner: skips protected fragments, idempotent decay, Hebbian
 parameter, sealed edges, uncapped sweeps, and timezone-naive datetimes.
 """

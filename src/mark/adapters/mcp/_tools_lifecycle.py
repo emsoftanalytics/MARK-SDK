@@ -1,0 +1,182 @@
+"""MCP tools that list and revise memories: ``mark_list``, ``mark_resolve``, ``mark_supersede``, ``mark_forget``.
+
+The same lifecycle verbs as the Python API and the ``mark`` CLI (``list
+--kind/--open``, ``resolve``, ``supersede``, ``forget [--match] [--secure]``),
+so an MCP client can close a TODO or replace a stale decision instead of
+piling up contradicting notes. Every id argument takes the 8-character
+short id the other tools print (any unambiguous prefix of 4+ characters).
+
+Ids are resolved inside the caller's namespace only (``ids_with_prefix`` is
+agent-scoped): a client limited by ``allowed_agent_ids`` can never touch
+another namespace's memory by guessing its id.
+"""
+from __future__ import annotations
+
+from typing import Annotated, Any, Callable
+
+from mark.adapters.mcp._common import MAX_CONTENT, AgentId, bounded, fail, guard, require_text, short
+from mark.kinds import KINDS, TAG_RESOLVED, TAG_SUPERSEDED, kind_of
+
+MemoryId = Annotated[str, bounded("Id of the memory: the 8-character short id shown by mark_retrieve, "
+                                  "mark_list or mark_write (or the full id).", maxLength=100)]
+#: Shortest id prefix accepted (shorter ones match too much by accident).
+MIN_PREFIX = 4
+_LIST_CHARS = 300
+
+
+def own_id(memory: Any, target: str) -> str:
+    """The full id of *target* (a full id or a unique prefix) in this namespace, else a tool error."""
+    prefix = (target or "").strip()
+    if len(prefix) < MIN_PREFIX:
+        fail(f"memory_id must have at least {MIN_PREFIX} characters (the short id is 8)")
+    matches = memory._store.ids_with_prefix(memory.agent_id, prefix, limit=2)
+    if not matches:
+        fail(f"no memory with id {prefix!r} in this namespace")
+    if len(matches) > 1:
+        fail(f"id {prefix!r} matches several memories; give more characters")
+    return matches[0]
+
+
+def _line(fragment: Any) -> str:
+    from mark.context.watch_kinds import when_of
+
+    when = when_of(fragment)
+    kind = kind_of(fragment)
+    state = (" (resolved)" if TAG_RESOLVED in fragment.tags
+             else " (superseded)" if TAG_SUPERSEDED in fragment.tags else "")
+    text = " ".join(guard(fragment.content).split())
+    if len(text) > _LIST_CHARS:
+        text = text[: _LIST_CHARS - 1] + "…"
+    date = f"{when.date().isoformat()} " if when is not None else ""
+    return f"- [{short(fragment.id)}] {date}{f'[{kind}] ' if kind else ''}{text}{state}"
+
+
+def register_lifecycle_tools(server: Any, run: Callable[..., Any], *, enabled: set[str]) -> None:
+    """Add the enabled lifecycle tools; *run(name, agent_id, work)* runs *work(memory)* off-loop."""
+
+    if "mark_list" in enabled:
+        @server.tool()
+        async def mark_list(
+            kind: Annotated[str, bounded("Only this kind: " + ", ".join(KINDS) + " (empty = all).",
+                                         enum=["", *KINDS], maxLength=20)] = "",
+            open: Annotated[bool, bounded("Hide resolved and superseded memories.")] = True,  # noqa: A002
+            limit: Annotated[int, bounded("Memories to show (1-100).", minimum=1, maximum=100)] = 20,
+            offset: Annotated[int, bounded("Skip this many first (paging).", minimum=0)] = 0,
+            agent_id: AgentId = "",
+        ) -> str:
+            """List memories, most important first, optionally only one kind (e.g. open TODOs).
+
+            Each line shows the short id to pass to mark_resolve / mark_supersede /
+            mark_forget, the date, the kind and the text.
+            """
+            if not 1 <= limit <= 100 or offset < 0:
+                fail("limit must be between 1 and 100 and offset at least 0")
+
+            def work(memory: Any) -> str:
+                filters = {"kind": kind.strip() or None, "open": True if open else None}
+                page = memory.list(limit=limit, offset=offset, **filters)
+                total = memory.count(**filters)
+                if not page:
+                    return "No memories match." if not offset else f"No memories after offset {offset}."
+                more = total - offset - len(page)
+                footer = [f"[{more} more: use offset={offset + len(page)}]"] if more > 0 else []
+                return "\n".join([_line(f) for f in page] + footer)
+
+            return await run("mark_list", agent_id, work)
+
+    if "mark_resolve" in enabled:
+        @server.tool()
+        async def mark_resolve(
+            memory_id: MemoryId,
+            note: Annotated[str, bounded("Optional note on how it was resolved.", maxLength=2000)] = "",
+            agent_id: AgentId = "",
+        ) -> str:
+            """Mark a TODO or bug as done; it leaves open lists and briefs but keeps its history.
+
+            Only TODOs and bugs can be resolved; replace other memories with
+            mark_supersede or delete them with mark_forget.
+            """
+
+            def work(memory: Any) -> str:
+                full = own_id(memory, memory_id)
+                if TAG_RESOLVED in memory.get(full).tags:
+                    return f"Memory {short(full)} was already resolved; nothing changed."
+                current = memory.current_version(full)
+                try:
+                    done = memory.resolve(current, note=note.strip() or None)
+                except ValueError as exc:  # not a TODO/bug: say what to use instead
+                    fail(str(exc).replace("supersede()", "mark_supersede").replace("forget()", "mark_forget"))
+                if current != full:
+                    return (f"Resolved memory {short(done)} (the current version of {short(full)}, "
+                            "which was already superseded).")
+                return f"Resolved memory {short(done)}."
+
+            return await run("mark_resolve", agent_id, work)
+
+    if "mark_supersede" in enabled:
+        @server.tool()
+        async def mark_supersede(
+            memory_id: MemoryId,
+            content: Annotated[str, bounded("The new, correct text.", minLength=1, maxLength=MAX_CONTENT)],
+            agent_id: AgentId = "",
+        ) -> str:
+            """Replace an outdated memory (e.g. a changed decision) with new text, keeping the old as history."""
+            text = require_text("content", content, MAX_CONTENT)
+
+            def work(memory: Any) -> str:
+                full = own_id(memory, memory_id)
+                current = memory.current_version(full)  # never fork: revise the newest version
+                new_id = memory.supersede(current, text)
+                if current != full:
+                    return (f"Memory {short(full)} was already superseded by {short(current)}; "
+                            f"superseded {short(current)} with {short(new_id)}.")
+                return f"Superseded memory {short(full)} with {short(new_id)}."
+
+            return await run("mark_supersede", agent_id, work)
+
+    if "mark_forget" in enabled:
+        @server.tool()
+        async def mark_forget(
+            memory_id: Annotated[str, bounded("Id of the memory to delete (short id is enough); "
+                                              "or use match.", maxLength=100)] = "",
+            match: Annotated[str, bounded("Forget every memory containing these whole words "
+                                          "(case-insensitive, at least 3 characters) instead of one id.",
+                                          maxLength=500)] = "",
+            confirm: Annotated[bool, bounded("With match: really delete when more than one memory "
+                                             "matches (without it you get the count and previews).")] = False,
+            all: Annotated[bool, bounded("With match: allow more than 50 matches.")] = False,  # noqa: A002
+            secure: Annotated[bool, bounded("Also erase the text from the database file.")] = False,
+            agent_id: AgentId = "",
+        ) -> str:
+            """Delete memories for good (stale, wrong or sensitive): one by id, or all containing some words.
+
+            A match that hits several memories only lists them until you call
+            again with confirm=true. Facts taken from them are retracted.
+            Cannot be undone; prefer mark_supersede when a memory is merely outdated.
+            """
+            if bool(memory_id.strip()) == bool(match.strip()):
+                fail("give exactly one of memory_id or match")
+
+            def work(memory: Any) -> str:
+                if memory_id.strip():
+                    forgotten = memory.forget(own_id(memory, memory_id), secure=secure)
+                else:
+                    found = memory.forget(match=match, dry_run=True)
+                    if not found.count:
+                        return f"No memory matches {found.match!r} (whole words); nothing forgotten."
+                    if found.over_cap and not all:
+                        fail(f"{found.count} memories match {found.match!r}, more than the safety cap "
+                             "of 50; narrow the match, or pass all=true with confirm=true")
+                    if found.count > 1 and not confirm:
+                        shown = [f"- {guard(line)}" for line in found.previews[:10]]
+                        more = [f"- ... and {found.count - 10} more"] if found.count > 10 else []
+                        return "\n".join([f"{found.count} memories match {found.match!r}; nothing deleted yet:",
+                                          *shown, *more, "Call mark_forget again with the same match "
+                                          "and confirm=true to delete them."])
+                    forgotten = memory.forget(match=match, secure=secure, all=all)
+                if secure and forgotten:
+                    memory.vacuum()  # the promise: the text is gone from disk when this returns
+                erased = " and erased the text from disk" if secure and forgotten else ""
+                return f"Forgot {forgotten} memor{'y' if forgotten == 1 else 'ies'}{erased}."
+
+            return await run("mark_forget", agent_id, work)

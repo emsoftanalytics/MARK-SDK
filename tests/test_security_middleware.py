@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Security hardening: middleware stack robustness (after-hooks on errors,
 gap-healing evidence routing, skill permissions, registry, lifecycle, sync deltas)
 and RL/logging bounds.
@@ -62,7 +62,9 @@ def test_gap_healing_evidence_goes_through_middleware(tmp_path: Path) -> None:
 
 
 def test_gap_healing_rejected_evidence_is_quarantined(tmp_path: Path) -> None:
-    with Mark.local(tmp_path, middleware=[GovernanceMiddleware()]) as mark:
+    from mark.middlewares.governance import ConsolidationGate, FailureFilter
+
+    with Mark.local(tmp_path, middleware=[GovernanceMiddleware(gate=ConsolidationGate(failure=FailureFilter()))]) as mark:
         mem = mark.runtime.memory("healer")
         result = mem.retrieve_sync("What happened?", session_id="s1", heal_gaps=True,
                                    web_skill=_EvidenceSkill("Traceback (most recent call last)"))

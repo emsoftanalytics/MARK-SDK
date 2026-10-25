@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Image embedding providers for text->image and image->image search.
 
 A provider embeds *both* images and texts into one shared space (CLIP-style),

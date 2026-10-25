@@ -1,13 +1,24 @@
-"""Multi-factor reranking of retrieval candidates."""
+"""Multi-factor reranking of retrieval candidates.
+
+Relevance first, bounded priors (importance, confidence, graph weight,
+optionally recency) second, then two penalties: memories contradicted by a
+retrieved memory, and memories retired through the API (tag
+``mark:superseded`` / ``mark:resolved`` or metadata ``superseded_by`` /
+``resolved_by``) unless the query asks about the past.
+"""
 from __future__ import annotations
 
-import asyncio
 import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any, Collection, Mapping
 
 from mark.index import VectorSearchResult
+from mark.intelligence.supersession import is_retired
+
+# Assistant replies (tag "mark:assistant") and stored questions ("mark:question") are context, not facts.
+_LOW_TRUST_TAGS = frozenset({"mark:assistant", "mark:question"})
+_LOW_TRUST_FACTOR = 0.6
 from mark.store.sqlite import LocalMemoryStore
 from mark.types import MemoryFragment
 
@@ -50,6 +61,8 @@ class MemoryReranker:
     _W_NODE = 0.25
     _RECENCY_HALF_LIFE_DAYS = 30.0
     _CONTRADICTION_FACTOR = 0.6
+    # A retired memory still answers "what was it before?", so it is demoted, not dropped.
+    _RETIRED_FACTOR = 0.5
 
     def __init__(self, store: LocalMemoryStore) -> None:
         self._store = store
@@ -65,11 +78,16 @@ class MemoryReranker:
         fragments: Mapping[str, MemoryFragment] | None = None,
         recency_weight: float = 0.0,
         now: datetime | None = None,
+        demote_retired: bool = True,
+        keep_retired: Collection[str] = (),
     ) -> list[RerankResult]:
         """Rerank candidates and return the top results.
 
         fragments       prefetched fragments by id (avoids one lookup per candidate)
         recency_weight  0.0–1.0 share of the prior given to recency (temporal queries)
+        demote_retired  halve the score of superseded / resolved memories
+                        (False for history and problem questions; see query_intent)
+        keep_retired    ids never demoted as retired (memories the query quotes)
         """
         del query
         contradiction_ids = contradiction_ids or set()
@@ -88,10 +106,19 @@ class MemoryReranker:
             if recency_weight:
                 prior = (1.0 - recency_weight) * prior + recency_weight * recency
             factor = (1.0 - self.W_PRIOR) + self.W_PRIOR * min(1.0, max(0.0, prior))
-            score = max(0.0, candidate.score) * factor
+            # Penalties scale the ranking score and, as "demotion", the
+            # displayed relevance too, so the shown order stays the real order.
+            demotion = 1.0
             if contradiction:
-                score *= self._CONTRADICTION_FACTOR
-            score = round(score, 6)
+                demotion *= self._CONTRADICTION_FACTOR
+            retired = (demote_retired and fragment is not None and candidate.fragment_id not in keep_retired
+                       and is_retired(fragment))
+            if retired:
+                demotion *= self._RETIRED_FACTOR
+            # The model's own replies and stored bare questions rank below what the user stated.
+            if fragment is not None and _LOW_TRUST_TAGS.intersection(fragment.tags or ()):
+                demotion *= _LOW_TRUST_FACTOR
+            score = round(max(0.0, candidate.score) * factor * demotion, 6)
             results.append(
                 RerankResult(
                     fragment_id=candidate.fragment_id,
@@ -105,6 +132,8 @@ class MemoryReranker:
                         "recency": round(recency, 4),
                         "prior": round(prior, 4),
                         "contradiction_penalty": (1.0 - self._CONTRADICTION_FACTOR) if contradiction else 0.0,
+                        "retired_penalty": (1.0 - self._RETIRED_FACTOR) if retired else 0.0,
+                        "demotion": round(demotion, 4),
                         "blended": score,
                     },
                 )
@@ -121,6 +150,8 @@ class MemoryReranker:
         contradiction_ids: set[str] | None = None,
     ) -> list[RerankResult]:
         """Async variant of rerank()."""
+        import asyncio  # lazy: the sync path (and the CLI's cold start) never needs it
+
         return await asyncio.to_thread(
             self.rerank, query, candidates, top_k, agent_id, contradiction_ids,
         )

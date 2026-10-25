@@ -15,8 +15,18 @@ in now?" returned its port and owner. Selection per subject, in order:
    kept only when their value mentions it ("Which team ..." -> lead =
    "platform team"); a head noun matching nothing means the facts hold no
    answer, so none are returned (the memories still answer it);
-4. otherwise (open questions: "Tell me about atlas-core", "What is
-   atlas-core?", "Who is Mei Lin?") every fact about the subject is kept.
+4. otherwise, open questions about the subject itself ("Tell me about
+   atlas-core", "What is atlas-core?", "Who is Mei Lin?": no other topic
+   word) keep the subject's facts, unless the subject was only inferred
+   (``allow_open=False``: the user subject of an "I/my" question, or a
+   subject found in the matched memories);
+5. a question about something else ("Why did expired links still
+   resolve?") keeps only facts whose value it names, usually none: a fixed
+   handful of unrelated facts is noise.
+
+At most ``cap`` facts per subject are returned (``DEFAULT_FACT_CAP``), the
+ones sharing most words with the query first, then the most recent; asking
+for everything ("tell me about", "everything", "overview") lifts the cap.
 
 Only the subject's real attribute names and values are matched, through the
 same stemmer as retrieval, so no attribute vocabulary is hard-coded.
@@ -86,17 +96,109 @@ def question_head(query: str, subject: str = "") -> str | None:
     return None
 
 
-def select_facts(query: str, subject: str, rows: Sequence[Any]) -> list[Any]:
+DEFAULT_FACT_CAP = 3
+_EVERYTHING_RE = re.compile(
+    r"\b(?:tell\s+me\s+(?:about|everything)|everything|all\s+(?:the\s+)?(?:facts|details|info\w*)"
+    r"|overview|summar\w*|profile|what\s+do\s+(?:you|we|i)\s+know)\b",
+    re.I,
+)
+
+
+def wants_everything(query: str) -> bool:
+    """True when the query asks for all there is about a subject (no fact cap)."""
+    return _EVERYTHING_RE.search(query) is not None
+
+
+# Everyday question words -> the attribute names extraction uses. Small and
+# generic on purpose: "Where do I live?" must reach a ``location`` fact.
+_SYNONYM_GROUPS = (
+    "live lives living reside resides based home location city town moved",
+    "work works working job employer company occupation role",
+    "eat eats diet food vegetarian vegan",
+    "born birthday birth age old",
+    "contact email phone number call reach",
+    "like likes love prefer prefers favourite favorite hate dislike preference",
+    # People around the user, as everyday speech names them ("Who is my boss?").
+    "boss manager supervisor",
+    "mother mum mom",
+    "father dad",
+    "spouse wife husband partner married",
+    "doctor gp physician",
+    "salary income wage pay",
+)
+
+
+def _expand(terms: set[str]) -> set[str]:
+    """Add the synonym group of every query term (normalised like the terms)."""
+    out = set(terms)
+    for group in _SYNONYM_GROUPS:
+        words = set(_content_terms(group))
+        if words & terms:
+            out |= words
+    return out
+
+
+def select_facts(
+    query: str,
+    subject: str,
+    rows: Sequence[Any],
+    *,
+    allow_open: bool = True,
+    cap: int | None = DEFAULT_FACT_CAP,
+) -> list[Any]:
     """Filter one subject's current fact rows (``attribute``/``value`` keys) for *query*."""
     terms = set(_content_terms(query))
-    named = [row for row in rows if set(_content_terms(row["attribute"])) & terms]
+    expanded = _expand(terms)
+    # CJK questions are one unspaced token: a CJK attribute ("城市") is named when it occurs in the text.
+    named = [row for row in rows if set(_content_terms(_attribute_text(row))) & expanded
+             or (not _attribute_text(row).isascii() and _attribute_text(row) in query)]
     if named:
-        return named
-    verb = who_verb(query, subject)
-    if verb is not None:
-        return [row for row in rows
-                if verb in {_agent_stem(stem) for stem in _content_stems(str(row["attribute"]))}]
-    head = question_head(query, subject)
-    if head is None:
-        return list(rows)
-    return [row for row in rows if head in _content_stems(str(row["value"]))]
+        selected = named
+    else:
+        verb = who_verb(query, subject)
+        head = question_head(query, subject) if verb is None else None
+        if verb is not None:
+            selected = [row for row in rows
+                        if verb in {_agent_stem(stem) for stem in _content_stems(_attribute_text(row))}]
+        elif head is not None:
+            selected = [row for row in rows if head in _content_stems(str(row["value"]))]
+        elif not _residual_terms(terms, subject) or wants_everything(query):
+            # Open questions about the subject itself: "What is atlas-core?".
+            selected = list(rows) if allow_open else []
+        else:
+            # The question is about something else ("Why did expired links still
+            # resolve?"): only facts whose value it names, never a fixed few.
+            residual = _expand(_residual_terms(terms, subject))
+            selected = [row for row in rows if _content_stems(str(row["value"])) & residual]
+    if cap is None or len(selected) <= cap or wants_everything(query):
+        return selected
+    return _ranked(selected, terms)[:cap]
+
+
+# Question words that carry no topic ("What is X?", "Tell me about X").
+_OPEN_WORDS = frozenset(_content_terms(
+    "tell know about thing things info information details everything overview happened happen going new news update"))
+
+
+def _residual_terms(terms: set[str], subject: str) -> set[str]:
+    """Query terms that are neither the subject's words nor open-question words."""
+    return terms - _content_stems(subject) - set(_content_terms(subject)) - _OPEN_WORDS
+
+
+def attribute_named(query: str, rows: Sequence[Any]) -> list[Any]:
+    """Rows whose attribute is fully named by the query ("test command" -> test_command)."""
+    terms = set(_content_terms(query))
+    return [row for row in rows if (attr := set(_content_terms(_attribute_text(row)))) and attr <= terms]
+
+
+def _attribute_text(row: Any) -> str:
+    """An attribute key as words: "lives_in" -> "lives in", "test-command" -> "test command"."""
+    return re.sub(r"[_\-.]+", " ", str(row["attribute"]))
+
+
+def _ranked(rows: Sequence[Any], terms: set[str]) -> list[Any]:
+    """Most query words in attribute + value first, then the most recently valid."""
+    def key(row: Any) -> tuple[int, str]:
+        stems = _content_stems(f"{_attribute_text(row)} {row['value']}")
+        return len(stems & terms), str(row.get("valid_from") or "") if hasattr(row, "get") else ""
+    return sorted(rows, key=key, reverse=True)

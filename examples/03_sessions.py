@@ -7,15 +7,15 @@ from tempfile import TemporaryDirectory
 from mark import Mark
 
 with TemporaryDirectory() as folder, Mark.local(folder) as mark:
-    story = mark.runtime.memory("video-agent")
+    story = mark.runtime.memory("video-agent")    # a separate agent namespace
 
-    # Each scene is a session; observe() records what happened.
-    story.observe("Elena wears a red scarf in the warehouse.", session_id="season-01/scene-04")
-    story.observe("Marco loses his left glove on the bridge.", session_id="season-01/scene-07")
-    story.observe("Elena dyes her hair blue.", session_id="season-02/scene-01")
+    # Each scene is a session.
+    story.remember("Elena wears a red scarf in the warehouse.", session_id="season-01/scene-04")
+    story.remember("Marco loses his left glove on the bridge.", session_id="season-01/scene-07")
+    story.remember("Elena dyes her hair blue.", session_id="season-02/scene-01")
 
     # Recall only from season 1.
-    result = story.retrieve_sync("What does Elena wear?", session_prefix="season-01/")
+    result = story.recall("What does Elena wear?", session_prefix="season-01/")
     print(result.as_context())
 
     assert "red scarf" in result.as_context()

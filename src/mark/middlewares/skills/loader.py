@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Loaders for the agent skills packaged with mark-sdk.
 
 MARK ships portable Agent Skills as ``SKILL.md`` files inside the package
@@ -15,6 +15,11 @@ Packaged skills:
     mark-usage              how to use mark_retrieve / mark_observe /
                             mark_write tools effectively
     mark-memory-middleware  how to work with MARK middleware-injected context
+    mark-memory-compact     ~170-token variant of mark-memory-middleware for
+                            small models, opt-in only (it lowered llama3.2:1b
+                            accuracy in the a10 measurements); not in
+                            PACKAGED_SKILLS, so SkillMiddleware does not add
+                            it next to the long one
 """
 
 from __future__ import annotations
@@ -22,6 +27,8 @@ from __future__ import annotations
 from importlib import resources
 
 PACKAGED_SKILLS = ("mark-usage", "mark-memory-middleware")
+#: Size variants, loaded by name only (never added to prompts by default).
+COMPACT_SKILLS = ("mark-memory-compact",)
 
 
 def load_skill_text(name: str = "mark-usage") -> str:
@@ -47,6 +54,21 @@ def agent_skill(name: str = "mark-usage") -> str:
     """
     text = load_skill_text(name)
     return f"\n\n{text}" if text else ""
+
+
+def prompt_text(skill_text: str) -> str:
+    """*skill_text* without its YAML frontmatter, for a model's system prompt.
+
+    The frontmatter is metadata for skill loaders. Small models read its
+    ``name: mark-memory-middleware`` line as a tool and "call" it (usage
+    test M7, llama3.2:1b), so hosts that inject a skill for a model use this.
+    """
+    text = (skill_text or "").strip()
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) == 3:
+            return parts[2].strip()
+    return text
 
 
 def list_packaged_skills() -> list[str]:

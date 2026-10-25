@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Gap healing for MarkMemory: explicit external lookup and evidence storage.
 
 Used by ``retrieve_sync(heal_gaps=True)`` when local memory cannot answer a

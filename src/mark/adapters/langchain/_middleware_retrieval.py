@@ -12,6 +12,7 @@ import asyncio
 from typing import Any
 
 from mark.adapters.backend import BackendResult
+from mark.adapters.langchain._middleware_provenance import notes_only
 from mark.adapters.langchain._middleware_support import (
     _MAX_FRAGMENT_IDS,
     _MAX_RECALL_CACHE,
@@ -64,10 +65,12 @@ class _RetrievalMixin:
             return query, self._hash(f"{name}:{content[:700]}")
         return "", ""
 
-    def _truncate_context(self, text: str) -> str:
-        if len(text) <= self._max_chars:
+    def _truncate_context(self, text: str, reserve: int = 0) -> str:
+        """Cut *text* to ``max_context_chars`` minus *reserve* (the injected wrapper)."""
+        limit = max(self._max_chars - reserve, 0)
+        if len(text) <= limit:
             return text
-        keep = max(self._max_chars - 80, 0)
+        keep = max(limit - 80, 0)
         return text[:keep].rstrip() + "\n\n[MARK context truncated]"
 
     # ── query extraction helpers ──────────────────────────────────────────
@@ -112,8 +115,11 @@ class _RetrievalMixin:
         """Render a retrieval value as ``(context_text, fragment_ids)``.
 
         Uses the structured result: a result whose ``fragments`` list is empty
-        has no memory, so ``""`` is returned (nothing gets injected).
+        has no memory, so ``""`` is returned (nothing gets injected). The
+        model's own replies, bare questions/requests and tool errors are
+        removed first: they are not notes (a10 N3, questions echoed back).
         """
+        value = notes_only(value)
         fragments = getattr(value, "fragments", None)
         if fragments is not None and not fragments:
             return "", []
@@ -188,7 +194,9 @@ class _RetrievalMixin:
                         self._record("heal", chars=len(healed_text))
 
         if getattr(self, "_budget", None) is not None and result is not None and result.ok:
-            run.recall_items[query] = self._retrieval_items(used) if text else []
+            # Unfiltered value: _retrieval_items applies the same note filter itself.
+            has_memory = bool(text or getattr(used, "fragments", None))
+            run.recall_items[query] = self._retrieval_items(used, query) if has_memory else []
             while len(run.recall_items) > _MAX_RECALL_CACHE:
                 run.recall_items.pop(next(iter(run.recall_items)))
         text = self._truncate_context(text) if text else ""

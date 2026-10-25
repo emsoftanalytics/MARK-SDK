@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 from .attribution import SourceAttribution, SourceCredibility
 from .gap import GapReport, GapSeverity
 from .llm import LLMProvider

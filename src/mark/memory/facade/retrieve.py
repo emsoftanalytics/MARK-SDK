@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Read path of MarkMemory: retrieve, retrieve_sync, retrieve_many_sync.
 
 Retrieval starts in the narrowest namespace the caller asked for (a session
@@ -18,6 +18,7 @@ import asyncio
 from dataclasses import replace
 
 from mark.intelligence.retrieval import RetrievalPolicy, RetrievalResult, SessionFilter
+from mark.memory.facade.block_check import check_block_ids
 from mark.memory.facade.healing import HealingMixin
 from mark.middlewares.skills.base import Skill
 from mark.types import MemoryScope, MemoryTier
@@ -88,6 +89,8 @@ class RetrieveMixin(HealingMixin):
         compress: bool = False,
         expand: bool = False,
         order: str = "relevance",
+        since: object = None,
+        until: object = None,
     ) -> RetrievalResult:
         """Synchronous variant of retrieve().
 
@@ -99,6 +102,7 @@ class RetrieveMixin(HealingMixin):
 
         if order not in ORDERS:  # validate before doing any work
             raise ValueError(f"order must be one of {ORDERS}, got {order!r}")
+        check_block_ids(self._store, self.agent_id, block_id, block_ids)
         if self._middleware is not None and self._runtime is not None:
             return apply_order(self._middleware.run(
                 "retrieve",
@@ -119,6 +123,8 @@ class RetrieveMixin(HealingMixin):
                     "web_skill": web_skill,
                     "compress": compress,
                     "expand": expand,
+                    "since": since,
+                    "until": until,
                 },
                 handler=lambda ctx: self._retrieve_sync_impl(**ctx.payload),
             ), order)
@@ -137,6 +143,8 @@ class RetrieveMixin(HealingMixin):
             web_skill=web_skill,
             compress=compress,
             expand=expand,
+            since=since,
+            until=until,
         ), order)
 
     def retrieve_many_sync(
@@ -159,6 +167,7 @@ class RetrieveMixin(HealingMixin):
         Shares scope filtering and index sync across the batch. With
         registered middleware each query runs through retrieve_sync instead.
         """
+        check_block_ids(self._store, self.agent_id, block_id, block_ids)
         filters = dict(
             session_id=session_id, session_prefix=session_prefix, tags=tags, tier=tier,
             scope=scope, block_id=block_id, block_ids=block_ids,
@@ -192,12 +201,14 @@ class RetrieveMixin(HealingMixin):
         web_skill: Skill | None = None,
         compress: bool = False,
         expand: bool = False,
+        since: object = None,
+        until: object = None,
     ) -> RetrievalResult:
         """Middleware-free retrieval with escalation and optional healing."""
         sf = SessionFilter(
             session_id=session_id, session_prefix=session_prefix,
             tags=tags, tier=tier, scope=scope,
-            block_id=block_id, block_ids=block_ids,
+            block_id=block_id, block_ids=block_ids, since=since, until=until,
         )
         path = ["session" if (session_id or session_prefix) else "agent_namespace"]
         result = replace(
@@ -215,10 +226,10 @@ class RetrieveMixin(HealingMixin):
             and (session_id or session_prefix)
         ):
             # Escalation widens only the session dimension; every other caller
-            # filter (tags, tier, scope, block_id/block_ids) and expand stay.
+            # filter (tags, tier, scope, blocks, time window) and expand stay.
             agent_filter = SessionFilter(
                 tags=tags, tier=tier, scope=scope,
-                block_id=block_id, block_ids=block_ids,
+                block_id=block_id, block_ids=block_ids, since=since, until=until,
             )
             agent_result = replace(
                 self._pipeline.retrieve(

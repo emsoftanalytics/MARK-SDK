@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """An encrypted store must never be opened (or written) without its key.
 
 Covers the persisted ``encrypted_at_rest`` marker, content sniffing for stores

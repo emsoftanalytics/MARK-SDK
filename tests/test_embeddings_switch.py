@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Switching embedders on an existing store re-embeds it into the new space.
 
 Covers the three shapes a switch can take after ``embedder="auto"`` starts
@@ -62,7 +62,7 @@ def _seed(path: Path) -> list[str]:
         mem = runtime.memory("switch")
         ids = [mem.store_sync(fact) for fact in FACTS]
         assert mem.retrieve_sync("billing port").fragments[0].id == ids[0]
-        assert runtime.store.get_meta(KEY) == "mark.hash-v2:256"
+        assert runtime.store.get_meta(KEY) == "mark.hash-v3:256"
         return ids
     finally:
         runtime.shutdown()
@@ -119,7 +119,7 @@ def test_switch_back_to_hash_restores_hash_vectors(tmp_path: Path) -> None:
         assert result.fragments[0].id == ids[2]
         stored = dict(runtime.store.embeddings_for_agent("switch"))
         assert stored[ids[2]] == pytest.approx(HashEmbeddingProvider().embed(FACTS[2]))
-        assert runtime.store.get_meta(KEY) == "mark.hash-v2:256"
+        assert runtime.store.get_meta(KEY) == "mark.hash-v3:256"
     finally:
         runtime.shutdown()
 

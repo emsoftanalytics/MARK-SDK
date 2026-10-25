@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """ImageMemory: remember generated frames and keep them consistent with facts.
 
 An image is stored as an ordinary memory fragment:
@@ -34,6 +34,7 @@ from mark.media.files import (
     image_size,
     looks_like_image_path,
     reject_binary,
+    require_image,
     sha256_file,
 )
 from mark.media.records import (
@@ -92,6 +93,7 @@ class ImageMemory:
         file = Path(path).expanduser().resolve()
         if not file.is_file():
             raise FileNotFoundError(f"image not found: {file}")
+        require_image(file)  # content, not the name, decides: a PDF renamed .png is refused
         names = tuple(dict.fromkeys(str(s).strip() for s in subjects if str(s).strip()))
         extra = dict(metadata or {})
         reject_binary(extra)

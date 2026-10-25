@@ -25,16 +25,23 @@ import heapq
 from mark.index import VectorSearchResult
 from mark.intelligence.classifier import QueryAnalysis
 from mark.intelligence.fusion_scoring import (
+    OUT_OF_WINDOW,
     lexical_share,
+    literal_hit,
     max_rrf,
     merge_max,
     normalised_cosines,
     rrf_seed_score,
     score_fusion_seed,
+    scored_text,
     uses_score_fusion,
 )
+from mark.intelligence.kind_intent import KindAsk, apply_kind
+from mark.intelligence.query_intent import quoted_by, retirement_applies
 from mark.intelligence.query_understanding import _coverage, _relevance, query_anchors
+from mark.intelligence.retrieval_time import DateRange, matches_dates
 from mark.intelligence.reranker import RerankResult
+from mark.intelligence.supersession import is_superseded
 from mark.intelligence.retrieval_policy import (
     _RETRIEVABLE_STATES,
     RRF_K,
@@ -88,19 +95,38 @@ class _FusionMixin:
         cosine: dict[str, float],
         vector_norm: dict[str, float],
         depth: int,
+        date_ranges: list[DateRange] | None = None,
+        extra: dict[str, MemoryFragment] | None = None,
+        kind_ask: KindAsk | None = None,
     ) -> tuple[dict[str, MemoryFragment], dict[str, float], dict[str, float]]:
         """Fetch the strongest fused candidates and score them.
 
-        Returns (fragments by id, calibrated relevance, seed score).
+        ``date_ranges`` (dates the query names) count as one more query term,
+        matched by a memory's event date or a date in its text; ``extra``
+        candidates (memories from those dates) join the pool even without
+        channel hits; ``kind_ask`` (a listing of one note kind) gives memories of
+        that kind full evidence (``kind_intent``). Returns (fragments by id,
+        calibrated relevance, seed score).
         """
         # RRF picks the pool for both strategies, so recall does not change;
         # only the scoring of the pool depends on the embedder.
         seed_ids = heapq.nlargest(depth, fused, key=fused.__getitem__)
         fragments_by_id = self._get_many(seed_ids)
+        for fid, fragment in (extra or {}).items():
+            if fid not in fragments_by_id:
+                fragments_by_id[fid] = fragment
+                seed_ids.append(fid)
+        # A document chunk is judged by its body: the "# Title › Section" line
+        # repeats in every chunk and would let all of them tie on title words.
         coverage = {
-            fid: _coverage(query_terms, fragments_by_id[fid].content)
+            fid: _coverage(query_terms, scored_text(fragments_by_id[fid]))
             for fid in seed_ids if fid in fragments_by_id
         }
+        in_window: set[str] = set()
+        if date_ranges:
+            terms = len(query_terms)
+            in_window = {fid for fid in coverage if matches_dates(fragments_by_id[fid], date_ranges)}
+            coverage = {fid: (cov * terms + (fid in in_window)) / (terms + 1) for fid, cov in coverage.items()}
         # Calibrated relevance (gap detection, reinforcement) is the same
         # under either strategy: max of cosine and term coverage.
         relevance = {fid: max(0.0, min(1.0, max(cosine.get(fid, 0.0), cov))) for fid, cov in coverage.items()}
@@ -108,6 +134,10 @@ class _FusionMixin:
             weight = lexical_share(
                 self._fusion, query_anchors(query), (fragments_by_id[fid].content for fid in coverage),
             )
+            if literal_hit(query_terms, coverage):
+                # Emoji / CJK / symbols are out of vocabulary for most embedders:
+                # an exact literal hit is stronger evidence than the vector channel.
+                weight = max(weight, self._fusion.anchor_lexical_weight)
             seed_scores = {
                 fid: score_fusion_seed(vector_norm.get(fid, 0.0), cov, weight)
                 for fid, cov in coverage.items()
@@ -116,7 +146,19 @@ class _FusionMixin:
             # Fused rank evidence is combined with absolute evidence so
             # ranking stays query-aware even when one channel is empty.
             best = max_rrf(query_count)
-            seed_scores = {fid: rrf_seed_score(fused[fid], best, relevance[fid]) for fid in relevance}
+            seed_scores = {fid: rrf_seed_score(fused.get(fid, 0.0), best, relevance[fid]) for fid in relevance}
+        if in_window:
+            # A date in the question ("in November", "yesterday") is a soft
+            # window: memories inside it go first, the rest stay reachable
+            # (and show the same penalty in their displayed score).
+            # Inside the window, the date is matched evidence like a word: a memory
+            # covering the date and the topic leads even when the vector channel
+            # (crowded by out-of-window look-alikes) never returned it.
+            seed_scores = {fid: max(score, coverage[fid]) if fid in in_window else score * OUT_OF_WINDOW
+                           for fid, score in seed_scores.items()}
+            relevance = {fid: rel if fid in in_window else rel * OUT_OF_WINDOW for fid, rel in relevance.items()}
+        if kind_ask is not None:
+            apply_kind(kind_ask, fragments_by_id, relevance, seed_scores)
         return fragments_by_id, relevance, seed_scores
 
     def _expand_seeds(
@@ -149,15 +191,20 @@ class _FusionMixin:
                 # The graph may reach fragments outside the caller's scope.
                 if fid in allowed_ids and score > expanded_scores.get(fid, 0.0):
                     expanded_scores[fid] = score
+                    if fid in relevance:
+                        # Shown evidence: what the graph carried, when above its own words.
+                        relevance[fid] = max(relevance[fid], min(1.0, score))
             contradiction_ids = self._expander.contradiction_penalty_ids(list(top_seeds))
             missing = [fid for fid in expanded_scores if fid not in fragments_by_id]
             if missing:
                 fragments_by_id.update(self._get_many(missing))
                 for fid in missing:
                     if fid in fragments_by_id:
-                        relevance[fid] = _relevance(
-                            query_terms, fragments_by_id[fid].content, cosine.get(fid, 0.0),
-                        )
+                        # A neighbour shows the (damped) evidence that reached it
+                        # when its own words carry less.
+                        relevance[fid] = max(min(1.0, expanded_scores[fid]), _relevance(
+                            query_terms, scored_text(fragments_by_id[fid]), cosine.get(fid, 0.0),
+                        ))
         return expanded_scores, contradiction_ids
 
     def _rank(
@@ -179,6 +226,11 @@ class _FusionMixin:
             if fid in fragments_by_id and fragments_by_id[fid].state in _RETRIEVABLE_STATES
         ]
         candidates = _dedupe_content(candidates)
+        demote = retirement_applies(query)
+        # A pasted error message is answered by the memory that quotes it, resolved
+        # or not; a superseded statement stays demoted (the newer one answers).
+        quoting = {fid for fid in quoted_by(query, {c.fragment_id: c.content for c in candidates})
+                   if not is_superseded(fragments_by_id[fid])} if demote else set()
 
         scorer = self._plugins.get(HOOK_SCORING)
         if scorer:
@@ -194,6 +246,10 @@ class _FusionMixin:
             fragments=fragments_by_id,
             # Temporal queries ("latest deploy") give recency real weight.
             recency_weight=0.5 if getattr(analysis, "has_temporal", False) else 0.0,
+            # Superseded / resolved memories rank by relevance for history and
+            # problem questions ("why did X fail", error text); demoted otherwise.
+            demote_retired=demote,
+            keep_retired=quoting,
         )
 
 

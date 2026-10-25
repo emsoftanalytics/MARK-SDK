@@ -50,15 +50,17 @@ def test_default_counter_is_chars_over_four() -> None:
 
 def test_priority_order_corrections_first_related_last() -> None:
     items = [
+        BudgetItem("assistant", "- reply " + "a" * 31),
         BudgetItem("related", "- related " + "r" * 30),
         BudgetItem("linked", "- linked " + "l" * 30),
+        BudgetItem("relevant", "- relevant " + "v" * 29),
         BudgetItem("records", "- record " + "m" * 30),
         BudgetItem("facts", "- fact " + "f" * 30),
         BudgetItem("unknown", "Not in memory: zork " + "u" * 20),
         BudgetItem("corrections", "- correction " + "c" * 30),
     ]
     kept_sections = []
-    for cap in range(0, 80, 2):
+    for cap in range(0, 110, 2):
         fit = ContextBudget(cap).fit(items)
         sections = {item.section for item in fit.items}
         kept_sections.append(sections)

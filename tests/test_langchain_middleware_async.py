@@ -23,7 +23,7 @@ from mark.types.gap import GapSeverity
 from _helpers_langchain_async import KeywordBackend, _agent, _invoke
 
 
-MEMORY_TAG = "[MARK project memory]"
+MEMORY_TAG = "[MARK memory]"
 
 
 # ── 1 + 3: sync and async end-to-end, memory on every model call ──────────
@@ -45,9 +45,11 @@ def test_create_agent_injects_memory_on_every_model_call(mode: str) -> None:
         assert system.count(MEMORY_TAG) == 1
     assert mw.active_runs == 0
     assert result.get("mark_context", "") == ""
-    # The tool result and the final answer were archived at run end.
+    # The tool result and the final answer were archived at run end, once each
+    # (a10: no "Agent completed task." / "Agent reasoning:" copies any more).
     assert any("Tool [lookup] returned" in item for item in backend.observed)
-    assert any("Agent completed task" in item for item in backend.observed)
+    assert [o for o in backend.observed if o.startswith("Assistant replied: Final answer")] == [
+        f"Assistant replied: {result['messages'][-1].content}"]
     assert backend.feedback_payloads
     assert backend.feedback_payloads[-1]["fragment_ids"] == ["frag-health"]
 

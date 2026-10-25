@@ -44,8 +44,10 @@ class _AnticipationMixin:
             if memory is None:
                 return None
             # Half the context budget: the watch complements, not replaces,
-            # the query-driven retrieval block.
-            run.watch = ContextWatch(memory, budget_chars=max(400, self._max_chars // 2))
+            # the query-driven retrieval block. The preset sizes its lines.
+            run.watch = ContextWatch.for_preset(memory, getattr(self, "_preset", None),
+                                                budget_chars=max(400, self._max_chars // 2),
+                                                budget_tokens=None)
         return run.watch
 
     def _feed_watch(self, watch: Any, run: _RunState, state: Any) -> None:
@@ -64,7 +66,9 @@ class _AnticipationMixin:
                     watch.observe(text, role="assistant")
                 for call in getattr(message, "tool_calls", None) or []:
                     watch.observe_tool_call(call.get("name", ""), call.get("args"))
-            elif kind == "tool":
+            elif kind == "tool" and getattr(message, "status", None) != "error":
+                # A failed call's error text is not evidence about any subject:
+                # never let it introduce an anchor (a10 finding N3).
                 watch.observe(text[:4000], role="tool")
         run.watch_seen = len(messages)
 

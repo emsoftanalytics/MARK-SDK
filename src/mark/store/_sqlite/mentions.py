@@ -10,7 +10,9 @@ Invariants:
     PROMOTED}, not in a QUARANTINED block, and not TTL-expired — the same
     definition ``retrievable_ids`` uses;
   - results are a *superset* of whole-phrase mentions. FTS5 stems words
-    (porter) and folds diacritics, and without FTS5 (encrypted stores) every
+    (porter) and folds diacritics; non-ASCII phrases (CJK, accented words,
+    emoji) are matched in the multilingual table instead, where CJK is
+    segmented into bigrams. Without FTS5 (encrypted stores) every
     retrievable row is a candidate, so callers must confirm the match on the
     decrypted content (``mark.memory.timeline`` does, with whole-anchor
     matching, so "titan" never matches "titanium");
@@ -24,7 +26,20 @@ import re
 import sqlite3
 from typing import Callable, Iterator
 
-from mark.store._sqlite.codec import _FRAGMENT_COLUMNS, _as_bytes, _FTS_TABLE, _RETRIEVABLE_STATES, _TTL_LIVE_SQL
+from mark.store._sqlite.codec import (
+    _FRAGMENT_COLUMNS,
+    _FTS_ML_TABLE,
+    _SQL_CHUNK,
+    _FTS_TABLE,
+    _RETRIEVABLE_STATES,
+    _TTL_LIVE_SQL,
+    _as_bytes,
+    _chunks,
+)
+from mark.security import NoOpEncryptionProvider
+from mark.store._sqlite.fts_text import fts_quote, multilingual_phrase
+from mark.store._sqlite.sketch_store import SketchMixin
+from mark.store._sqlite.sketches import sketch_tokens
 from mark.types import MemoryFragment
 
 # Embedding columns are replaced by NULL: decoding thousands of vectors would
@@ -35,7 +50,7 @@ _LIGHT_COLUMNS = ", ".join(
 )
 
 
-class MentionMixin:
+class MentionMixin(SketchMixin):
     """Paged, uncapped lookup of the memories that mention a phrase."""
 
     _fts_enabled: bool
@@ -66,31 +81,83 @@ class MentionMixin:
             agent_id, scope=None, states=_RETRIEVABLE_STATES, tier=None, session_id=None,
             session_prefix=None, tags=None, block_id=None, block_ids=None,
         )
-        match = None
-        if self._fts_enabled:
-            match = 'content : "' + " ".join(token.replace('"', '""') for token in tokens) + '"'
+        match, table = None, _FTS_TABLE
+        ml_phrase = multilingual_phrase(phrase) if getattr(self, "_fts_ml_enabled", False) else None
+        if ml_phrase is not None:
+            # CJK is only segmented (and other scripts only unstemmed) there.
+            match, table = "content : " + fts_quote(ml_phrase), _FTS_ML_TABLE
+        elif self._fts_enabled:
+            match = "content : " + fts_quote(" ".join(tokens))
+        if match is None and not isinstance(self.encryption, NoOpEncryptionProvider):
+            # Encrypted store: decrypt only rows whose keyed sketch can hold the phrase.
+            candidates = self._sketch_candidates(where, params, sketch_tokens(phrase))
+            for chunk in _chunks(candidates, min(page_size, _SQL_CHUNK)):
+                marks = ",".join("?" for _ in chunk)
+                rows = self._fetchall(
+                    f"SELECT rowid, {_LIGHT_COLUMNS} FROM fragments WHERE {where}{_TTL_LIVE_SQL}"
+                    f" AND rowid IN ({marks}) ORDER BY rowid",
+                    [*params, *chunk],
+                )
+                page = self._decode_page(rows, accept)
+                if page:
+                    yield page
+            return
         last_rowid = 0
         while True:
-            rows = self._mention_page(where, params, match, last_rowid, page_size)
+            rows = self._mention_page(where, params, match, last_rowid, page_size, table)
             if rows is None:  # FTS rejected the expression: fall back to a full scan
-                match, rows = None, self._mention_page(where, params, None, last_rowid, page_size)
+                match, rows = None, self._mention_page(where, params, None, last_rowid, page_size, table)
             if not rows:
                 return
             last_rowid = int(rows[-1]["rowid"])
-            page: list[MemoryFragment] = []
-            tampered: list[str] = []
-            for row in rows:
-                if accept is not None and not accept(self.encryption.decrypt_str(_as_bytes(row["content"]))):
-                    continue
-                fragment, is_tampered = self._decode_fragment(dict(row))
-                if is_tampered:
-                    tampered.append(fragment.id)
-                else:
-                    page.append(fragment)
-            if tampered:
-                self._persist_tampered(tampered)
+            page = self._decode_page(rows, accept)
             if page:
                 yield page
+            if len(rows) < page_size:
+                return
+
+    def _decode_page(self, rows: list[sqlite3.Row], accept: Callable[[str], bool] | None) -> list[MemoryFragment]:
+        """Decode accepted rows; tampered rows are persisted as CONTRADICTED and skipped."""
+        page: list[MemoryFragment] = []
+        tampered: list[str] = []
+        for row in rows:
+            if accept is not None and not accept(self.encryption.decrypt_str(_as_bytes(row["content"]))):
+                continue
+            fragment, is_tampered = self._decode_fragment(dict(row))
+            if is_tampered:
+                tampered.append(fragment.id)
+            else:
+                page.append(fragment)
+        if tampered:
+            self._persist_tampered(tampered)
+        return page
+
+    def agent_contents(self, agent_id: str, page_size: int = 5_000) -> Iterator[list[tuple[str, str]]]:
+        """Yield pages of (id, plaintext) for the agent's retrievable-state fragments.
+
+        Rowid order, keyset-paginated. Used to decide which memories a
+        compatible embedder upgrade must re-embed; rows that cannot be
+        decrypted are skipped (they are isolated on every other read path).
+        """
+        states = [state.value for state in _RETRIEVABLE_STATES]
+        sql = (
+            "SELECT rowid, id, content FROM fragments"
+            f" WHERE agent_id = ? AND state IN ({','.join('?' for _ in states)}) AND rowid > ?"
+            " ORDER BY rowid LIMIT ?"
+        )
+        last = 0
+        while True:
+            rows = self._fetchall(sql, (agent_id, *states, last, page_size))
+            if not rows:
+                return
+            last = int(rows[-1][0])
+            page: list[tuple[str, str]] = []
+            for _, fragment_id, content in rows:
+                try:
+                    page.append((str(fragment_id), self.encryption.decrypt_str(_as_bytes(content))))
+                except Exception:  # noqa: BLE001 - undecryptable rows are handled elsewhere
+                    continue
+            yield page
             if len(rows) < page_size:
                 return
 
@@ -101,6 +168,7 @@ class MentionMixin:
         match: str | None,
         after_rowid: int,
         page_size: int,
+        table: str = _FTS_TABLE,
     ) -> list[sqlite3.Row] | None:
         """One page of candidate rows after *after_rowid*; None if FTS rejects *match*."""
         sql = f"SELECT rowid, {_LIGHT_COLUMNS} FROM fragments WHERE {where}{_TTL_LIVE_SQL} AND rowid > ?"
@@ -108,7 +176,7 @@ class MentionMixin:
         if match is not None:
             # The FTS rowid equals the fragments rowid; the rowid bound is pushed
             # into the FTS scan too so each page reads only its own range.
-            sql += f" AND rowid IN (SELECT rowid FROM {_FTS_TABLE} WHERE {_FTS_TABLE} MATCH ? AND rowid > ?)"
+            sql += f" AND rowid IN (SELECT rowid FROM {table} WHERE {table} MATCH ? AND rowid > ?)"
             args += [match, after_rowid]
         sql += " ORDER BY rowid LIMIT ?"
         args.append(page_size)

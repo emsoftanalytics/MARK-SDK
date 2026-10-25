@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Memory gap report types."""
 from __future__ import annotations
 
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class GapSeverity(str, Enum):
@@ -43,6 +43,17 @@ class GapReport(BaseModel):
     confidence:        float        = Field(default=1.0, ge=0.0, le=1.0)
     missing:           List[str]    = Field(default_factory=list)
     action_hint:       str          = "answer"
+
+    @model_validator(mode="after")
+    def _one_action(self) -> "GapReport":
+        """One suggested action: ``action_hint`` follows ``suggested_action``.
+
+        A report advising "web_search" while hinting "answer" left callers to
+        pick; when an action other than "none" is suggested, the hint is that action.
+        """
+        if self.suggested_action != "none" and self.action_hint == "answer":
+            object.__setattr__(self, "action_hint", self.suggested_action)
+        return self
 
     @classmethod
     def from_score(

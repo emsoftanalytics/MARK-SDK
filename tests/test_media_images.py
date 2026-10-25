@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Image memory: remember/verify by path + hash, recall, search, vector partition.
 
 All offline: PNGs come from zlib/struct and the CLIP model is a fake.

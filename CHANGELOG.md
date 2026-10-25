@@ -4,6 +4,383 @@ All notable changes to the MARK Python SDK will be documented here.
 
 This project follows semantic versioning for public package releases.
 
+## 0.2.0a10 - 2026-10-25
+
+The last alpha before 1.0: one memory API across Python, the command line
+and MCP, documents and files, safer defaults, verified upgrades, and recall
+that stays fast at a million memories.
+
+### Upgrade notes
+
+- **Python 3.11 or newer is required.** Python 3.10 reached end of life in
+  October 2026, and the patched versions of optional dependencies (Pillow 13,
+  filelock 4.2) need 3.11; on Python 3.10, stay on 0.2.0a9.
+- **Automatic backup, then the upgrade.** The first open with 0.2.0a10
+  copies an older store to `memory.db.v<N>-backup-<UTC time>.db` next to it
+  (owner-only), checks the copy, and only then upgrades the store in place
+  to schema version 6. If anything fails, the store is left as it was (or
+  restored from the backup) and the error says why. The backup needs about
+  as much free space as the store: `backup_dir=` (or `mark migrate
+  --backup-dir`) puts it on another disk, `backup_on_upgrade=False` (or
+  `MARK_BACKUP_ON_UPGRADE=0`) skips it. Run `mark migrate --dry-run` to see
+  the plan first, and delete the backup once you no longer need it: it holds
+  the same memories as the store. The `mark` command does not open encrypted
+  stores: upgrade an encrypted store by opening it from Python with its key.
+  Opened without its key, it is refused before any backup or change.
+- **Stop everything that uses the store** (`mark serve`, MCP servers,
+  agents) before upgrading. 0.2.0a10 refuses to migrate a store while a
+  0.2.0a8 or 0.2.0a9 `mark serve` is running on it and raises
+  `StoreInUseError`; `mark serve` also refuses to start next to one.
+- **Going back to an older version.** 0.2.0a9 refuses an upgraded store
+  (`StoreVersionError`). To return to 0.2.0a9, restore the automatic backup
+  with `mark backups restore FILE`: the store goes back to its state before
+  the upgrade (memories written since then are not in it; the current store
+  is kept as `<db>.pre-restore-<time>.db`). 0.2.0a8 and older have no
+  version guard: never open an upgraded store with them. They write into
+  schema 6 without updating its new tables, and on an encrypted store opened
+  without the key they write plaintext. 0.2.0a10 quarantines such rows
+  (tagged `mark:unreadable`, reported by `integrity_check()`, left out of
+  exports), but the plaintext stays on disk until it is forgotten with
+  `secure=True` and the store is vacuumed.
+- **One-time re-embedding.** The hash embedder is now version 3: memories
+  that contain CJK text, emoji or symbols are re-embedded once on the first
+  open; other memories are untouched.
+- **The store remembers its embedder.** Opening a store without
+  `embedder=` reuses the embedder it was created with (in Python, the CLI
+  and MCP; `embedder_info().source == "store"`). If that embedder cannot be
+  loaded, the store opens keyword-only with one warning instead of
+  re-embedding. An explicit `embedder=` or `MARK_EMBEDDER` re-embeds once and
+  becomes the store's embedder.
+- **Secrets are redacted by default** on every write; pass `redact=False`
+  to opt out for data you control. Errors, stack traces and HTTP failures
+  are now remembered by default so agents can learn from failures
+  (`FailureFilter` on `ConsolidationGate` is opt-in).
+- **`MarkChat` uses the `"small"` preset by default** (a 200-token
+  briefing); pass `preset="default"` for the previous size.
+- **Curated top-level exports.** `mark` exports 29 names. Every other former
+  top-level name still imports, with a `DeprecationWarning` naming the
+  submodule to import it from.
+- **`forget(match=...)` matches whole words** (not substrings), needs at
+  least 3 characters and `all=True` above 50 matches. `mark forget --match`
+  lists the matches and asks first (`--yes` for scripts); MCP `mark_forget`
+  needs `confirm=true` when several memories match.
+- **`resolve()` closes only TODOs and bugs**; other kinds raise
+  `InvalidInputError` (use `supersede()`).
+- **Encrypted stores** build their token sketches on the first identifier
+  recall or timeline in each process (a few seconds at 20,000 memories).
+  Keep one long-running process and call
+  `runtime.warm_up(sketches=True)` at start, or opt in to
+  `persist_token_sketches()`.
+
+### Added
+
+- **Safe upgrades with a verified backup.** Opening a store written by an
+  older MARK (from Python, the CLI, `mark serve` or MCP) first checks free
+  space, copies the store with SQLite's online backup API into an
+  owner-only file that never overwrites another, and verifies it (row
+  counts, plus an integrity check, or a page-by-page compare above 200 MB)
+  before migrating. Backup and check took 4.0 s at 100,000 memories and
+  32.6 s at 1,000,000 memories (1.7 GB) on a loaded machine. The migration
+  runs in one transaction and is checked again (no memories, facts or
+  documents lost); on failure it is rolled back, or restored from the backup
+  if it had been saved. `Mark.local()` and `MarkRuntime.local()` take
+  `backup_on_upgrade=` and `backup_dir=`; the upgrade is logged once with
+  sizes and timings and recorded in the store (`last_upgrade`).
+- **`mark migrate`** (`--dry-run`, `--no-backup`, `--backup-dir DIR`)
+  upgrades a store explicitly; the dry run prints the schemas, the backup
+  path and the free-space math with PASS/FAIL. **`mark backups`** lists a
+  store's backups (schema, size, date) and **`mark backups restore FILE`**
+  puts one back, keeping the current store as `<db>.pre-restore-<time>.db`;
+  it refuses while `mark serve` holds the store and asks first unless
+  `--yes`.
+- **Upgrade errors that explain themselves.** `UpgradeBackupError` and its
+  subclasses `InsufficientSpaceError`, `BackupWriteError`,
+  `BackupVerificationError` and `UpgradeFailedError` state the sizes, free
+  space, differing row counts or OS error, what to do, and whether the store
+  was changed; the numbers are also attributes.
+- **One memory API.** `mark.memory` and `runtime.memory(agent_id)` share the
+  verbs `remember`, `remember_many`, `recall`, `brief`, `forget`, `get`,
+  `list`, `count`, `update`, `supersede`, `resolve`, `facts`, `timeline`,
+  `store_document`, `remember_file`, `documents`, `images`, `export_jsonl`,
+  `import_jsonl`, `vacuum` and `embedder_info`, with the same arguments and
+  defaults. Plain names are synchronous and an `a` prefix marks the async
+  twin (`arecall`). `store_sync`, `retrieve_sync` and `retrieve` keep
+  working; `mark.memory.retrieve()` is deprecated in favour of
+  `recall(...).as_context()`.
+- **Memory kinds**: `remember(text, kind="todo")` (decision, todo, bug, fix,
+  preference, snippet, api, note), or a leading `TODO:`, `DECISION:`/`ADR:`,
+  `BUG:`, `FIX:`, `DONE:`/`NOTE:`, `API:` or `SNIPPET:` label in Python, the
+  CLI and MCP; `list(kind=..., open=True)`, `recall(open=True)`,
+  `MemoryFragment.kind` and `mark.kinds.kind_of()`.
+- **Memory lifecycle**: `resolve()` closes TODOs and bugs; `supersede()` and
+  `update()` replace a memory and keep its history (revising an already
+  superseded memory revises its current version, `current_version()`);
+  `forget()` cascades to the facts extracted from the memory;
+  `forget(secure=True)` plus `vacuum()` erase the text from the database,
+  its WAL and any vector snapshot; `facts.delete()` hard-deletes facts;
+  `forget(match=..., dry_run=True)` returns a `ForgetPreview`.
+- **Session brief**: `memory.brief()`, `mark brief` and the MCP `mark_brief`
+  tool return one budgeted block with current facts, open TODOs, recent
+  decisions, bugs paired with their fixes, and recent changes.
+- **Data management**: `get()` (short ids accepted), `count()`, paginated
+  `list()`, `Mark.agents()`, and JSONL backup and restore (`export_jsonl` /
+  `import_jsonl`, `mark export` / `mark import`): imports are idempotent,
+  skip malformed lines with a report, and restore each fact once; encrypted
+  stores export only with `decrypt=True`.
+- **Documents and files**: `store_document()` stores long text or a file as
+  chunk memories linked to one document; chunks follow headings, paragraphs
+  and code blocks and carry their section path; `memory.documents` lists,
+  gets and forgets documents. `remember_file()` routes any file by its
+  content: text (UTF-8, UTF-16/32 with a byte-order mark, Latin-1), Markdown,
+  code, HTML, Word, Excel and PowerPoint (with speaker notes), PDF (new `pdf`
+  extra), images, and audio or video through a transcriber
+  (`mark.media.OpenAITranscriber`).
+- **Fact extraction** understands first-person statements as facts about
+  the user, preferences (`user.likes`, `user.prefers`), pets, job and phone
+  number changes, rescheduled appointments, prices and measurements with
+  units, counts, tools and project settings, key/value lines, JSON and YAML
+  records, config blocks, Markdown tables, lists of ports, owners, emails or
+  languages, numbered steps, ticket status and values stated in developer
+  notes ("the CLI entry point is ..."). "No longer", "quit", "gave up",
+  "used to" and "Correction:" retract or replace a value, "from A to B"
+  keeps A in history, and "Starting <date>" schedules a value. Only the
+  user's words in a chat are extracted, never assistant or tool text.
+  Writes and documents report how many facts they produced.
+- **A user subject stored with the store**: `Mark.local(user_subject=...)`,
+  `configure_user_subject()`, `mark config user-subject NAME` and
+  `mark mcp --user-subject` name who "I" is; Python, the CLI and MCP use it
+  for extraction and for "I/my" questions.
+- **Facts**: values with a future `valid_from` are scheduled
+  (`facts.scheduled()`, `Fact.is_scheduled`); values keep their Python type;
+  `facts.add()`/`facts.remove()` handle attributes with several current
+  values; `facts.get_all()`; `valid_from`, `as_of` and `occurred_at` accept
+  natural dates; `mark fact list [SUBJECT]`.
+- **Time in recall**: natural and relative dates in questions and memories
+  ("3rd of May", "last Tuesday", "Q3", "in August", "last December"),
+  `since=`/`until=` filters, and dates named in a question favour memories
+  from that period.
+- **Multi-hop recall**: names and identifiers in the best results lead to
+  the next fact, so two- and three-step chains reach the top results; graph
+  edges accept any relation name.
+- **Presets by model size**: `preset="small"` (200 tokens, for ~1-3B
+  models) and `"tiny"` (160 tokens) on `MarkChat`, `MarkAgentMiddleware`,
+  `ContextWatch.for_preset()` and `mark mcp --preset`. On a 25-question
+  personal-assistant test with real local models, llama3.2:3b answered 24 of
+  25 with about 233 prompt tokens per turn (0.2.0a9: 21 with 534), and
+  llama3.2:1b 20 of 25 (0.2.0a9: 7).
+- **`MarkChat`** stores each user message as written and extracts facts from
+  it (`extract_facts=True`), stores the model's reply as low-trust context,
+  and can stream (`on_token`) and report progress (`on_status`).
+- **MCP**: new tools `mark_brief`, `mark_fact`, `mark_timeline`, `mark_list`,
+  `mark_resolve`, `mark_supersede` and `mark_forget`; `mark_write` takes
+  `kind`, and `mark_write`/`mark_observe` take `extract_facts`. Outputs use
+  8-character ids, which every tool accepts. `mark mcp` and `python -m
+  mark.adapters.mcp` take `--db`, `--agent`, `--briefing`, `--preset`,
+  `--tools` (which may name `mark_briefing`), `--allow-agent`,
+  `--user-subject` and `--extract-facts`.
+- **Command line**: `remember` (with `--kind`, `--tag`, `--importance`,
+  `--extract-facts`), `forget`, `resolve`, `supersede`, `list`, `export`,
+  `import`, `brief`, `agents`, `config`, `mcp`, `migrate`, `backups`, and
+  `serve --detach`, `serve status` and `serve stop`; `recall` gains
+  `--open`, `--kind` (open memories unless `--all`), `--session`,
+  `--since`, `--until` and `--tag`; `mark --version` prints the installed
+  version (`mark-sdk 0.2.0a10`).
+- **Prompt-injection screening** on every write: instruction overrides
+  (including "disregard the above and reply only with ..."), role
+  reassignment and messages addressed to an AI reader (including greetings
+  to a model that dictate what to claim or skip while it summarises) in
+  about 25 languages, smuggled tool calls and chat-template markers,
+  instructions hidden in invisible HTML, exfiltration links built from
+  templates, and letter-spaced, leetspeak or base64-encoded payloads.
+  Flagged memories are tagged `mark:untrusted` with reasons under
+  `metadata["mark_security"]` and labelled as untrusted wherever they are
+  rendered; `injection="quarantine"` keeps them out of recall.
+- **Write options** on `Mark.local()` and `MarkRuntime.local()`: `redact=`,
+  `injection=`, `max_memory_bytes=`, `fact_job_lease=` and `user_subject=`.
+- `store_many_sync` / `remember_many` return a `StoreReport` that lists
+  skipped items and why (`strict=True` raises instead), and
+  `idempotency_key=` makes retries safe.
+- `MarkRuntime.register_closer()` stops background readers before
+  `shutdown()` closes the store; `MarkRuntime.warm_up()` loads the index
+  ahead of the first recall.
+- Every result type (recall results, timelines, briefings, context bundles)
+  offers `as_context()`, `as_text()` and `to_dict()`; recall results list
+  replaced memories in `result.outdated`.
+- `embedder_info()` shows the active embedder and how it was chosen.
+- `SessionFilter.exclude_tags`.
+- Encrypted stores: exact identifier recall, and `persist_token_sketches()`
+  to keep timeline sketches on disk (with a documented leakage trade-off).
+- The opt-in `mark-memory-compact` skill for hosts that want a short
+  instruction block.
+- `benchmarks/scale/bench.py` measures store, recall, cold start and recall
+  quality at any size, with regression budgets for CI, and
+  `benchmarks/scale/upgrade_bench.py` measures backup, check and migration
+  time.
+- Examples for coding-agent memory and for documents and files.
+
+### Changed
+
+- **Secret redaction is on by default** on every write path (single and
+  batched writes, observations, healed and quarantined memories, memory
+  blocks, documents, files, transcripts and caller metadata). Secrets become
+  labelled placeholders such as `[SECRET:stripe_key]`, so recall still shows
+  that a key existed. Redaction recognises secrets by structure: any
+  secret-named key in env, YAML, JSON, TOML and connection strings,
+  command-line secret flags (`--api-key`, `mysql -p`, `sshpass -p`,
+  `curl -u` and others), HTTP basic-auth tuples (`auth=("admin", "...")`),
+  netrc and `.pgpass` entries, URL credentials, private key blocks, vendor
+  tokens (OpenAI, Anthropic, Stripe, AWS, GitHub, GitLab, Slack, Google,
+  Hugging Face, PyPI, Docker Hub, Vault, Discord, Telegram and more),
+  Luhn-checked card numbers, PINs, door, gate, alarm, safe and locker codes,
+  12-24 word seed phrases, and passwords written in prose in about 20
+  languages (Hindi included). Status, error, postal and country codes and
+  template placeholders such as `your-api-key-here` are kept.
+  `RedactionPolicy(pii=True)` also removes emails, phone numbers
+  (international and national formats), checksum-validated IBANs and SSNs.
+- **Recall at scale**: at 100,000 memories p50 35 ms (was 309 ms) and p95
+  50 ms (was 538 ms); at 1,000,000 p50 about 180-270 ms (was 5.1 s).
+  Keyword queries scale with their rarest terms. A recall right after a
+  write applies only that write's changes instead of rescanning the scope
+  (about 200 ms at a million memories).
+- **Faster reopening**: embeddings load in bulk, agents with 50,000 or more
+  memories keep a vector snapshot and a scope snapshot, and snapshots load
+  memory-mapped. Cold start is 1.7 s at 100,000 memories (was 11 s) and
+  about 8 s of CPU at a million (about 9 s wall on a quiet machine; 0.2.0a9
+  took 48 s). `mark serve stop` rewrites a snapshot only when many memories
+  changed.
+- **Multilingual keyword search**: CJK text is segmented, other languages
+  are no longer run through the English stemmer, accented words match their
+  unaccented spelling, emoji and symbols are searchable, in keyword
+  search and in the hash embedder (version 3), and Chinese, Japanese and
+  Korean names are recognised in timelines, fact lookups and "not in
+  memory" checks. Store schema version 6 adds the multilingual keyword
+  index, vector and scope snapshots, and an index for TTL expiry.
+- **Recall prefers what is current**: updates ("moved to", "switched to",
+  "no longer", "I now report to", "Update: ...", "Correction:") rank above
+  what they replace even when the old value is not named; outdated
+  statements are labelled and listed below their replacement; conflicting
+  statements come newest first and flagged; "originally/previously"
+  questions reverse the order. Superseded and resolved memories are demoted
+  only for current-state questions, so error text, "why did ... fail" and
+  "how did we fix" questions still find resolved bugs and fixes, and
+  "What TODOs are still open?" lists open notes of that kind first.
+- **Honest results**: results are sorted by the score they display, ties
+  are ordered the same way on every call, and unrelated memories no longer
+  show a perfect score. "Not in memory" reports missing code identifiers and
+  names as written with one suggested action, never for an exact identifier
+  match, and less often for names that exist in memory. Empty and
+  punctuation-only queries return nothing.
+- **Leaner context**: facts attach only when the question asks for them
+  (with everyday synonyms such as live/location and boss/manager, at most
+  three per subject); no zero-relevance padding; `as_context(max_tokens=N)`
+  is a hard cap; long memories show their best passage; a document
+  contributes at most two chunks, with the chunk holding the answer first;
+  exact literal hits (emoji, CJK, identifiers) win over vector-only matches.
+  On a coding-assistant test, recall context fell from about 1,250 to about
+  160 tokens per question.
+- **Briefings separate the user from the model**: assistant replies, tool
+  output and errors are stored as low-trust context, never anchor a briefing
+  and never appear as user facts; questions and requests are never echoed
+  back as notes. Briefings put the request's best lines first, show dense
+  fact lines with the value they replaced, pair bugs with their fixes, drop
+  outdated lines under the small and tiny presets (and mark them otherwise),
+  carry the user's current facts into first-person requests, show a
+  correction for one turn only, keep open TODOs and bugs at small budgets,
+  and keep every part of a multi-part sequence ("Step 2: ...", "days 4 to 6
+  in Kyoto") once one part is shown.
+- **Briefings and recall are faster**: outdated-line detection reads each
+  memory once, and matching known fact subjects stays fast with thousands
+  of subjects (about 3.7 ms with 10,000).
+- The LangChain middleware stores each reply once as low-trust context,
+  tags tool results and errors, and counts its skill text and memory
+  wrapper inside `budget_tokens`.
+- **Durability**: background fact jobs held by a process that died are
+  requeued on the next open and `facts.extract_pending()` waits at most
+  30 s by default; `shutdown()` stops workers within `timeout`
+  (default 5 s), returns unfinished jobs to the queue and closes the store,
+  which then raises `StoreClosedError`; `Mark.close()` is an alias.
+- **Embedder outages no longer lose writes**: network embedders retry
+  timeouts, connection errors and HTTP 429/5xx with backoff; if the
+  embedder stays down, memories are stored unembedded, found by keyword
+  meanwhile, and embedded once it is back, without stalling a recall. Errors
+  that remain are an `EmbeddingHTTPError` naming the endpoint. `"auto"` warns
+  once when it falls back to the hash embedder, and model download errors
+  explain `HF_HOME`.
+- **One store-path rule**: `Mark.local("./.mark")`, `mark --db .mark` and
+  `mark mcp --db .mark` open the same `./.mark/memory.db`; `Mark.local()`
+  also accepts a project folder or a `.db` file.
+- **`mark serve`** holds an OS file lock released even when the server is
+  killed, warms its index in the background, and stops on an authenticated
+  request. Commands in flight when a server dies finish in-process without
+  duplicates. Served commands take about 0.1-0.3 s.
+- **Command-line output** shows 8-character ids (accepted by every command),
+  stored dates, kinds, relevance scores and outdated, superseded and
+  resolved labels (`--open` drops them); `ingest` reports new and existing
+  memories and the facts it extracted, and a retried ingest never stores
+  duplicates.
+- MCP errors, including unknown arguments, come back as one-sentence error
+  results; `mark_retrieve` stays within `budget_tokens` (default 1500), shows
+  each long memory's best passage, scores and state labels, and strips
+  control characters.
+- `wrap_agent()` agents are callable (`agent(...)`, `invoke`, `ainvoke`).
+- Stores in a `.mark` folder are made owner-only when opened.
+- **License**: the copyright holder is named (Somtochukwu Owen Ikeanyi), a
+  `NOTICE` file and a trademark note were added, and `LICENSE` and `NOTICE`
+  ship in the wheel and source distribution. The license is still
+  Apache-2.0.
+- **Dependencies**: security updates for certifi, filelock, setuptools,
+  fastembed (0.9.1) and Pillow (13).
+
+### Fixed
+
+- Closing a store while another thread was querying it could crash the
+  process; `close()` now waits up to 5 s for running statements and refuses
+  new ones with `StoreClosedError`, and a `ContextWatch` that was never
+  closed is stopped before its runtime or store closes.
+- A newer MARK could migrate a store under a running older `mark serve`,
+  whose later writes then missed the new tables.
+- Documents, files and transcripts kept their full original text before
+  redaction; they are now redacted and screened before anything is stored,
+  and every chunk of a document flagged as an injection is tagged
+  `mark:untrusted`.
+- Graph documents written with the store's `store_document()` were kept in
+  plaintext in an encrypted store; their title, text and source are now
+  encrypted like memories.
+- `RetrievalResult.as_text()` and `brief()` defuse `</memory_context>`,
+  `<system>` and other boundary or role-tag lookalikes, as `as_context()`
+  already did.
+- Opening an encrypted store that holds plaintext rows no longer takes
+  seconds per row, and fact values stored as a bytes representation are
+  repaired.
+- A shut-down store could be reopened silently by a later call; shutdown no
+  longer leaks worker threads or file handles.
+- The first `ContextWatch` briefing for a new request waits for its prefetch
+  even when the caller passes a shorter `wait`.
+- Writes validate their input and raise `InvalidMemoryError` (or
+  `MemoryTooLargeError` above `max_memory_bytes`, default 1 MB) instead of
+  raw pydantic, JSON or Unicode errors; bytes are no longer coerced to text;
+  unknown block names raise `UnknownBlockError`, including over MCP. One
+  invalid item no longer fails a whole batch.
+- An empty file raises a MARK error, and image memory refuses files that are
+  not images (`NotAnImageError`).
+- A back-dated change now beats an undated earlier statement, and "moved
+  ... in September" is dated to September.
+- Long floats such as `0.30000000000000004` no longer match versions such
+  as `0.3.0`.
+- `update_embedding()` and secure forgetting keep vector snapshots correct.
+- Redaction no longer leaves partial values such as `[REDACTED]&3` or
+  `+234 [PHONE]`, an unquoted header value inside quotes
+  (`curl -H 'X-API-Key: ...'`) keeps its closing quote, and
+  `ContentSanitizer` no longer truncates content at 10,000 characters.
+- Command-line fixes: read commands on a missing store say so instead of
+  creating it; `mark recall` rejects an empty query and `-k 0`;
+  `serve stop` exits 1 when no server runs and no longer fails when the
+  server closes the connection while stopping; `--no-server` is accepted after
+  the sub-command; `brief` on an empty store says so; no more "same day"
+  notes. When a `mark serve` from another MARK version answers, commands
+  print the "different MARK build" notice at most once, and not at all when
+  the store is refused with `StoreInUseError`.
+
 ## 0.2.0a9 - 2026-10-15
 
 ### Added

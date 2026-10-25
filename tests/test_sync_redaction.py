@@ -10,7 +10,7 @@ def test_sync_redacts_secrets(tmp_path):
     payload = redact_records_for_sync([record])
 
     assert "abc123" not in payload[0]["content"]
-    assert "[REDACTED]" in payload[0]["content"]
+    assert "[SECRET:api_key]" in payload[0]["content"]
 
 
 def test_sync_redacts_record_metadata(tmp_path):

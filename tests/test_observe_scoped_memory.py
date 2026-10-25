@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """WorldBibleMemory, scoped entity helpers (Character/Object/Location memory),
 SessionMemory, and general-purpose (non-media) use of the entity helpers.
 """

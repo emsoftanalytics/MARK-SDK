@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -60,6 +60,18 @@ jobs:
           python-version: "3.13"
       - run: uv run --extra dev --extra fast pytest
 
+  scale:
+    name: Scale benchmark (20k memories)
+    runs-on: ubuntu-latest
+    # Gated on CPU time (stable on shared runners); wall-clock budgets only warn.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: uv run --extra fast python benchmarks/scale/bench.py --n 20000 --check
+
   build:
     name: Build distributions
     runs-on: ubuntu-latest
@@ -81,6 +93,7 @@ jobs:
           # Packaged skill assets must ship in the wheel.
           unzip -l dist/*.whl | grep -q "mark/middlewares/skills/mark-usage/SKILL.md"
           unzip -l dist/*.whl | grep -q "mark/middlewares/skills/mark-memory-middleware/SKILL.md"
+          unzip -l dist/*.whl | grep -q "mark/middlewares/skills/mark-memory-compact/SKILL.md"
       - run: |
           # Media demo dependencies must not be reintroduced as direct extras
           # (pillow may still arrive transitively, e.g. via fastembed).

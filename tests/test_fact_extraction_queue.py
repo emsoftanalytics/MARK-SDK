@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Durable background extraction: the fact_jobs queue and its worker.
 
 Slow extractors only enqueue a job per fragment on write. Jobs are
@@ -187,7 +187,7 @@ def test_v4_database_migrates_to_v5_with_the_queue_tables(tmp_path: Path) -> Non
     conn.commit()
     conn.close()
     store = LocalMemoryStore(path)
-    assert store.schema_version() == 5 == LocalMemoryStore.CURRENT_SCHEMA_VERSION
+    assert store.schema_version() == LocalMemoryStore.CURRENT_SCHEMA_VERSION >= 5
     assert store.fact_job_counts() == {"pending": 0, "running": 0, "done": 0, "failed": 0}
     store.close()
 

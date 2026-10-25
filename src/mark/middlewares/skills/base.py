@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 #
 # Skills are the unit of capability an agent can invoke outside the LLM —
 # web search, code search, planning, data retrieval, external APIs, etc.

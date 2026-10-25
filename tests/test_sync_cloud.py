@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Cloud sync: options/stats/delta types, CloudSync.prepare (redaction, block
 filters, events), upload via a mock cloud, and write-through mode.
 """

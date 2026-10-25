@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Security hardening: trust-bus forgery/tampering, context escaping, and governance
 quarantine of rejected observations on the async store path.
 """
@@ -11,6 +11,7 @@ from pathlib import Path
 from mark import Mark
 from mark.memory.runtime import MarkRuntime
 from mark.middlewares import GovernanceMiddleware, SyncMiddleware, TrustBusMiddleware
+from mark.middlewares.governance import ConsolidationGate, FailureFilter
 from mark.middlewares.trust_bus import BusMessage, BusSnapshot, PublisherTrust, TrustAwareGlobalMemoryBus
 from mark.types import MemoryState
 
@@ -104,7 +105,7 @@ def test_facts_by_trust_is_at_or_above() -> None:
 
 def test_async_store_runs_middleware_and_governance(tmp_path: Path) -> None:
     recorder = Recorder()
-    with Mark.local(tmp_path, middleware=[recorder, GovernanceMiddleware()]) as mark:
+    with Mark.local(tmp_path, middleware=[recorder, GovernanceMiddleware(gate=ConsolidationGate(failure=FailureFilter()))]) as mark:
         mem = mark.runtime.memory("async-agent")
         frag_id = asyncio.run(mem.store("Traceback (most recent call last)\n  boom"))
         stored = mark.runtime.store.get(frag_id)
@@ -117,7 +118,7 @@ def test_async_store_runs_middleware_and_governance(tmp_path: Path) -> None:
 def test_rejected_observation_is_quarantined_unpublished_and_unsynced(tmp_path: Path) -> None:
     sync = SyncMiddleware()
     trust = TrustBusMiddleware()
-    with Mark.local(tmp_path, middleware=[sync, trust, GovernanceMiddleware()]) as mark:
+    with Mark.local(tmp_path, middleware=[sync, trust, GovernanceMiddleware(gate=ConsolidationGate(failure=FailureFilter()))]) as mark:
         mem = mark.runtime.memory("observer")
         result = mem.observe("Traceback (most recent call last)\n  KeyError: 'scarf'", auto_structure=True)
         stored = mark.runtime.store.get(result.fragment_id)

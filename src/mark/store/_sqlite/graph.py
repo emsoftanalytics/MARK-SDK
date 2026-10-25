@@ -8,28 +8,41 @@ from __future__ import annotations
 
 import json
 
+from mark.security import NoOpEncryptionProvider
 from mark.types import MemoryDocument, MemoryEdge, MemoryNode
 from mark.types.graph import EdgeRelation
+
+
+# Metadata key on graph documents whose text columns hold ciphertext.
+_ENCRYPTED_MARKER = "mark_encrypted_text"
 
 
 class GraphMixin:
     """CRUD for documents, graph nodes and graph edges."""
 
     def store_document(self, doc: MemoryDocument) -> str:
-        """Persist a document."""
+        """Persist a document; in an encrypted store its title, content and source are encrypted."""
+        title, content, source, metadata = doc.title, doc.content, doc.source, dict(doc.metadata)
+        if not isinstance(self.encryption, NoOpEncryptionProvider):
+            # Same at-rest guarantee as memories: text columns hold ciphertext. The
+            # marker tells get_document to decrypt (older rows stay plaintext).
+            title, content = self.encryption.encrypt_str(title), self.encryption.encrypt_str(content)
+            source = None if source is None else self.encryption.encrypt_str(source)
+            metadata[_ENCRYPTED_MARKER] = 1
         with self._writing() as conn:
+            self._note_changed(())  # graph rows never change which fragments are retrievable
             conn.execute(
                 "INSERT OR REPLACE INTO documents VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     doc.id,
-                    doc.title,
-                    doc.content,
-                    doc.source,
+                    title,
+                    content,
+                    source,
                     doc.agent_id,
                     doc.scope.value,
                     json.dumps(doc.fragment_ids),
                     json.dumps(doc.tags),
-                    json.dumps(doc.metadata),
+                    json.dumps(metadata),
                     doc.created_at.isoformat(),
                 ),
             )
@@ -38,11 +51,21 @@ class GraphMixin:
     def get_document(self, doc_id: str) -> MemoryDocument | None:
         """Fetch a document by id, or None."""
         row = self._fetchone("SELECT * FROM documents WHERE id = ?", (doc_id,))
-        return None if row is None else self._row_to_document(dict(row))
+        if row is None:
+            return None
+        row = dict(row)
+        metadata = json.loads(str(row["metadata"] or "{}"))
+        if metadata.pop(_ENCRYPTED_MARKER, None):
+            for column in ("title", "content", "source"):
+                if row[column] is not None:
+                    row[column] = self.encryption.decrypt_str(row[column])
+            row["metadata"] = json.dumps(metadata)
+        return self._row_to_document(row)
 
     def store_node(self, node: MemoryNode) -> str:
         """Persist a graph node."""
         with self._writing() as conn:
+            self._note_changed(())  # graph rows never change which fragments are retrievable
             conn.execute(
                 "INSERT OR REPLACE INTO nodes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
@@ -85,6 +108,7 @@ class GraphMixin:
             sql += " AND relation = ?"
             params.append(relation.value)
         with self._writing() as conn:
+            self._note_changed(())  # graph rows never change which fragments are retrievable
             cursor = conn.execute(sql, params)
         return cursor.rowcount
 
@@ -101,6 +125,7 @@ class GraphMixin:
     def store_edge(self, edge: MemoryEdge) -> str:
         """Insert or replace an edge row; block_id scopes the edge to a block."""
         with self._writing() as conn:
+            self._note_changed(())  # graph rows never change which fragments are retrievable
             conn.execute(
                 """
                 INSERT OR REPLACE INTO edges
@@ -158,6 +183,7 @@ class GraphMixin:
     def delete_edge(self, edge_id: str) -> bool:
         """Delete an edge by id. Returns True if a row was deleted."""
         with self._writing() as conn:
+            self._note_changed(())  # graph rows never change which fragments are retrievable
             cursor = conn.execute("DELETE FROM edges WHERE id = ?", (edge_id,))
         return cursor.rowcount > 0
 

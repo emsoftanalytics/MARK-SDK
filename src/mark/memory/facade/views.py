@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Scoped helper views over MarkMemory: entities, sessions, blocks, chain.
 
 Each accessor returns a lightweight object bound to this memory. Imports are
@@ -15,6 +15,7 @@ from mark.memory.facade.core import MemoryCore
 if TYPE_CHECKING:
     from mark.memory.block_chain import BlockChain
     from mark.memory.block_graph import BlockGraph
+    from mark.embeddings.info import EmbedderInfo
     from mark.media.memory import ImageMemory
     from mark.middlewares.media_continuity.entity import CharacterMemory, LocationMemory, ObjectMemory
     from mark.middlewares.media_continuity.session_memory import SessionMemory
@@ -92,3 +93,11 @@ class ViewsMixin(MemoryCore):
         """
         from mark.memory.block_chain import BlockChain
         return BlockChain(self._store, self.agent_id)
+
+    # ── embedder visibility ───────────────────────────────────────────────────
+
+    def embedder_info(self) -> "EmbedderInfo":
+        """Which embedder this memory uses (name, dim, semantic, source)."""
+        from mark.embeddings.info import embedder_info
+
+        return embedder_info(self._embedder)

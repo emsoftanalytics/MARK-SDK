@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Trust bus: subscriptions (subscribe/unsubscribe) and BusSnapshot filtering,
 JSON round-trip, diffing, trust filtering, and context rendering.
 """

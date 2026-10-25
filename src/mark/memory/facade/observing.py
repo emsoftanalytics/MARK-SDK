@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """observe() for MarkMemory: store an observation, optionally structure it.
 
 Plain observation stores the text as a fragment and emits an

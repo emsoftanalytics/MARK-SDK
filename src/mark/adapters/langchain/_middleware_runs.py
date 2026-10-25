@@ -23,6 +23,7 @@ from time import perf_counter
 from typing import Any
 
 from mark.adapters.backend import BackendResult, call_backend_off_loop
+from mark.adapters.langchain._middleware_tools import KEY_OPTION as _KEY_OPTION
 from mark.adapters.langchain._middleware_support import (
     _BG_DRAIN_TIMEOUT_S,
     _DEFAULT_RUN_ID,
@@ -190,11 +191,12 @@ class _RunsMixin:
     def _message_text(self, msg: Any) -> str:
         return content_text(_message_content(msg))
 
-    def _queue_observation(self, run: _RunState, content: str) -> None:
+    def _queue_observation(self, run: _RunState, content: str, **options: Any) -> None:
         """Queue *content* for run-end archival unless trivial or already seen.
 
         De-duplication is cross-run (bounded LRU of content hashes), so the
-        same tool output observed by many runs is archived once.
+        same tool output observed by many runs is archived once. *options*
+        (provenance: ``source``, ``tags``, ``importance``) go to ``observe``.
         """
         if not content:
             return
@@ -210,16 +212,26 @@ class _RunsMixin:
             while len(self._seen_observation_hashes) > _MAX_SEEN_OBSERVATIONS:
                 self._seen_observation_hashes.popitem(last=False)
         run.pending_observations.append(normalized[:1200])
+        if options:
+            run.pending_options[normalized[:1200]] = options
 
     async def _flush_observations_async(self, run: _RunState) -> int:
         """Write the run's queued observations; return how many succeeded."""
-        pending = run.pending_observations
-        run.pending_observations = []
+        pending, options = run.pending_observations, run.pending_options
+        run.pending_observations, run.pending_options = [], {}
         count = 0
         for content in pending:
-            result = await self._backend_call("observe", content, agent_id=self._agent_id)
+            kwargs = dict(options.get(content, {}))
+            # A message key (tool results) links this write to history archival:
+            # skip what archival already stored, and register what is written here.
+            key = kwargs.pop(_KEY_OPTION, None)
+            if key is not None and self._is_archived(key):
+                continue
+            result = await self._backend_call("observe", content, agent_id=self._agent_id, **kwargs)
             if result.ok:
                 count += 1
+                if key is not None:
+                    self._mark_archived(key)
         if count:
             self._record("observe_flush", count=count)
         return count

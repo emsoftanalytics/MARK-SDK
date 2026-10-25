@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Async batch read path of MarkMemory: retrieve_many.
 
 Kept apart from :mod:`mark.memory.facade.retrieve` only to respect the

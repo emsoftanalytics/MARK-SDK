@@ -107,6 +107,22 @@ class FragmentReadMixin:
         )
         return [(str(row[0]), _decode_embedding(row[1], row[2])) for row in rows]
 
+    def embedding_rows(self, ids: Iterable[str]) -> list[tuple]:
+        """Raw (id, float32 blob, legacy JSON, rowid) rows for *ids*, like ``embedding_pages`` yields.
+
+        Primary-key lookups in chunks: a few thousand rows written since a
+        vector snapshot load without streaming the whole agent.
+        """
+        rows: list[tuple] = []
+        for chunk in _chunks(list(ids), _SQL_CHUNK):
+            with self._reading() as conn:
+                cursor = conn.cursor()
+                cursor.row_factory = None  # plain tuples
+                rows.extend(cursor.execute(
+                    "SELECT id, embedding_blob, embedding, rowid FROM fragments"
+                    f" WHERE id IN ({','.join('?' for _ in chunk)})", chunk).fetchall())
+        return rows
+
     def list_sessions(self, agent_id: str) -> list[str]:
         """Return distinct session_ids for agent_id, ordered by most recent activity."""
         rows = self._fetchall(
@@ -125,6 +141,37 @@ class FragmentReadMixin:
         """Return every stored fragment."""
         rows = self._fetchall("SELECT * FROM fragments")
         return [self._row_to_fragment(dict(row)) for row in rows]
+
+    def recent_duplicate(self, agent_id: str, text: str, since: str, *, limit: int = 64) -> str | None:
+        """Id of a memory of *agent_id* written at/after *since* (ISO time) whose content is *text*.
+
+        Used to retry a write whose outcome is unknown (the server died
+        mid-request) without storing it twice. Redaction placeholders in the
+        stored text (``[REDACTED]``, ``[EMAIL]``, ...) match any span, since
+        the write path may have replaced secrets. Only the newest *limit*
+        rows are decrypted.
+        """
+        import re
+
+        from mark.security.redaction import PLACEHOLDER_RE
+        from mark.store._sqlite.codec import _as_bytes
+
+        wanted = " ".join(text.split())
+        rows = self._fetchall(
+            "SELECT id, content FROM fragments WHERE agent_id = ? AND updated_at >= ? ORDER BY rowid DESC LIMIT ?",
+            (agent_id, since, limit),
+        )
+        for fragment_id, content in rows:
+            try:
+                stored = " ".join(self.encryption.decrypt_str(_as_bytes(content)).split())
+            except Exception:  # noqa: BLE001 - unreadable rows are never a match
+                continue
+            if stored == wanted:
+                return str(fragment_id)
+            parts = PLACEHOLDER_RE.split(stored)
+            if len(parts) > 1 and re.fullmatch(".+?".join(map(re.escape, parts)), wanted, re.S):
+                return str(fragment_id)
+        return None
 
     def count(self, agent_id: str) -> int:
         """Return the number of fragments stored for an agent."""

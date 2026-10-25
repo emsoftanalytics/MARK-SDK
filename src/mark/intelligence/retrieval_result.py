@@ -1,17 +1,25 @@
 """RetrievalResult: the outcome of one retrieval and its LLM-ready renderings.
 
-Rendering treats memory content as untrusted: the XML format escapes every
-stored string so a memory can never close or forge the context boundary.
+Renderings live in ``retrieval_render`` (untrusted-content escaping, best
+passage windowing, hard token caps). The score shown per result is its
+displayed relevance: calibrated query evidence times ranking penalties,
+non-increasing down the list, and the same number the gap report judges.
+``outdated`` and ``conflicts`` carry the state flags the ordering stages
+found (an older statement an update replaces; statements that disagree).
 """
 from __future__ import annotations
 
 import json as _json
 from dataclasses import dataclass, field
-from xml.sax.saxutils import escape as _xml_escape
-from xml.sax.saxutils import quoteattr as _xml_quoteattr
 
 from mark.intelligence.classifier import QueryAnalysis
 from mark.intelligence.retrieval_policy import RetrievalPolicy, RetrievalPolicySpec
+from mark.intelligence.retrieval_render import (  # noqa: F401  (re-exported)
+    DEFAULT_ITEM_CHARS,
+    UNTRUSTED_LABEL,
+    UNTRUSTED_TAG,
+    render,
+)
 from mark.types import GapReport, GapSeverity, MemoryFragment
 
 
@@ -37,6 +45,8 @@ class RetrievalResult:
     temporal_intent: str = "none"
     missing_anchors: list[str] = field(default_factory=list)
     facts: list = field(default_factory=list)  # list[mark.memory.facts.Fact]
+    outdated: list[str] = field(default_factory=list)  # ids an update in the results replaces
+    conflicts: dict[str, list[str]] = field(default_factory=dict)  # id -> ids it disagrees with
 
     @property
     def gap_detected(self) -> bool:
@@ -58,90 +68,26 @@ class RetrievalResult:
         *,
         format: str = "xml",
         max_tokens: int | None = None,
+        max_item_chars: int = DEFAULT_ITEM_CHARS,
     ) -> str:
         """Render retrieved fragments as an LLM-ready context string.
 
-        format      "xml" (default) | "numbered" | "json"
-        max_tokens  token budget (approx 1 token = 4 chars); overrides max_words
+        format          "xml" (default) | "numbered" | "json"
+        max_tokens      hard token budget (1 token = 4 chars, rounded up); overrides max_words
+        max_item_chars  cap per result; longer memories show their best passage
         """
-        budget = int(max_tokens * 0.75) if max_tokens is not None else max_words
-        if format == "numbered":
-            return self._fmt_numbered(budget)
-        if format == "json":
-            return self._fmt_json(budget)
-        return self._fmt_xml(budget)
+        return render(self, fmt=format, max_words=max_words, max_tokens=max_tokens,
+                      max_item_chars=max_item_chars)
 
-    def _fmt_xml(self, max_words: int) -> str:
-        # Memory content is untrusted: escape it so stored text can never close
-        # the <memory_context> boundary or forge sibling tags.
-        compressed_flag = " compressed=true" if self.was_compressed else ""
-        lines = [f"<memory_context query={_xml_quoteattr(self.query)}{compressed_flag}>"]
-        for fact in self.facts:
-            lines.append(f"  [fact|{'current' if fact.is_current else 'historical'}] {_xml_escape(fact.as_text())}")
-        if not self.fragments and not self.facts:
-            lines.append("  [No relevant memory found]")
-        words = 0
-        from mark.intelligence.temporal_order import same_day_order
+    def as_text(self, max_words: int = 1500, *, max_tokens: int | None = None,
+                max_item_chars: int = DEFAULT_ITEM_CHARS) -> str:
+        """Compact plain-text rendering (the "numbered" format of :meth:`as_context`)."""
+        return self.as_context(max_words, format="numbered", max_tokens=max_tokens, max_item_chars=max_item_chars)
 
-        same_day = same_day_order(self.fragments)
-        for fragment, score in zip(self.fragments, self.scores):
-            source = f" | source: {_xml_escape(fragment.source)}" if fragment.source else ""
-            order = f" | same day {same_day[fragment.id][0]}/{same_day[fragment.id][1]}" if fragment.id in same_day else ""
-            line = f"  [{score:.3f}|{fragment.state.value}{source}{order}] {_xml_escape(fragment.content)}"
-            words += len(line.split())
-            if words > max_words:
-                lines.append("  [... truncated for token budget]")
-                break
-            lines.append(line)
-        if self.gap_report.severity not in {GapSeverity.NONE, GapSeverity.LOW}:
-            lines.append(f"  <memory_gap severity={self.gap_report.severity.value}>")
-            lines.append(f"  {_xml_escape(self.gap_report.reason)}")
-            lines.append("  </memory_gap>")
-        lines.append("</memory_context>")
-        return "\n".join(lines)
-
-    def _fmt_numbered(self, max_words: int) -> str:
-        lines: list[str] = []
-        words = 0
-        for i, (fragment, score) in enumerate(zip(self.fragments, self.scores), 1):
-            source = f", source={fragment.source}" if fragment.source else ""
-            line = f"[{i}] (score={score:.3f}{source}) {fragment.content}"
-            words += len(line.split())
-            if words > max_words:
-                lines.append("[...truncated]")
-                break
-            lines.append(line)
-        gap = ""
-        if self.gap_report.severity not in {GapSeverity.NONE, GapSeverity.LOW}:
-            gap = f" | gap: {self.gap_report.severity.value}"
-        compressed = " | compressed" if self.was_compressed else ""
-        footer = f"--- {len(self.fragments)} result(s){gap}{compressed} ---"
-        return "\n".join(lines) + ("\n" if lines else "") + footer
-
-    def _fmt_json(self, max_words: int) -> str:
-        results = []
-        words = 0
-        truncated = False
-        for i, (fragment, score) in enumerate(zip(self.fragments, self.scores), 1):
-            words += len(fragment.content.split())
-            if words > max_words:
-                truncated = True
-                break
-            results.append({
-                "rank":    i,
-                "score":   round(score, 4),
-                "content": fragment.content,
-                "source":  fragment.source,
-                "state":   fragment.state.value,
-            })
-        payload: dict = {
-            "query":      self.query,
-            "compressed": self.was_compressed,
-            "results":    results,
-            "truncated":  truncated,
-            "gap": {
-                "severity": self.gap_report.severity.value,
-                "reason":   self.gap_report.reason,
-            },
-        }
-        return _json.dumps(payload, ensure_ascii=False)
+    def to_dict(self, max_words: int = 1500) -> dict:
+        """JSON-ready result: the "json" format of :meth:`as_context` plus facts and the gap report."""
+        payload = _json.loads(self.as_context(max_words, format="json"))
+        payload = payload if isinstance(payload, dict) else {"memories": payload}
+        payload.setdefault("facts", [f.as_text() if hasattr(f, "as_text") else str(f) for f in self.facts])
+        payload.setdefault("gap", getattr(getattr(self.gap_report, "severity", None), "value", None))
+        return payload

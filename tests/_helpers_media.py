@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Shared fixtures for the image-memory tests: tiny PNGs and a fake CLIP.
 
 PNGs are built with zlib/struct only, so the tests need neither Pillow nor

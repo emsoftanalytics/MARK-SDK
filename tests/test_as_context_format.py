@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """RetrievalResult.as_context() output formats (xml, numbered, json), the
 compressed flag, and max_tokens / max_words truncation.
 """

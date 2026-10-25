@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Governance: ConsolidationGate composition and the GovernanceAuditLog
 (recording, filtering, stats, ordering, limits).
 """
@@ -8,6 +8,7 @@ from __future__ import annotations
 from mark import (
     AuditEntry,
     ConsolidationGate,
+    FailureFilter,
     DuplicateHashGate,
     GovernanceAuditLog,
     ValidationGate,
@@ -39,7 +40,7 @@ def test_consolidation_gate_blocks_empty() -> None:
 
 
 def test_consolidation_gate_blocks_traceback() -> None:
-    g  = ConsolidationGate()
+    g  = ConsolidationGate(failure=FailureFilter())  # opt-in since 0.2.0a10
     tb = "Traceback (most recent call last):\n  File 'x.py'\nValueError: x"
     r  = g.check(tb)
     assert not r.passed

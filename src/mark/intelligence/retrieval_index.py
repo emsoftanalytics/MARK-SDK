@@ -4,24 +4,32 @@
 
 - the allowed id set is computed in SQL first, so filters apply *before*
   scoring and other agents/sessions can never crowd the top-k;
-- the index is lazily synced with stored embeddings (re-embedding only what
-  is missing or has the wrong dimension) under ``_sync_lock``, so concurrent
-  retrievals never index the same fragment twice;
-- when the embedder fingerprint changes, the agent's memories are re-embedded
-  once and the new fingerprint is persisted.
+- the index is lazily synced with stored embeddings under ``_sync_lock``
+  (bulk-loaded in numpy blocks on a cold start, see ``index_bulk_load``;
+  re-embedding only what is missing or has the wrong dimension); an
+  unchanged scope skips the sync and a scope the store derived from the last
+  one applies just its delta, so recall after writes does no O(store) work;
+- a changed embedder fingerprint re-embeds the agent's memories once;
+- a network embedder that is down defers embeddings instead of failing
+  writes or recalls (see ``pending_embeddings``).
 
-Legacy/custom stores and indexes without the newer bulk methods are
-supported through ``getattr`` probes and ``TypeError`` fallbacks.
-
-Expects the host class to provide ``_store``, ``_index``, ``_embedder``,
+Legacy stores/indexes are supported via ``getattr`` probes and ``TypeError``
+fallbacks (helpers in ``retrieval_index_compat``). The host class provides ``_store``, ``_index``, ``_embedder``,
 ``_sync_lock``, ``_verified_agents`` and ``EMBEDDER_META_KEY``.
 """
 from __future__ import annotations
 
 import logging
-from typing import Iterable
-
+import time
 from mark.index import VectorSearchResult
+from mark.intelligence import index_bulk_load
+from mark.intelligence.index_bulk_load import (
+    _same_embedding_space, bulk_index, changed_ids, index_each, restore_snapshot, save_snapshot, scope_ids,
+    sync_delta, wants_numpy,
+)
+from mark.intelligence import pending_embeddings
+from mark.intelligence.pending_embeddings import _PendingEmbeddingsMixin, catchup_deadline, is_transient
+from mark.intelligence.retrieval_index_compat import _StoreCompatMixin
 from mark.intelligence.retrieval_policy import _RETRIEVABLE_STATES, SessionFilter
 from mark.types import MemoryFragment
 
@@ -29,17 +37,17 @@ from mark.types import MemoryFragment
 logger = logging.getLogger("mark.retrieval")
 
 
-class _IndexSyncMixin:
+class _IndexSyncMixin(_PendingEmbeddingsMixin, _StoreCompatMixin):
     """Write path, scope filtering, index synchronisation and the two search channels."""
 
     # ── Write path ────────────────────────────────────────────────────────────
 
     def index_fragment(self, fragment: MemoryFragment) -> MemoryFragment:
-        """Embed, persist, and index a fragment."""
-        embedding = self._embedder.embed(fragment.content)
-        indexed = fragment.model_copy(update={"embedding": embedding})
+        """Embed, persist, and index a fragment (stored unembedded if the embedder is down)."""
+        indexed = self.embed_for_write([fragment])[0]
         self._store.store(indexed)
-        self._index_add(indexed.id, embedding, indexed.content, indexed.agent_id)
+        if indexed.embedding is not None:
+            self._index_add(indexed.id, indexed.embedding, indexed.content, indexed.agent_id)
         return indexed
 
     def index_fragments(self, fragments: list[MemoryFragment], batch_size: int = 64) -> list[MemoryFragment]:
@@ -47,16 +55,15 @@ class _IndexSyncMixin:
         indexed_all: list[MemoryFragment] = []
         store_many = getattr(self._store, "store_many", None)
         for start in range(0, len(fragments), batch_size):
-            chunk = fragments[start:start + batch_size]
-            vectors = self._embedder.embed_batch([fragment.content for fragment in chunk])
-            indexed = [f.model_copy(update={"embedding": v}) for f, v in zip(chunk, vectors)]
+            indexed = self.embed_for_write(fragments[start:start + batch_size], batch_size)
             if store_many is not None:
                 store_many(indexed)
             else:
                 for fragment in indexed:
                     self._store.store(fragment)
             for fragment in indexed:
-                self._index_add(fragment.id, fragment.embedding, fragment.content, fragment.agent_id)
+                if fragment.embedding is not None:  # None: pending (see pending_embeddings)
+                    self._index_add(fragment.id, fragment.embedding, fragment.content, fragment.agent_id)
             indexed_all.extend(indexed)
         return indexed_all
 
@@ -73,6 +80,11 @@ class _IndexSyncMixin:
         if sf.block_id is not None or sf.block_ids:
             kwargs["block_id"] = sf.block_id
             kwargs["block_ids"] = sf.block_ids
+        id_set = getattr(self._store, "retrievable_id_set", None)
+        if id_set is not None:
+            # The store's cached set: same object while nothing changed (no copy).
+            cache = self.__dict__.setdefault("_scope_cache", {})
+            return scope_ids(cache, (agent_id, repr(sorted(kwargs.items()))), id_set(agent_id, **kwargs))
         retrievable_ids = getattr(self._store, "retrievable_ids", None)
         if retrievable_ids is not None:
             return set(retrievable_ids(agent_id, **kwargs))
@@ -86,28 +98,79 @@ class _IndexSyncMixin:
     def _sync_index(self, agent_id: str, allowed_ids: set[str]) -> set[str]:
         """Make sure every allowed fragment is indexed with the current embedder.
 
-        Returns the agent's indexed ids after syncing.
+        Returns the indexed ids — ``allowed_ids`` itself when equal, so the
+        pipeline's equality check is O(1). Unchanged scope + index revision: no work.
         """
         with self._sync_lock:
+            # Embedding a backlog (rows written during an embedder outage) is
+            # bounded per recall; the rest continues on the next ones.
+            self.__dict__["_catchup_deadline"] = catchup_deadline()
             if agent_id not in self._verified_agents:
-                self._verify_embedder(agent_id)
-                self._verified_agents.add(agent_id)
-            indexed = self._index_ids(agent_id)
-            missing = allowed_ids - indexed
-            if not missing:
-                return indexed
-            embeddings = self._stored_embeddings(agent_id, missing)
-            to_embed: list[str] = []
-            dim = getattr(self._embedder, "dim", None)
-            for fragment_id in missing:
-                vector = embeddings.get(fragment_id)
-                if vector and (dim is None or len(vector) == dim):
-                    self._index_add(fragment_id, vector, "", agent_id)
-                else:
-                    to_embed.append(fragment_id)
-            if to_embed:
-                self._embed_and_index(agent_id, to_embed)
-            return self._index_ids(agent_id)
+                try:
+                    self._verify_embedder(agent_id)
+                    self._verified_agents.add(agent_id)
+                except Exception as exc:  # noqa: BLE001 - a network embedder that is down: verify later
+                    if not is_transient(exc):
+                        raise
+                    self._embedding_failed(exc)
+            synced = self.__dict__.setdefault("_synced", {})
+            revision = getattr(self._index, "revision", None)
+            last = synced.get(agent_id)
+            unchanged = revision is not None and last is not None and last[0] is allowed_ids and last[1] == revision
+            if unchanged and not self._has_pending(agent_id):  # pending: retry their embeddings
+                return last[2]
+            if (fast := sync_delta(self, agent_id, last, allowed_ids)) is not None:  # few writes: O(delta)
+                synced[agent_id] = fast
+                return allowed_ids
+            complete = self._load_missing(agent_id, allowed_ids)
+            count = getattr(self._index, "count", None)
+            if complete and count is not None and count(agent_id) == len(allowed_ids):
+                result = allowed_ids  # allowed ⊆ indexed and equal sizes: equal sets
+                self._pending_done(agent_id)
+            else:
+                indexed = self._index_ids(agent_id)
+                result = allowed_ids if indexed == allowed_ids else indexed
+            synced[agent_id] = (allowed_ids, getattr(self._index, "revision", None), result)
+            return result
+
+    def _load_missing(self, agent_id: str, allowed_ids: set[str]) -> bool:
+        """Index every allowed id the index lacks: stored vectors in bulk, re-embed the rest.
+
+        Returns True when every allowed id is indexed afterwards. An empty
+        index (cold start) skips set operations (~0.1 s each at 1M ids).
+        """
+        count = getattr(self._index, "count", None)
+        before = count(agent_id) if count is not None else None
+        find_missing = getattr(self._index, "missing", None)  # C-level set difference
+        if before == 0:  # a plain frozenset: per-row membership tests stay C-level
+            missing = allowed_ids.frozen() if hasattr(allowed_ids, "frozen") else allowed_ids
+        else:
+            missing = find_missing(allowed_ids, agent_id) if find_missing else set(allowed_ids) - self._index_ids(agent_id)
+        if not missing:
+            return True
+        # Large cold start: snapshot first; (re)save one after a full row load.
+        missing, before, snapshot_due, version = restore_snapshot(
+            self._store, self._index, self._embedder, agent_id, missing, before)
+        pages, add_many = getattr(self._store, "embedding_pages", None), getattr(self._index, "add_many", None)
+        if pages is not None and add_many is not None and before is not None and len(missing) > 256:
+            numpy = wants_numpy(self._index, before + len(missing))
+            # A gap that is a small part of the agent (rows written since a snapshot)
+            # is read by id; streaming every row of a million-memory agent is not.
+            by_id = getattr(self._store, "embedding_rows", None)
+            small = len(missing) * index_bulk_load.BY_ID_FRACTION < before + len(missing)
+            source = [by_id(missing)] if by_id is not None and small else pages(agent_id)
+            to_embed = bulk_index(source, missing, getattr(self._embedder, "dim", None), add_many, agent_id, numpy)
+            if count(agent_id) - before + len(to_embed) != len(missing):
+                # Some ids were not in embedding_pages (state changed meanwhile).
+                to_embed = list(set(missing) - self._index_ids(agent_id))
+        else:  # small gaps (or legacy stores/indexes): per-vector path
+            stored = self._stored_embeddings(agent_id, set(missing))
+            to_embed = index_each(stored, missing, getattr(self._embedder, "dim", None), self._index_add, agent_id)
+        if snapshot_due and not to_embed:
+            save_snapshot(self._store, self._index, self._embedder, agent_id, version)
+        if to_embed and not self._embed_and_index(agent_id, to_embed, catch_up=True):
+            return False  # backlog left for the next recall
+        return not to_embed or set(to_embed) <= self._index_ids(agent_id)
 
     def _verify_embedder(self, agent_id: str) -> None:
         """Re-embed an agent's memories when the embedder changed since they were stored."""
@@ -134,45 +197,61 @@ class _IndexSyncMixin:
             return
         if stored is not None:
             logger.info("embedder changed for agent %r (%s -> %s); re-embedding", agent_id, stored, fingerprint)
-            ids = list(self._stored_embeddings(agent_id, None))
-            self._remove_agent_from_index(agent_id, ids)
+            # A compatible upgrade (hash v2 -> v3) re-embeds only the texts that changed.
+            ids = changed_ids(self._store, self._embedder, agent_id, stored)
+            if ids is None:
+                ids = list(self._stored_embeddings(agent_id, None))
+                self._remove_agent_from_index(agent_id, ids)
+            else:
+                for fragment_id in ids:
+                    self._index.remove(fragment_id)
             self._embed_and_index(agent_id, ids)
         set_meta(key, fingerprint)
 
-    def _embed_and_index(self, agent_id: str, fragment_ids: list[str], batch_size: int = 64) -> None:
+    def _embed_and_index(self, agent_id: str, fragment_ids: list[str], batch_size: int = 64,
+                         catch_up: bool = False) -> bool:
+        """Embed and index *fragment_ids*; False when some were left pending.
+
+        ``catch_up`` (a recall embedding a backlog) stops at the sync's
+        deadline, starting with small batches that grow while they are fast,
+        so a slow embedder delays one recall by about ``CATCHUP_SECONDS``.
+        """
         update = getattr(self._store, "update_embedding", None)
-        for start in range(0, len(fragment_ids), batch_size):
-            chunk = fragment_ids[start:start + batch_size]
+        deadline = self.__dict__.get("_catchup_deadline") if catch_up else None
+        size = min(batch_size, pending_embeddings.CATCHUP_FIRST_BATCH) if deadline is not None else batch_size
+        start = 0
+        while start < len(fragment_ids):
+            if deadline is not None and time.monotonic() >= deadline:
+                self.__dict__.setdefault("_pending_agents", set()).add(agent_id)
+                return False
+            chunk = fragment_ids[start:start + size]
+            start += size
+            began = time.monotonic()
             fragments = self._get_many(chunk)
             ordered = [fragments[fid] for fid in chunk if fid in fragments]
             if not ordered:
                 continue
-            vectors = self._embedder.embed_batch([f.content for f in ordered])
+            vectors = self._embed_batch_or_defer([f.content for f in ordered])
+            if vectors is None:  # embedder down: these stay pending until it answers
+                self.__dict__.setdefault("_pending_agents", set()).add(agent_id)
+                return False
+            getattr(self._store, "mark_vectors_dirty", lambda *a: None)(agent_id, [f.id for f in ordered])
             for fragment, vector in zip(ordered, vectors):
                 if update is not None:
                     update(fragment.id, vector)
                 self._index_add(fragment.id, vector, fragment.content, agent_id)
-
-    def _stored_embeddings(self, agent_id: str, ids: set[str] | None) -> dict[str, list[float] | None]:
-        fetch = getattr(self._store, "embeddings_for_agent", None)
-        if fetch is not None:
-            rows = fetch(agent_id)
-            return {fid: vec for fid, vec in rows if ids is None or fid in ids}
-        if ids is None:
-            try:
-                fragments = self._store.list_by_agent(agent_id, states=_RETRIEVABLE_STATES, limit=None)
-            except TypeError:
-                fragments = self._store.list_by_agent(agent_id, states=_RETRIEVABLE_STATES, limit=1_000_000)
-            return {f.id: f.embedding for f in fragments}
-        found = self._get_many(list(ids))
-        return {fid: f.embedding for fid, f in found.items()}
+            if deadline is not None and time.monotonic() - began < pending_embeddings.CATCHUP_SECONDS / 8:
+                size = min(batch_size, size * 2)
+        return True
 
     # ── Search channels ───────────────────────────────────────────────────────
 
     def _vector_search(
         self, text: str, agent_id: str, allowed_ids: set[str], scope_ids: set[str] | None, depth: int,
     ) -> list[VectorSearchResult]:
-        q_vec = self._embedder.embed(text)
+        q_vec = self._embed_query(text)
+        if q_vec is None:  # embedder down: the lexical channel answers alone
+            return []
         try:
             return self._index_search(q_vec, agent_id, scope_ids, depth, allowed_ids)
         except ValueError as exc:  # DimensionMismatchError subclasses ValueError
@@ -195,66 +274,3 @@ class _IndexSyncMixin:
             logger.warning("lexical search failed: %s", exc)
             return []
         return [(fid, score) for fid, score in hits if fid in allowed_ids]
-
-    # ── Store / index compatibility helpers ───────────────────────────────────
-
-    def _get_many(self, ids: Iterable[str]) -> dict[str, MemoryFragment]:
-        ids = list(ids)
-        get_many = getattr(self._store, "get_many", None)
-        if get_many is not None:
-            return dict(get_many(ids))
-        found: dict[str, MemoryFragment] = {}
-        for fid in ids:
-            fragment = self._store.get(fid)
-            if fragment is not None:
-                found[fid] = fragment
-        return found
-
-    def _index_add(self, fragment_id: str, vector: list[float], content: str, agent_id: str) -> None:
-        try:
-            self._index.add(fragment_id, vector, content, agent_id=agent_id)
-        except TypeError:  # legacy/custom index without agent partitions
-            self._index.add(fragment_id, vector, content)
-
-    def _index_ids(self, agent_id: str) -> set[str]:
-        ids = getattr(self._index, "ids", None)
-        if ids is not None:
-            try:
-                return set(ids(agent_id))
-            except TypeError:
-                return set(ids())
-        return {fid for fid in getattr(self._index, "_vectors", {})}
-
-    def _index_search(
-        self,
-        q_vec: list[float],
-        agent_id: str,
-        scope_ids: set[str] | None,
-        depth: int,
-        allowed_ids: set[str],
-    ) -> list[VectorSearchResult]:
-        try:
-            return self._index.search(q_vec, top_k=depth, include_ids=scope_ids, agent_id=agent_id)
-        except TypeError:
-            # Legacy index without agent partitions: always restrict to the agent's ids.
-            return self._index.search(q_vec, top_k=depth, include_ids=allowed_ids)
-
-    def _remove_agent_from_index(self, agent_id: str, ids: Iterable[str]) -> None:
-        clear = getattr(self._index, "clear", None)
-        if clear is not None:
-            try:
-                clear(agent_id)
-                return
-            except TypeError:
-                pass
-        for fid in ids:
-            self._index.remove(fid)
-
-
-def _same_embedding_space(stored: str, current: str) -> bool:
-    """Fingerprints match, or match on model identity when a dimension is unknown."""
-    if stored == current:
-        return True
-    stored_model, _, stored_dim = stored.rpartition(":")
-    current_model, _, current_dim = current.rpartition(":")
-    return stored_model == current_model and "None" in {stored_dim, current_dim}

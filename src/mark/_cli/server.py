@@ -2,8 +2,15 @@
 
 Safety invariants:
 
-* one server per database, enforced by an ``O_EXCL`` lock file holding the
-  owner's pid (stale locks from dead owners are reclaimed);
+* one server per database, enforced by an OS file lock (``flock`` on POSIX,
+  ``msvcrt.locking`` on Windows) on ``X.db.server.lock``. The kernel drops
+  the lock when the process dies (even on kill -9), so there is no stale
+  lock to reclaim and no check-then-create race; the file holds the pid
+  only for the "already running" message;
+* the index is warmed in the background as the server starts, so the first
+  served recall does not pay the cold-start cost;
+* an authenticated ``{"cmd": "stop"}`` request shuts the server down cleanly
+  (see :func:`mark._cli.client.stop_server`);
 * the server only binds to loopback, every POST must carry the random bearer
   token, and bodies are capped at ``MAX_REQUEST_BYTES``;
 * the token is published only through a 0600 state file, and ``GET /hello``
@@ -14,9 +21,11 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 import os
 import secrets
 import socket
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +37,10 @@ from mark._cli.config import (
     _state_path,
 )
 from mark._cli.engine import _Engine, protocol_fingerprint
+from mark._cli.server_snapshots import _save_snapshots, _warm  # noqa: F401 - historical home
 from mark._private_fs import ensure_private_dir
+
+logger = logging.getLogger("mark.cli")
 
 
 def serve(db: Path, host: str = "127.0.0.1", port: int = 0, *, stop_event: Any = None) -> None:
@@ -47,6 +59,8 @@ def serve(db: Path, host: str = "127.0.0.1", port: int = 0, *, stop_event: Any =
         _release_lock(lock)
         raise
     token = secrets.token_urlsafe(32)
+    # Warm concurrently with serving: early requests simply wait for the same index lock.
+    threading.Thread(target=_warm, args=(engine,), name="mark-serve-warm", daemon=True).start()
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -86,6 +100,10 @@ def serve(db: Path, host: str = "127.0.0.1", port: int = 0, *, stop_event: Any =
                 return
             try:
                 request = json.loads(self.rfile.read(length))
+                if request.get("cmd") == "stop":  # handled here: stopping is not an engine command
+                    self._reply(200, {"ok": True, "result": {"stopping": True, "pid": os.getpid()}})
+                    _shutdown()
+                    return
                 self._reply(200, {"ok": True, "result": engine.run(request["cmd"], request.get("args", {}))})
             except Exception as exc:  # report, keep serving
                 self._reply(400, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
@@ -116,6 +134,7 @@ def serve(db: Path, host: str = "127.0.0.1", port: int = 0, *, stop_event: Any =
         server.serve_forever(poll_interval=0.2)
     finally:
         server.server_close()
+        _save_snapshots(engine)  # refresh a snapshot only when its delta is large (fast stop)
         engine.close()
         # Remove the state file only if it is still ours (never another server's).
         try:
@@ -126,40 +145,98 @@ def serve(db: Path, host: str = "127.0.0.1", port: int = 0, *, stop_event: Any =
         _release_lock(lock)
 
 
-def _acquire_lock(db: Path) -> Path:
-    """Create the per-database server lock, clearing it if its owner is gone."""
+class _ServerLock:
+    """An open, OS-locked lock file; the lock lives exactly as long as the descriptor."""
+
+    def __init__(self, path: Path, fd: int) -> None:
+        self.path = path
+        self.fd = fd
+
+
+def _acquire_lock(db: Path) -> _ServerLock:
+    """Take the per-database server lock, or exit when another live server holds it."""
     lock = _lock_path(db)
     ensure_private_dir(lock.parent)
-    for _ in range(2):
+    for _ in range(3):
+        fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
         try:
-            fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            try:
-                owner = int(lock.read_text().strip() or 0)
-            except (OSError, ValueError):
-                owner = 0
-            if owner and _pid_alive(owner):
-                raise SystemExit(f"a MARK server (pid {owner}) is already running for {db}")
-            lock.unlink(missing_ok=True)  # stale lock from a crashed server
+            _lock_fd(fd)
+        except OSError:
+            owner = _read_owner(fd)
+            os.close(fd)
+            raise SystemExit(f"a MARK server{f' (pid {owner})' if owner else ''} is already running for {db}")
+        # The previous holder may have unlinked the file between our open and lock:
+        # only a lock on the file that is still at the path counts.
+        try:
+            same = os.path.samestat(os.fstat(fd), os.stat(lock))
+        except OSError:
+            same = False
+        if not same:
+            os.close(fd)
             continue
-        with os.fdopen(fd, "w") as handle:
-            handle.write(str(os.getpid()))
-        return lock
+        _refuse_legacy_server(db, fd)
+        os.ftruncate(fd, 0)
+        os.write(fd, str(os.getpid()).encode())
+        from mark.store._sqlite.server_guard import OWN_LOCKS
+
+        OWN_LOCKS.add(os.path.abspath(lock))  # our own engine may migrate the store
+        return _ServerLock(lock, fd)
     raise SystemExit(f"could not acquire the server lock for {db}")
 
 
-def _release_lock(lock: Path) -> None:
-    """Remove *lock* only if this process owns it."""
+def _refuse_legacy_server(db: Path, fd: int) -> None:
+    """Exit if an a8/a9 ``mark serve`` (pid lock file, no OS lock) still serves *db*.
+
+    Its lock file is not OS-locked, so our flock succeeded; serving (and
+    migrating) beside it would split writes between two builds.
+    """
+    from mark.store._sqlite.server_legacy import legacy_server
+
+    pid = legacy_server(str(db))
+    if pid is None:
+        return
+    os.close(fd)  # the file is the old server's: leave its content alone
+    raise SystemExit(f"an older MARK server{f' (pid {pid})' if pid else ''} is running for {db}; "
+                     "stop it first")
+
+
+def _release_lock(lock: _ServerLock) -> None:
+    """Remove the lock file (while still holding it, so no one else can lose it), then unlock."""
+    from mark.store._sqlite.server_guard import OWN_LOCKS
+
+    OWN_LOCKS.discard(os.path.abspath(lock.path))
     try:
-        if lock.read_text().strip() == str(os.getpid()):
-            lock.unlink()
+        lock.path.unlink()
+    except OSError:
+        pass
+    try:
+        os.close(lock.fd)  # closing the descriptor releases the OS lock
     except OSError:
         pass
 
 
+def _lock_fd(fd: int) -> None:
+    """Non-blocking exclusive lock on *fd*; raises OSError when it is held elsewhere."""
+    if sys.platform == "win32":  # pragma: no cover - exercised on Windows only
+        import msvcrt
+
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _read_owner(fd: int) -> str:
+    try:
+        return os.pread(fd, 32, 0).decode("ascii", "replace").strip() if hasattr(os, "pread") else ""
+    except OSError:  # e.g. the byte range is locked (Windows)
+        return ""
+
+
 def _pid_alive(pid: int) -> bool:
     """Best-effort liveness probe; unknown means alive so a lock is never stolen."""
-    if pid == os.getpid():
+    if pid == os.getpid() or sys.platform == "win32":  # os.kill(pid, 0) terminates on Windows
         return True
     try:
         os.kill(pid, 0)

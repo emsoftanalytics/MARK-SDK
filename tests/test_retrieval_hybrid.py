@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Retrieval pipeline regressions (v0.2.0a7): uncapped agent-scoped filtering,
 authoritative policies, calibrated gap detection, and the default-config quality
 regression. Re-exports FACTS/QUERIES for benchmarks/bench_runtime.py.

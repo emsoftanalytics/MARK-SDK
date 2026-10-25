@@ -1,7 +1,7 @@
 """Background side of the context watch: anchor detection, prefetch and claim checks.
 
 Threading model: the watch owns at most one worker thread
-(``ThreadPoolExecutor(max_workers=1)``), so prefetches run one at a time and
+(``WatchWorker``, ``watch_worker``), so prefetches run one at a time and
 in submission order. Shared state (anchors, results, corrections, pending
 futures) is only touched under ``_lock``; the retrieval itself runs outside
 the lock so ``observe()`` and ``briefing()`` never wait on search. A failed
@@ -18,12 +18,80 @@ import logging
 import re
 import time
 from concurrent.futures import Future
+from dataclasses import replace
 from typing import Any
 
+from mark.context.provenance import USER_TAG
+from mark.context.watch_changes import (  # noqa: F401 - some re-exported
+    _CHANGE_STATEMENT,
+    _STATE_QUESTION,
+    _change_lane,
+    _previous_values,
+    user_profile,
+)
+from mark.context.watch_lines import trusted
 from mark.context.watch_support import _TOKEN_RE, _Anchor, _label_for, _mentions_value
 
 # Same logger name as before the split, so log filtering keeps working.
 logger = logging.getLogger("mark.context.watch")
+
+
+def _confirmed(result: Any, key: str) -> bool:
+    """Memory confirms a subject only through a fact or a trusted record naming it.
+
+    The model's own stored replies do not count: otherwise a phrase it
+    invented ("Caldo Verde", "mark_memory_middleware") would be "known" as
+    soon as its reply was stored, and anchor the next briefings (M7).
+    """
+    from mark.intelligence.query_understanding import _anchor_norm, _contains_anchor
+
+    if any(_anchor_norm(str(f.subject)) == key for f in getattr(result, "facts", None) or []):
+        return True
+    return any(trusted(f) and _contains_anchor(_anchor_norm(f.content), key)
+               for f in result.fragments)
+
+
+#: Untrusted results (assistant replies, bare questions) in one top-k that
+#: trigger a second, user-statements-only retrieval for that query.
+_CROWDED = 3
+
+
+def _with_user_lane(memory: Any, batch: list[str], results: list[Any]) -> list[Any]:
+    """Top up crowded results with user statements (tag ``mark:user``).
+
+    Retrieval ranks by relevance, not provenance: long assistant replies
+    repeat the user's words and fill the top-k, pushing the user's own
+    statement out (a10 small-model replay: "I moved from Porto to Braga"
+    missing behind five replies). For each query whose results hold
+    ``_CROWDED`` or more untrusted records, user statements are retrieved
+    separately and appended after the trusted results of the first pass.
+    """
+    crowded = [i for i, r in enumerate(results)
+               if sum(not trusted(f) for f in r.fragments) >= _CROWDED]
+    if not crowded:
+        return results
+    try:
+        extra = memory.retrieve_many_sync([batch[i] for i in crowded], tags=[USER_TAG])
+    except Exception as exc:   # the first pass is still a valid answer
+        from mark.errors import StoreClosedError
+        if isinstance(exc, StoreClosedError):
+            raise   # shutdown, not a failure: _done stops the watch quietly
+        logger.warning("user-statement retrieval failed: %s", exc)
+        return results
+    merged = list(results)
+    for index, lane in zip(crowded, extra):
+        first = merged[index]
+        ids = {f.id for f in first.fragments}
+        pairs = list(zip(first.fragments, first.scores)) + [
+            (f, s) for f, s in zip(lane.fragments, lane.scores) if f.id not in ids]
+        merged[index] = replace(first, fragments=[f for f, _ in pairs], scores=[s for _, s in pairs])
+    return merged
+
+
+#: Hyphenated describing words ("4-year-old", "paper-lined", "gluten-free") are
+#: not subjects; anchoring them produced "Not in memory: paper-lined" (a10).
+_DESCRIPTIVE = re.compile(r"^(\d+|[a-z]+)(-[a-z]+)*-(old|lined|based|free|like|style|sized|long|time|"
+                          r"made|aged|year|day|week|month|ish|\w+ed)$")
 
 
 class _WatchPrefetchMixin:
@@ -35,7 +103,9 @@ class _WatchPrefetchMixin:
 
         found: dict[str, str] = {}
         for key in query_anchors(text):
-            found.setdefault(key, _label_for(text, key))
+            label = _label_for(text, key)
+            if not _DESCRIPTIVE.match(label):
+                found.setdefault(key, label)
         # Known fact subjects are anchors even when written plainly ("pulse metrics").
         normalised = _anchor_norm(text)
         for subject in self._known_subjects():
@@ -76,6 +146,8 @@ class _WatchPrefetchMixin:
 
     def _schedule(self, queries: list[str], task: str | None) -> None:
         """Run a prefetch inline (background=False) or queue it on the single worker."""
+        if getattr(self, "_closed", False):
+            return
         if self._executor is None:
             self._prefetch(queries, task)
             return
@@ -88,9 +160,21 @@ class _WatchPrefetchMixin:
         """Worker-thread callback: forget the future; log (never raise) its failure."""
         with self._lock:
             self._pending.discard(future)
+        if future.cancelled():   # dropped by close()
+            return
         error = future.exception()
-        if error is not None:
-            logger.warning("context watch prefetch failed: %s", error)
+        if error is None:
+            return
+        from mark.errors import StoreClosedError
+
+        if isinstance(error, StoreClosedError):
+            # The host closed the store first (shutdown): not a failure worth a
+            # warning, but nothing will work again, so the watch stops itself
+            # and its worker thread exits (integration N8, agent N5).
+            logger.debug("context watch stopped: %s", error)
+            self.close()
+            return
+        logger.warning("context watch prefetch failed: %s", error)
 
     def _prefetch(self, queries: list[str], task: str | None) -> None:
         """Retrieve anchors (and the current task) in one batch, then store results under the lock.
@@ -102,6 +186,9 @@ class _WatchPrefetchMixin:
         if not batch:
             return
         results = self._memory.retrieve_many_sync(batch)
+        if getattr(self, "_closed", False):
+            return   # closing (often: its store is about to close): skip follow-up queries
+        results = _with_user_lane(self._memory, batch, results)
         from mark.intelligence.query_understanding import _anchor_norm
 
         links: list[str] = []
@@ -111,12 +198,23 @@ class _WatchPrefetchMixin:
                 self._results[key] = result
                 anchor = self._anchors.get(key)
                 if anchor is not None:
-                    anchor.known = key not in result.missing_anchors
+                    anchor.known = key not in result.missing_anchors and _confirmed(result, key)
                     if anchor.known and not anchor.linked and self.follow_links:
                         links.extend(self._links_from(anchor, result))
             if task:
                 self._task_results = {task: results[-1]}
-        if links:
+        previous = _previous_values(self._memory, results)
+        if task:
+            changes, pool = _change_lane(self._memory, task, getattr(self, "change_lines", 0))
+            profile = user_profile(self._memory, task, getattr(self, "profile_facts", 0))
+            with self._lock:
+                self._task_changes = {task: changes}
+                self._task_pool = {task: pool}
+                self._task_profile = {task: profile}
+        if previous and hasattr(self, "_previous"):
+            with self._lock:
+                self._previous.update(previous)
+        if links and not getattr(self, "_closed", False):
             self._prefetch(links, None)
 
     def _links_from(self, anchor: _Anchor, result: Any) -> list[str]:
@@ -124,7 +222,7 @@ class _WatchPrefetchMixin:
         from mark.intelligence.query_understanding import _anchor_norm, _contains_anchor
 
         labels: list[str] = []
-        for fragment in result.fragments[:3]:
+        for fragment in [f for f in result.fragments if trusted(f)][:3]:
             if not _contains_anchor(_anchor_norm(fragment.content), anchor.key):
                 continue
             for key, label in self._extract_anchors(fragment.content):
@@ -140,7 +238,15 @@ class _WatchPrefetchMixin:
         return labels
 
     def _check_claims(self, text: str, keys: list[str]) -> None:
-        """Flag values the agent states that memory knows were superseded."""
+        """Flag values the agent states that memory knows were superseded.
+
+        Not when the user asked about earlier values ("What was Joao's old
+        number?"): naming the old value is then the right answer.
+        """
+        from mark.context.watch_render import _PAST
+
+        if _PAST.search(getattr(self, "_task", "") or ""):
+            return
         lowered = text.lower()
         tokens = set(_TOKEN_RE.findall(lowered))
         try:
@@ -153,12 +259,13 @@ class _WatchPrefetchMixin:
             except Exception:
                 return
             for fact in current:
-                if fact.value.lower() in lowered:
+                if str(fact.value).lower() in lowered:  # values may be typed (int, ...)
                     self._corrections.pop(f"{key}|{fact.attribute}", None)
                     continue
                 history = facts_view.history(fact.subject, fact.attribute)
-                stale = [old for old in history[:-1] if _mentions_value(old.value, lowered, tokens)]
+                stale = [old for old in history[:-1] if _mentions_value(str(old.value), lowered, tokens)]
                 if stale:
+                    getattr(self, "_correction_turn", {})[f"{key}|{fact.attribute}"] = self._turn
                     self._corrections[f"{key}|{fact.attribute}"] = (
                         f"{fact.subject} {fact.attribute} is {fact.value} now "
                         f"(since {fact.valid_from.date().isoformat()}); "

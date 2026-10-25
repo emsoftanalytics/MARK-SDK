@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Core memory types: fragments, blocks, documents, and lifecycle enums.
 
 The definitions live in focused sibling modules; this module is the stable

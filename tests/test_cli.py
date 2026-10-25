@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """The `mark` CLI: in-process round trips, recall_many input formats, server
 lifecycle/auth/stale state, loopback-only serving, lightweight imports, and
 ingest --extract-facts.
@@ -28,14 +28,14 @@ def test_in_process_round_trip(tmp_path: Path, capsys) -> None:
     log = tmp_path / "log.txt"
     log.write_text("[2026-03-01] atlas-core listens on port 6430.\n\n[2026-03-30] atlas-core moved to port 4444.\n")
 
-    assert "stored 2 memories" in _run(capsys, "--db", db, "--no-server", "ingest", str(log))
+    assert "stored 2 new memories" in _run(capsys, "--db", db, "--no-server", "ingest", str(log))
     _run(capsys, "--db", db, "--no-server", "fact", "set", "atlas-core", "port", "4444", "--valid-from", "2026-03-30")
     out = _run(capsys, "--db", db, "--no-server", "recall", "Which port does atlas-core listen on now?", "-k", "2")
     assert out.splitlines()[0].startswith(" F. atlas-core port = 4444")
     assert "port 4444" in out.splitlines()[1]
     data = json.loads(_run(capsys, "--db", db, "--no-server", "recall", "Who is Marcus Webb?", "--json"))
     assert data["gap"] == "high" and data["missing"] == ["marcus webb"]
-    assert "2 memories, 1 current facts" in _run(capsys, "--db", db, "--no-server", "stats")
+    assert "2 memories, 1 current fact" in _run(capsys, "--db", db, "--no-server", "stats")
 
 
 def test_recall_many_accepts_lines_and_json(tmp_path: Path, capsys, monkeypatch) -> None:
@@ -123,9 +123,10 @@ def test_mismatched_server_build_falls_back_in_process(tmp_path: Path, monkeypat
         import mark._cli.client as client
 
         monkeypatch.setattr(client, "protocol_fingerprint", lambda: "other-build")
+        monkeypatch.setattr(client, "_OTHER_BUILD", {"seen": False, "shown": False})
         assert cli._live_server(cli._state_path(db)) is None
-        assert "different MARK build" in capsys.readouterr().err
         assert cli.execute(db, "stats", {"agent": "x"})["memories"] == 0  # in-process
+        assert "different MARK build" in capsys.readouterr().err  # said once it ran in-process
     finally:
         stop.set()
 
@@ -133,7 +134,7 @@ def test_mismatched_server_build_falls_back_in_process(tmp_path: Path, monkeypat
 def test_fact_retract_command(tmp_path: Path, capsys) -> None:
     db = str(tmp_path / "r.db")
     _run(capsys, "--db", db, "--no-server", "fact", "set", "test_x", "foo", "bar")
-    assert "retracted 1 fact(s)" in _run(capsys, "--db", db, "--no-server", "fact", "retract", "test_x")
+    assert "retracted 1 fact" in _run(capsys, "--db", db, "--no-server", "fact", "retract", "test_x")
     assert "(no facts)" in _run(capsys, "--db", db, "--no-server", "fact", "get", "test_x")
 
 
@@ -144,12 +145,15 @@ def test_ingest_extract_facts_in_process_and_served(tmp_path: Path, capsys, monk
                    "[2026-03-30] CHANGE: atlas-core moved from port 9239 to port 4444.\n"
                    "Did atlas-core move to port 1?\n")
     out = _run(capsys, "--db", db, "--no-server", "ingest", str(log), "--extract-facts")
-    assert "stored 3 memories, 2 current facts" in out
+    # This call's facts, not the store total: owner, port 4444 and the earlier port 9239 ("moved from").
+    assert "stored 3 new memories (3 facts extracted)" in out
     assert _run(capsys, "--db", db, "--no-server", "fact", "get", "atlas-core", "port").startswith(
         "atlas-core port = 4444 (since 2026-03-30)")
-    _run(capsys, "--db", db, "--no-server", "ingest", str(log), "--extract-facts")  # idempotent
-    assert len(_run(capsys, "--db", db, "--no-server", "fact", "history", "atlas-core", "port").splitlines()) == 1
-    assert "stored 3 memories\n" == _run(capsys, "--db", db, "--no-server", "ingest", str(log))
+    again = _run(capsys, "--db", db, "--no-server", "ingest", str(log), "--extract-facts")  # idempotent
+    assert "(3 already present, 0 facts extracted)" in again   # only facts this call created
+    assert len(_run(capsys, "--db", db, "--no-server", "fact", "history", "atlas-core", "port").splitlines()) == 2
+    assert "stored 0 new memories (3 already present)\n" == _run(capsys, "--db", db, "--no-server",
+                                                                    "ingest", str(log))
 
     served = (tmp_path / "served.db").resolve()
     stop = threading.Event()
@@ -164,6 +168,9 @@ def test_ingest_extract_facts_in_process_and_served(tmp_path: Path, capsys, monk
         monkeypatch.setattr(client, "INGEST_CHUNK_BYTES", 80)  # force several requests
         lines = log.read_text().splitlines()
         result = cli.execute(served, "ingest", {"agent": "x", "lines": lines, "extract_facts": True})
-        assert result == {"stored": 3, "facts": 2}
+        # 2 current facts, 3 written (9239 is recorded as history before 4444).
+        assert result == {"stored": 3, "existing": 0, "facts": 2, "extracted": 3}
+        again = cli.execute(served, "ingest", {"agent": "x", "lines": lines})
+        assert (again["stored"], again["existing"]) == (0, 3)  # summed over every chunk
     finally:
         stop.set()

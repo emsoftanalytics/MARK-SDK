@@ -74,6 +74,7 @@ class BlockMixin:
         block and the move would take it out of that block.
         """
         with self._writing() as conn:
+            self._note_changed((fragment_id,))
             row = conn.execute(
                 """
                 SELECT f.block_id AS block_id, b.status AS status
@@ -100,6 +101,7 @@ class BlockMixin:
     def add_node_to_block(self, block_id: str, node_id: str) -> None:
         """Register a node as a member of a block (idempotent, many-to-many)."""
         with self._writing() as conn:
+            self._note_changed(())  # membership of nodes/links: no fragment changes
             conn.execute(
                 "INSERT OR IGNORE INTO block_nodes (block_id, node_id, added_at) VALUES (?, ?, ?)",
                 (block_id, node_id, datetime.now(timezone.utc).isoformat()),
@@ -108,6 +110,7 @@ class BlockMixin:
     def remove_node_from_block(self, block_id: str, node_id: str) -> bool:
         """Remove a node's membership in a block. Returns True if removed."""
         with self._writing() as conn:
+            self._note_changed(())  # membership of nodes/links: no fragment changes
             cursor = conn.execute(
                 "DELETE FROM block_nodes WHERE block_id = ? AND node_id = ?",
                 (block_id, node_id),
@@ -140,6 +143,7 @@ class BlockMixin:
     def store_block_link(self, link: BlockLink) -> str:
         """Insert or replace a directed link between two blocks."""
         with self._writing() as conn:
+            self._note_changed(())  # membership of nodes/links: no fragment changes
             conn.execute(
                 """
                 INSERT OR REPLACE INTO block_links
@@ -177,6 +181,7 @@ class BlockMixin:
     def delete_block_link(self, link_id: str) -> bool:
         """Delete a block link by id. Returns True if a row was deleted."""
         with self._writing() as conn:
+            self._note_changed(())  # membership of nodes/links: no fragment changes
             cursor = conn.execute("DELETE FROM block_links WHERE id = ?", (link_id,))
         return cursor.rowcount > 0
 

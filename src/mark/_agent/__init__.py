@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Implementation modules for :class:`mark.agent.MarkAgent`.
 
 * ``run_types``   AgentRun / AgentResult value objects
