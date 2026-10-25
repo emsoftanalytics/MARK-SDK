@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """a10 quick fixes: injection phrasings and redaction shapes the RC testers found.
 
 Every new pattern is checked against the benign corpora too (no new false

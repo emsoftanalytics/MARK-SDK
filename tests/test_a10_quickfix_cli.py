@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """a10 quick fixes: ``mark --version`` and the other-build server notice.
 
 The notice ("server runs a different MARK build; running in-process") is
