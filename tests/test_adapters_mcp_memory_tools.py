@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """MCP: isError results, plain-text output, fact/timeline/brief/forget tools and the launcher.
 
 Runs the real server in-process (``mcp.Client`` where available, so the

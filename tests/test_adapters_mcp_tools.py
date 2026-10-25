@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Functional tests for the MCP server adapter and LangChain tools adapter.
 
 Both adapters run against the real local backend — no network, no provider

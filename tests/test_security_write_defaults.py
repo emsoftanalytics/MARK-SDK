@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Write-path security defaults: redaction on by default with opt-out,
 redaction of quarantined and metadata values, no silent truncation, and
 error memories (tracebacks, HTTP 5xx) kept retrievable unless the

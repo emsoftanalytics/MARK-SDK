@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """v0.2.0a8: bi-temporal facts (history, corrections, scoping, encryption), batch
 store/recall, and in-place upgrade from a v0.2.0a7 store.
 """

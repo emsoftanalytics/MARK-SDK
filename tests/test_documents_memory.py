@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """memory.store_document / memory.documents / memory.remember_file.
 
 A document is stored as chunk memories linked to one parent record; recall

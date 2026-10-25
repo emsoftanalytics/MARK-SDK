@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Read path of MarkMemory: retrieve, retrieve_sync, retrieve_many_sync.
 
 Retrieval starts in the narrowest namespace the caller asked for (a session

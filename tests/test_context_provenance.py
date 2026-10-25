@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Provenance-aware briefings: assistant text never anchors or poses as user facts.
 
 Also covers the packing rules that go with it: no echo of the current turn,

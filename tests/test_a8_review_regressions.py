@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Regression tests for the v0.2.0a8 adversarial review findings.
 
 Each test reproduces a confirmed defect from the review and pins the fix.

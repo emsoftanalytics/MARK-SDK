@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Trust-bus value types: trust levels, message envelopes, filters, snapshots.
 
 This module is standard-library only so the bus data model can be used (and

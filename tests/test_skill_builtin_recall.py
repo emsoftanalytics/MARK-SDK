@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """The built-in mark_memory skill reads through recall(), not the deprecated retrieve()."""
 from __future__ import annotations
 

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Shared corpora for the write-time security tests.
 
 ``PLANTED`` measures redaction recall, ``BENIGN`` measures false positives,

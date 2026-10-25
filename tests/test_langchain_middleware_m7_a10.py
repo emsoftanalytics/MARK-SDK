@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Offline replay of usage test M7 (a10 findings N3/N4) with a scripted fake model.
 
 The real scenario (``integ/lc/agent_test.py``) ran llama3.2:1b through

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """DocumentsView: ``memory.documents`` — list, get, chunks, count and forget documents.
 
 Documents are addressed by id or by a :class:`DocumentRecord`. Forgetting

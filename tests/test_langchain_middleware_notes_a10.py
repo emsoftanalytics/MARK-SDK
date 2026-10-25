@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """MarkAgentMiddleware a10 fixes (N3/N4), unit level:
 
 * a tool exception is stored once as a low-trust ``mark:tool`` + ``mark:error``

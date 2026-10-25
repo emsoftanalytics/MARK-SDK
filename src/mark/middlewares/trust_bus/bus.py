@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Trust-aware global memory bus with subscriptions and snapshots.
 
 :class:`TrustAwareGlobalMemoryBus` layers per-message trust on top of

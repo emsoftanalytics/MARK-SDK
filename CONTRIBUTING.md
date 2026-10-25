@@ -138,3 +138,13 @@ For security issues, do not open a public issue. See
 
 By contributing, you agree that your contributions are licensed under the
 Apache-2.0 license that covers this package.
+
+Every new source file starts with this header:
+
+```python
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
+```
+
+Keep the existing copyright and license notices when you edit a file, and do
+not remove or change [NOTICE](NOTICE).

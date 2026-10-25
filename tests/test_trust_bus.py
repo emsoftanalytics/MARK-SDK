@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Trust bus: imports/instantiation, PublisherTrust ordering, BusMessage
 serialisation, BusSubscription matching, and publish_sync / rehydration.
 """

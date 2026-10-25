@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Switching embedders on an existing store re-embeds it into the new space.
 
 Covers the three shapes a switch can take after ``embedder="auto"`` starts

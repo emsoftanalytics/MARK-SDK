@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Recall says which memories are no longer current (dev re-test major 5).
 
 MCP mark_retrieve showed a superseded memory without a label and no scores;

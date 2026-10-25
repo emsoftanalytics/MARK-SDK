@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """RetrievalResult.facts holds the facts the query asks about, not every fact.
 
 A query naming an attribute keeps only that attribute; a question whose head

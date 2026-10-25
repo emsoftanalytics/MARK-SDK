@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Memory kinds and lifecycle tags shared by the Python API, CLI and MCP (``mark.kinds``).
 
 Standard library only, so the ``mark`` command line can validate ``--kind``

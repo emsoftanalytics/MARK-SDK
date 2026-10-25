@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """File helpers for image memory: hashing and cheap dimension probing.
 
 Invariant: image *bytes* never leave this module. Callers get a hex digest

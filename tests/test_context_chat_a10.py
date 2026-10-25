@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """MarkChat and ContextWatch lifecycle, a10: raw user text, facts from user turns only,
 progress/streaming hooks, cold first briefing, and a worker that ends with its store.
 

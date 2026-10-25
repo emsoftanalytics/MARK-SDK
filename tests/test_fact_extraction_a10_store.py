@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Extracted facts in the store: dating (dev M-e), multi-valued values, past values, known subjects.
 
 The extractor proposes candidates; :mod:`mark.intelligence.fact_extraction.apply`

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Checksum validators that keep number-shaped redaction rules precise.
 
 A 16-digit order number or a 22-character customer reference looks exactly

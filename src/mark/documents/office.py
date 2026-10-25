@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Text of Office Open XML files (docx, xlsx, pptx) with the standard library only.
 
 An Office file is a zip of XML parts. MARK reads just the parts that hold

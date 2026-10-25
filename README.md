@@ -474,6 +474,14 @@ Watch out for MARK Cloud updates.
 - Questions and use cases: [Discussions](https://github.com/emsoftanalytics/MARK-SDK/discussions).
 - Security issues: report privately, see [SECURITY.md](SECURITY.md).
 
-## License
+## License and trademark
 
-Apache-2.0. See [LICENSE](LICENSE).
+Copyright 2025-2026 Somtochukwu Owen Ikeanyi. Licensed under the Apache
+License, Version 2.0: see [LICENSE](LICENSE) and [NOTICE](NOTICE). If you
+redistribute MARK or a modified version, keep the copyright notices and
+include the NOTICE file, as the license requires.
+
+"MARK" and the MARK logo are trademarks of Somtochukwu Owen Ikeanyi. The
+license does not grant permission to use them, other than to describe where
+the software comes from; please don't use them to name or promote your own
+product.

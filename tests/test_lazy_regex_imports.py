@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Redaction, injection screening and fact extraction compile no regex at import time.
 
 Their few hundred patterns are compiled on first use (mark.security.lazy_regex),

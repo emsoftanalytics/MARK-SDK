@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Describers: turn an image file into observed attributes.
 
 A describer is any ``callable(path) -> dict | str``. This module ships one

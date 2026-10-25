@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Unknown graph block ids are an error, not an empty result.
 
 ``retrieve_sync(block_id=...)`` with a typo used to return nothing (and MCP

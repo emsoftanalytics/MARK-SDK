@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """D3 CLI parity: remember flags, forget/resolve/supersede/list, export/import, brief, agents,
 recall filters and output hygiene, serve stop, mcp launcher."""
 from __future__ import annotations

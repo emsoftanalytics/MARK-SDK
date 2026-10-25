@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """File ingestion gaps found by the 0.2.0a10 breadth re-test.
 
 Latin-1 / Windows-1252 text is text (not octet-stream), an empty file is a

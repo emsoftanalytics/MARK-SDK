@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Stores written 0644/0775 by 0.2.0a8 are made private on open (dev re-test minor)."""
 from __future__ import annotations
 

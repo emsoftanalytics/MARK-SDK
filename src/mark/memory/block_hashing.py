@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Deterministic hashing rules for sealed memory blocks.
 
 Only *immutable* fields are hashed. Plasticity fields that MARK legitimately

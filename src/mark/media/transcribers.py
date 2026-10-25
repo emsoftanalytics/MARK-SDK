@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Transcribers: turn audio or video into text that MARK can remember.
 
 MARK never decodes audio itself. A transcriber is anything with

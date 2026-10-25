@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """LocalMemoryStore schema v3: in-place migrations from older schemas, meta helpers,
 float32 embedding storage, and batch get/touch/importance APIs.
 """

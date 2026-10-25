@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Prompt-injection screening: deterministic detection, low false positives
 on memories that legitimately discuss prompts, and write-time tagging.
 """

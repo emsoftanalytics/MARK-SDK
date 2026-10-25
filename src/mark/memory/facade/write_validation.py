@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Up-front validation for memory writes, and the bulk-write report.
 
 Every write checks its input *before* anything is embedded or persisted, and

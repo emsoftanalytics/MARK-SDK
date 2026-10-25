@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Loaders for the agent skills packaged with mark-sdk.
 
 MARK ships portable Agent Skills as ``SKILL.md`` files inside the package

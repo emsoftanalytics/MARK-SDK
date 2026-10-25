@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Write-time guards for MarkMemory: fragment building, gating, quarantine.
 
 Every write path (single store, batch store, observe, gap-healing evidence)

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Secret rules for credentials written in prose rather than ``key=value`` form.
 
 The generic assignment rules in :mod:`.secret_rules` need the keyword right

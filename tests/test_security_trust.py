@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Security hardening: trust-bus forgery/tampering, context escaping, and governance
 quarantine of rejected observations on the async store path.
 """

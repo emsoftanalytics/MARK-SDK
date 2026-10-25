@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Final a10 files: UTF-16/UTF-32 text with a BOM is text; pptx speaker notes are ingested."""
 from __future__ import annotations
 

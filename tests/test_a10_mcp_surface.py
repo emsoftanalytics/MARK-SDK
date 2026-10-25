@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """a10 MCP surface: kinds, lifecycle tools, short ids, clean errors, bounded retrieve."""
 from __future__ import annotations
 

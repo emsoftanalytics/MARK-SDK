@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """The canonical memory verbs: remember / recall (+ their ``a``-prefixed async twins).
 
 Naming convention (the same on ``mark.memory`` and ``runtime.memory(id)``):

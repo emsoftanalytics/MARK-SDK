@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Focused mixins that together make up :class:`mark.memory.mark_memory.MarkMemory`.
 
 Each module owns one responsibility of the per-agent memory facade:

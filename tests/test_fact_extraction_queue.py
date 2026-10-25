@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Durable background extraction: the fact_jobs queue and its worker.
 
 Slow extractors only enqueue a job per fragment on write. Jobs are

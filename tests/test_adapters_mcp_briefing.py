@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """MCP ``mark_briefing``: push context per session, isolated, bounded, never blocking.
 
 Runs the real MCP server in-process against the local backend (no network).

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """mark.observe() basics: LLMProvider protocol check, extraction-parser unit
 tests, and observe() without an LLM (deterministic extraction).
 """

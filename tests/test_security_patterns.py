@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Default redaction patterns: recall on planted secrets, no partial leaks,
 labelled placeholders, checksum-validated cards/IBANs, and no false positives
 on code, hashes, ids, dates and other benign memory text.

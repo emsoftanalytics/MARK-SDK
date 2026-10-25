@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """One store-path rule for Mark.local, the ``mark`` CLI and the MCP launcher (a10 blocker B1).
 
 * a path ending in ``.mark`` (or an existing folder holding ``memory.db``) is the store folder;

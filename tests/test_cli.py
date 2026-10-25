@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """The `mark` CLI: in-process round trips, recall_many input formats, server
 lifecycle/auth/stale state, loopback-only serving, lightweight imports, and
 ingest --extract-facts.

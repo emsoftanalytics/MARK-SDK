@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """End-to-end: MarkAgentMiddleware anticipates context through a real LangChain agent.
 
 The scripted model never calls a memory tool. MARK must still put the right

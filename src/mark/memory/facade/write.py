@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Write path of MarkMemory: store, store_sync (and store_many_sync via write_batch).
 
 Routing invariant: when a middleware stack *and* a runtime are attached,

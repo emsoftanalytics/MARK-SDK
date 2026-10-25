@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """The write-time security policy applied to every stored memory.
 
 :class:`WritePolicy` bundles redaction and prompt-injection screening and is

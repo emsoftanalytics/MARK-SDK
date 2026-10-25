@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """PatternFactExtractor coverage: first-person facts, personal details, developer phrasing.
 
 First-person statements ("I moved to Porto", "My sister is Ines") become

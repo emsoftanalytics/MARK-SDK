@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Fact extraction uses the stored user subject everywhere (dev re-test major 2).
 
 ``mark remember/ingest --extract-facts`` used the built-in pattern

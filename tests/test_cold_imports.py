@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Every module must import on its own in a fresh interpreter.
 
 `import mark` loads public names lazily, so nothing hides circular imports

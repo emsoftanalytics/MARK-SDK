@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Documents and files on MarkMemory: store_document, remember_file, documents.
 
 Thin facade over :mod:`mark.documents`; the logic (chunking, loading,

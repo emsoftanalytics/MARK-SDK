@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Upgrade/downgrade safety: newer stores are refused, unreadable rows are isolated.
 
 A store written by a newer MARK must not be opened (and so never migrated or

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Vendor token shapes beyond the core set in :mod:`.secret_rules`.
 
 Each rule is a documented prefix or structure that ordinary text does not

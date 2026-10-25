@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """SimpleBlock: a named, tag-scoped memory container for the simple API.
 
 A block is not a stored entity: writes are fragments of the reserved simple

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Generalisation corpus for redaction (0.2.0a10 final round).
 
 Written before the structural rules were implemented, covering formats the

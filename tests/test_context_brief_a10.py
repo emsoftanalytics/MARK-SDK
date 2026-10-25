@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Session brief, a10 fixes: retired decisions, resolved bugs, bug->fix pairs, focus filter,
 untrusted labels and the empty store (agent test N2/N8, breadth #3)."""
 from __future__ import annotations

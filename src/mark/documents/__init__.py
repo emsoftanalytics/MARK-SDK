@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Documents: remember long text, files and transcripts as linked chunk memories.
 
     record = memory.store_document("handbook.md")            # or text, or a PDF path

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors — v1.3 plasticity
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi — v1.3 plasticity
 #
 # Apache-2.0 (open SDK):
 #   RoutingFeedback  — reward signal data structure

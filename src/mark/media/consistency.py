@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Compare what a describer observed in an image with what the facts expect.
 
 The describer is pluggable (``describe(path) -> dict | str``): in production a

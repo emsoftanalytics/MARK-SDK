@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Value objects for a MARK-wrapped agent call: AgentRun in, AgentResult out."""
 from __future__ import annotations
 

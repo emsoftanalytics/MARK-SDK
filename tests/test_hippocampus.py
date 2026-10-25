@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Hippocampus maintenance: LocalMemoryStore methods it relies on (update_importance,
 touch, list_edges, delete_edge, update_edge_weight, integrity_check, export,
 schema_version).

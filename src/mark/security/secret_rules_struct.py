@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Structural secret rules: decide by the *shape* of the text, not by example.
 
 A value is a secret when the name it is bound to says so. These rules find

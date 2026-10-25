@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """G4 ranking: out-of-vocabulary exact hits, unnamed supersession and conflicts,
 dates named in questions, gap noise, and anchors for small-model chat text."""
 from __future__ import annotations

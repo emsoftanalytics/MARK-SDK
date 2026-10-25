@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """The user subject ("who is 'I'?") is stored with the store and applied on every open.
 
 Set once with ``Mark.local(user_subject=...)``, ``mark.configure_user_subject``,

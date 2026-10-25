@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Incremental retrievable-id scopes: writes are applied as deltas, not rescans.
 
 Each test spies on ``_full_scope`` (the O(N) scan) and checks the cached set

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """auto_embedder: selection order, spec / MARK_EMBEDDER parsing, no implicit network.
 
 Everything here is offline: optional packages are faked or reported as not

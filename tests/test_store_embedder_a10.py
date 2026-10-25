@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """The store remembers its embedder (dev re-test major 3).
 
 A Model2Vec store opened by the CLI or ``Mark.local(path)`` used the hash

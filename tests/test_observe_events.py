@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """mark.observe() events and delegation: ObserveEvent schema, HOOK_OBSERVE_EVENT
 emission with and without an LLM, and SimpleMemory.observe().
 """

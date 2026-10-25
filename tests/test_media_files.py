@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """File typing for media and documents: content sniffing, image validation,
 PDF text (optional extra) and the OpenAI-compatible transcriber adapter."""
 from __future__ import annotations

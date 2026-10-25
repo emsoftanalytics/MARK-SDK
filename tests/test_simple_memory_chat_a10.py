@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """MarkChat and ContextWatch accept ``mark.memory`` (SimpleMemory), not only MarkMemory.
 
 Release re-test (dev major 1): ``MarkChat(mark.memory)`` crashed and

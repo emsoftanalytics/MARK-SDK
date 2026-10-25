@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Regex-based redaction of common secrets and PII for governance gates.
 
 The sanitizer is the strict, explicit counterpart of the default write-time

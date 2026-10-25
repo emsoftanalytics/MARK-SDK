@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Maintenance jobs respect sealed blocks (dedup, consolidation, block graph) and
 retrieve/heal retries keep the caller's filters.
 """

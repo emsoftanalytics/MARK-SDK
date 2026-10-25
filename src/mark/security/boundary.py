@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Defuse prompt-boundary lookalikes inside stored text before it is rendered.
 
 The XML rendering (``as_context``) escapes every ``<`` so a memory can never

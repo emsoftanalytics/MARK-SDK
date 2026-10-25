@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """The compact small-model skill: short, frontmatter-free in prompts, counted in budgets."""
 from __future__ import annotations
 

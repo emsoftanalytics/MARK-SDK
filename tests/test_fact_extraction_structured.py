@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Structured content, retractions/corrections and list steps in PatternFactExtractor.
 
 key: value blocks, k=v pairs, JSON objects and YAML maps take their subject

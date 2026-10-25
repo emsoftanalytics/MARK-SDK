@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """The redaction rule type and the engine that applies one rule to text.
 
 A :class:`Rule` is a compiled regex plus an optional validator. Rules redact

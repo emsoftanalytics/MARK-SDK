@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Shutdown hooks of :class:`mark.memory.runtime.MarkRuntime`: ``register_closer``.
 
 Objects that run background work against a runtime's store (a

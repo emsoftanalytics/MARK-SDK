@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Session-aware retrieval through MarkMemory.retrieve_sync and SimpleMemory, plus
 gap escalation from session to agent namespace and external lookup.
 """

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """MarkAgentMiddleware provenance and skill budgeting (usage test M7 regressions).
 
 * windowed-out messages are stored with their role's provenance; assistant

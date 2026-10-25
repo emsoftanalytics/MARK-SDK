@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """The store remembers its embedder.
 
 A store embedded with Model2Vec used to be opened by the CLI, MCP or a plain

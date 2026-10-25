@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Graph delegation for SimpleMemory.
 
 The simple API exposes the knowledge-graph helpers of the reserved simple

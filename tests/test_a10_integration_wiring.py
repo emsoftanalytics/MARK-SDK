@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Cross-workstream wiring for 0.2.0a10: write-policy options, block writes, size limit.
 
 Each workstream tested its own part; these tests pin the joins between them

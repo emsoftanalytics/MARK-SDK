@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors — v1.4 RL data pipeline
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi — v1.4 RL data pipeline
 #
 # Collectors store MINIMAL signals by default — no raw fragment content.
 # Raw payloads require explicit opt-in (raw=True) and should only be

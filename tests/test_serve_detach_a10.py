@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """``mark serve --detach`` / ``mark serve status`` (agent re-test K): an agent's shell
 must not block on a foreground server."""
 from __future__ import annotations

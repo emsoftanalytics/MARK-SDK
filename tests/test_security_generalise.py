@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Structural redaction and multilingual injection screening (0.2.0a10 final round).
 
 Runs the generalisation corpora (tests/_security_corpus_gen*.py) plus the

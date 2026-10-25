@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Secret and PII redaction: the policy object, the engine, legacy helpers.
 
 This module owns the single shared rule set used by write-time redaction

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """``remember_many``: a batch write that sets each memory's kind like ``remember`` does.
 
 ``store_many_sync`` takes one tag list for the whole batch, so texts are

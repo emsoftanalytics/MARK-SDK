@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """The canonical verbs on the simple API (``mark.memory``).
 
 ``mark.memory`` offers exactly the verbs of ``runtime.memory(agent_id)``,

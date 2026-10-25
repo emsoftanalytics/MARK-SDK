@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Retractions and corrections from free text reach the fact store.
 
 "no longer" withdraws the current value only (never a newer one);

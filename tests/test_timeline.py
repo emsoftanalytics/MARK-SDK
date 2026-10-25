@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Subject timelines (v0.2.0a9 item 2): whole history, ordered, no top-k cap.
 
 Run-2 MH10 motivated this: a person with a dozen transfer records had the

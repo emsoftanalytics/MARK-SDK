@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Graph API of MarkMemory: concept nodes, edges, and neighbourhoods.
 
 Nodes are looked up by label within this agent. ``node()`` is get-or-create,

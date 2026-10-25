@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """forget(match=...) safety (release re-test A): whole words, a minimum length,
 dry runs, a cap, and confirmation on the CLI and over MCP.
 

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2025 MARK Contributors
+# Copyright (c) 2025-2026 Somtochukwu Owen Ikeanyi
 """Scoped helper views over MarkMemory: entities, sessions, blocks, chain.
 
 Each accessor returns a lightweight object bound to this memory. Imports are
