@@ -1,7 +1,8 @@
 # MARK examples
 
 Short, runnable scripts. Each shows one idea, runs offline, and writes only to
-a temporary directory.
+a temporary directory. They need Python 3.11 or newer and `mark-sdk` installed (or the
+repository's `src` on `PYTHONPATH`).
 
 | Script | What it shows |
 | --- | --- |
