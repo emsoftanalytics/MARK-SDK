@@ -42,20 +42,20 @@ through hooks and clients that the developer supplies.
 | `mark.memory.timeline*` | Subject timelines: `Timeline`/`TimelineEvent` (`timeline.py`), collection (`timeline_build.py`), the two-clock ordering shared with chronological recall (`timeline_order.py`) | `memory/timeline.py` |
 | `mark.documents` | `store_document` / `remember_file`: loaders (text, Markdown, code, HTML, PDF), structure-aware chunking, `DocumentRecord`, the `memory.documents` view | `documents/__init__.py` |
 | `mark.store` | `LocalMemoryStore` (SQLite), `JsonMemoryStore`, session activity log | `store/sqlite.py` |
-| `mark.store._sqlite` | Store mixins: `schema`, `ddl`, `connection` with its statement `gate`, `server_guard` + `server_legacy` (no migration under a running server), `encryption_guard`, `unreadable` (quarantine of rows that do not decrypt), `fragments`, `fragment_reads`, `lifecycle` (cascading forget, secure erase, vacuum), `document_index`, `mentions`, `search`, `fts_text`/`fts_query` (two FTS5 tables, bounded keyword queries), `vector_snapshot`, `scope_delta` + `scope_ids` + `scope_snapshot` (retrievable-id scopes kept current from the write log), `sketches`/`sketch_store`/`sketch_search` (encrypted timelines and identifier recall), `facts`, `facts_multi`, `fact_codec` (typed values), `fact_import`, `fact_jobs`, `job_owner`, `blocks`, `graph`, `events`, `rows`, `codec` | `store/_sqlite/__init__.py` |
+| `mark.store._sqlite` | Store mixins: `schema`, `ddl`, `connection` with its statement `gate`, `server_guard` + `server_legacy` (no migration under a running server), `upgrade` + `upgrade_backup` + `upgrade_files` + `upgrade_messages` + `upgrade_restore` (verified backup before an upgrade, checks after it, rollback, `mark backups restore`), `encryption_guard`, `unreadable` (quarantine of rows that do not decrypt), `fragments`, `fragment_reads`, `lifecycle` (cascading forget, secure erase, vacuum), `document_index`, `mentions`, `search`, `fts_text`/`fts_query` (two FTS5 tables, bounded keyword queries), `vector_snapshot`, `scope_delta` + `scope_ids` + `scope_snapshot` (retrievable-id scopes kept current from the write log), `sketches`/`sketch_store`/`sketch_search` (encrypted timelines and identifier recall), `facts`, `facts_multi`, `fact_codec` (typed values), `fact_import`, `fact_jobs`, `job_owner`, `blocks`, `graph`, `events`, `rows`, `codec` | `store/_sqlite/__init__.py` |
 | `mark.intelligence` | Retrieval pipeline and its stages: `retrieval_index`, `index_bulk_load`, `retrieval_time` + `date_parsing`, `retrieval_fusion` + `fusion_scoring`, `graph_expansion`, `reranker`, `multi_hop`, `supersession`, `retrieval_ordering` + `temporal_order`, `retrieval_reporting` + `fact_relevance` + `query_anchors` + `subject_index` (known fact subjects a text names), `passage_window`; plus extraction, compression and query expansion | `intelligence/retrieval_pipeline.py` |
 | `mark.intelligence.fact_extraction` | `FactCandidate`, the `FactExtractor` protocol, `RulePack` and `BUILTIN_PACKS`, `PatternFactExtractor`, `LLMFactExtractor`, `FactExtractionService` and its background worker | `intelligence/fact_extraction/__init__.py` |
 | `mark.index` | In-memory cosine `VectorIndex` with pure-Python and numpy backends, bulk loading (`vector_bulk.py`) | `index/vector.py` |
 | `mark.embeddings` | Embedding providers (hash v3 by default), the embedding cache, Unicode-aware segmentation (`segments.py`), `auto_embedder` / `resolve_embedder` (`auto.py`), `embedder_info()` (`info.py`) | `embeddings/__init__.py` |
 | `mark.context` | `ContextWatch` and `Briefing` (`watch*.py`), presets by model size (`presets.py`), provenance and trust of conversation memories (`provenance.py`), the session brief (`session_brief.py`), `ContextBudget` (`budget.py`), `split_history` (`history.py`), `MarkChat` (`loop.py`), `ContextBuilder` | `context/watch.py` |
 | `mark.media` | Image memory (`ImageMemory`, records, caption and CLIP search, consistency checks, `OpenAIVisionDescriber`), file sniffing (`files.py`), transcribers for audio and video (`transcribers.py`) | `media/memory.py` |
-| `mark.cli`, `mark._cli` | The `mark` command (`parser.py`, `output.py`, `engine.py`, `engine_ops.py`, `confirm.py`), `mark serve` and its client (`server.py`, `daemon.py` for `--detach`, `server_snapshots.py`), `mark mcp` and `mark serve stop`/`status` (`extras.py`) | `cli.py`, `_cli/server.py` |
+| `mark.cli`, `mark._cli` | The `mark` command (`parser.py`, `output.py`, `engine.py`, `engine_ops.py`, `confirm.py`), `mark serve` and its client (`server.py`, `daemon.py` for `--detach`, `server_snapshots.py`), `mark mcp` and `mark serve stop`/`status` (`extras.py`), `mark migrate` and `mark backups` (`upgrade_cmd.py`) | `cli.py`, `_cli/server.py` |
 | `mark.adapters` | `LocalMarkBackend`, LangChain middleware and tools, the MCP server and its launcher (`python -m mark.adapters.mcp`), LangGraph state | `adapters/backend.py` |
 | `mark.middlewares` | Opt-in middleware batteries and packaged agent skills (`mark-usage`, `mark-memory-middleware`, opt-in `mark-memory-compact`) | `middlewares/base.py` |
 | `mark.agent`, `mark._agent` | `MarkAgent`: wraps a callable or LLM with memory, policies, and skills | `agent.py` |
 | `mark.plasticity` | Decay, Hebbian reinforcement, pruning | `plasticity/__init__.py` |
 | `mark.security` | The write policy (`write_policy.py`): secret and PII redaction (`redaction.py` over the rule modules `secret_rules.py`, `secret_rules_struct.py` (secret-named keys and flags in any syntax), `secret_rules_vendor.py`, `secret_rules_prose.py`, `secret_rules_i18n.py`, `pii_rules.py`) and prompt-injection screening (`injection.py`, `injection_intl.py` for other languages, `injection_markup.py` for hidden markup, links and encodings); boundary defusal for plain-text renderings (`boundary.py`); patterns compiled on first use (`lazy_regex.py`); encryption providers; content hashing | `security/write_policy.py` |
-| `mark.errors` | Exception hierarchy: `MarkError`, store encryption and version errors, `InvalidInputError` / `InvalidMemoryError` / `MemoryTooLargeError`, `UnknownBlockError`, `MemoryNotFoundError`, `StoreClosedError`, `EmbedderUnavailableError` | `errors.py` |
+| `mark.errors` | Exception hierarchy: `MarkError`, store encryption and version errors, `InvalidInputError` / `InvalidMemoryError` / `MemoryTooLargeError`, `UnknownBlockError`, `MemoryNotFoundError`, `StoreClosedError`, `StoreInUseError`, `EmbedderUnavailableError`, and the upgrade errors (`UpgradeBackupError` and its subclasses `InsufficientSpaceError`, `BackupWriteError`, `BackupVerificationError`, `UpgradeFailedError`) | `errors.py` |
 | `mark._private_fs` | Creates `.mark/` (0700) and database and export files (0600) on POSIX | `_private_fs.py` |
 | `mark.types` | Pydantic data types: fragments, blocks, graph, gap reports | `types/memory.py` |
 | `mark.policies`, `mark.plugins`, `mark.rl` | Policy registry, plugin hooks, reinforcement-learning data collection | each `__init__.py` |
@@ -63,7 +63,7 @@ through hooks and clients that the developer supplies.
 ## Main objects
 
 ```text
-Mark.local(folder or file.db, redact=, injection=, max_memory_bytes=, fact_extractor=, embedder=, encryption=, user_subject=)
+Mark.local(folder or file.db, redact=, injection=, max_memory_bytes=, fact_extractor=, embedder=, encryption=, user_subject=, backup_on_upgrade=, backup_dir=)
  ├─ .memory   SimpleMemory                    the memory verbs + blocks, agent "__mark__"
  ├─ .runtime  MarkRuntime                     wiring, lifecycle, write policy, buses, tracer
  │    ├─ store      LocalMemoryStore          SQLite, schema v6
@@ -160,7 +160,27 @@ and symbols kept as tokens (`fts_text.py`). Image memory adds
   before any write (`StoreVersionError`). Before migrating, `server_guard.py`
   checks that no `mark serve` holds the store (the OS lock of current
   servers; `server_legacy.py` recognises 0.2.0a8/0.2.0a9 servers by their pid
-  files or `/hello` answer) and raises `StoreInUseError` if one does.
+  files or `/hello` answer) and raises `StoreInUseError` if one does. An
+  older store already marked encrypted and opened without a key is refused
+  (`EncryptionRequiredError`) at the same point, before any backup.
+- **Upgrades.** `upgrade.py` hooks into `schema.py`'s transaction. Right
+  after `BEGIN IMMEDIATE` and before any DDL it counts the key tables and
+  takes the backup in `upgrade_backup.py`: a free-space check (store + WAL
+  plus 10%, at least 1 MB), SQLite's online backup API into a `0600` `O_EXCL` file
+  `<db>.v<N>-backup-<UTC time>.db` (or in `backup_dir`), then a check of the
+  copy (row counts plus `integrity_check`, or above 200 MB a page-by-page
+  compare with the checkpointed store in `upgrade_files.py`). Holding the
+  write lock means the backup is exactly what gets migrated. At the end of
+  the transaction the row counts are checked again and `last_upgrade` is
+  recorded in `schema_info`; on failure the transaction rolls back, or, if
+  the failure comes after the commit, the store is restored from the backup
+  through the backup API (no file swap under open connections).
+  `upgrade_messages.py` writes every outcome in plain words with sizes and
+  timings (`UpgradeBackupError` subclasses); `upgrade_restore.py` lists
+  backups and restores one for `mark backups restore`, keeping the current
+  store as `<db>.pre-restore-<time>.db`. Backups are skipped for in-memory
+  stores, with `backup_on_upgrade=False` or `MARK_BACKUP_ON_UPGRADE=0`.
+  `benchmarks/scale/upgrade_bench.py` times backup, check and migration.
 - **Concurrency.** File databases use one connection per thread in WAL mode;
   switching a new database to WAL is retried when several processes open it
   at once. Every write runs in `_writing`: one locked transaction that rolls
@@ -173,8 +193,9 @@ and symbols kept as tokens (`fts_text.py`). Image memory adds
   that). Existing paths keep their permissions.
 - **Integrity.** Each fragment stores a content hash. A fragment that fails
   verification on read is not returned.
-- **Encryption.** With an encryption provider, fragment content and fact
-  values are encrypted. Content hashes become keyed HMACs, and the FTS5 index
+- **Encryption.** With an encryption provider, fragment content, fact
+  values and document title, text and source (`document_index.py` and the
+  graph documents in `graph.py`) are encrypted. Content hashes become keyed HMACs, and the FTS5 index
   is not built, so encrypted stores use vector search only.
   `encryption_guard.py` records in `schema_info` whether the store is
   encrypted, plus an encrypted canary. Opening an encrypted store without a
@@ -574,6 +595,9 @@ stored as a document. MARK never decodes audio itself.
   place the CLI imports MARK.
 - `engine_ops.py`: the lifecycle and data commands (`forget`, `resolve`,
   `supersede`, `list`, `export`, `import`, `brief`, `agents`).
+- `upgrade_cmd.py`: `mark migrate [--dry-run] [--no-backup] [--backup-dir]`
+  and `mark backups [restore FILE] [--yes]`, on top of the store's upgrade
+  modules; standard library only at import time.
 - `output.py`: human-readable output: 8-character short ids (accepted by
   every command that takes an id), dates with a `#k` suffix only when dates
   collide, kinds, and relevance scores.
