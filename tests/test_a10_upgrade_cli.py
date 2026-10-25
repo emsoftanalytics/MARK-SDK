@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from mark.cli import main
-from tests._helpers_upgrade import backups, build_store, counts, dump, stamp
+from _helpers_upgrade import backups, build_store, counts, dump, stamp
 
 Usage = namedtuple("Usage", "total used free")
 

@@ -23,7 +23,7 @@ from mark.errors import (
     UpgradeFailedError,
 )
 from mark.store.sqlite import LocalMemoryStore
-from tests._helpers_upgrade import backups, build_store, counts, dump, stamp
+from _helpers_upgrade import backups, build_store, counts, dump, stamp
 
 Usage = namedtuple("Usage", "total used free")
 

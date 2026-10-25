@@ -16,7 +16,7 @@ import pytest
 from mark.documents import DocumentRecord, UnsupportedFileError
 from mark.embeddings import HashEmbeddingProvider
 from mark.memory.runtime import MarkRuntime
-from tests._helpers_media import write_png
+from _helpers_media import write_png
 
 NEEDLE = "The replication lag alarm for the Kestrel ledger fires when lag exceeds 742 milliseconds."
 

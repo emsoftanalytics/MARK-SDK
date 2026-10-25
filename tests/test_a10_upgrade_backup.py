@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from mark.store.sqlite import LocalMemoryStore
-from tests._helpers_upgrade import AGENT, backups, build_store, counts, downgrade, dump, stamp
+from _helpers_upgrade import AGENT, backups, build_store, counts, downgrade, dump, stamp
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CURRENT = LocalMemoryStore.CURRENT_SCHEMA_VERSION

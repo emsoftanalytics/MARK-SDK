@@ -48,6 +48,7 @@ def test_values_keep_their_type(memory, value) -> None:
 
 
 def test_typed_values_round_trip_encrypted(tmp_path: Path) -> None:
+    pytest.importorskip("cryptography")
     runtime = MarkRuntime.local(store_path=tmp_path / "e.db", encryption=FernetEncryptionProvider(passphrase="p"))
     memory = runtime.memory("a")
     memory.facts.set("svc", "limits", {"cpu": 2, "mem": [1, 2]})

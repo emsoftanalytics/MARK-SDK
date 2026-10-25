@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._helpers_upgrade import backups, counts, stamp
+from _helpers_upgrade import backups, counts, stamp
 
 _VENVS = Path("/home/emsoft-analytics/mark-dev/retest/integ/venv")
 PYTHONS = {4: os.environ.get("MARK_A8_PYTHON", str(_VENVS / "va8/bin/python")),

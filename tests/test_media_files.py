@@ -16,7 +16,7 @@ from mark.documents import MissingExtraError, load_file
 from mark.embeddings import HashEmbeddingProvider
 from mark.media import NotAnImageError, OpenAITranscriber, sniff
 from mark.memory.runtime import MarkRuntime
-from tests._helpers_media import write_png
+from _helpers_media import write_png
 
 
 def _pdf(path: Path, pages: list[str]) -> Path:
