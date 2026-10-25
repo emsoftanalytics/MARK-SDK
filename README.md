@@ -175,10 +175,34 @@ TODOs and bugs only (replace anything else with `mark supersede`), and
 revising an already superseded memory revises its current version.
 
 `mark serve --detach` keeps the store warm in the background so each command
-answers in about 0.1 s (loopback only, token-authenticated); it returns once
-the server answers. Agents should always start it with `--detach`, since a
+answers in about 0.1-0.3 s (measured; loopback only, token-authenticated)
+instead of loading MARK and the store on every call; it returns once the
+server answers. Agents should always start it with `--detach`, since a
 foreground `mark serve` blocks the shell. `mark serve status` says whether it
 runs, `mark serve stop` ends it.
+
+Every command (`mark COMMAND --help` lists its options; `--db PATH` and
+`--agent ID` work with all of them):
+
+| Command | What it does |
+| --- | --- |
+| `remember TEXT` | Store one memory (`--kind`, `--tag`, `--importance`, `--occurred-at`, `--extract-facts`). |
+| `recall QUERY` | Search memory (`-k`, `--kind`, `--open`, `--tag`, `--since`, `--until`, `--json`). |
+| `brief` | Session-start brief: facts, open TODOs, decisions, bugs and fixes (`--budget`). |
+| `list` | Page through memories (`--kind`, `--open`, `--tag`, `--limit`, `--offset`). |
+| `forget ID` / `forget --match TEXT` | Delete memories and their facts (`--secure`, `--dry-run`, `--yes`, `--all`). |
+| `resolve ID` / `supersede ID TEXT` | Close a TODO or bug / replace a memory, keeping its history. |
+| `fact set/get/history/list/retract` | Values that change over time (`--valid-from`, `--correction`). |
+| `timeline SUBJECT [ATTRIBUTE]` | Every fact and memory about a subject, oldest first. |
+| `ingest FILE` | Store each line of a file (`--kind`, `--extract-facts`); safe to repeat. |
+| `export FILE` / `import FILE` | JSONL backup and restore. |
+| `agents`, `stats` | List agent namespaces; count memories and facts and show the embedder. |
+| `config show` / `config user-subject NAME` | Store settings: path, schema, embedder, who "I" is. |
+| `migrate` | Upgrade a store written by an older MARK (`--dry-run`, `--no-backup`, `--backup-dir`). |
+| `backups` / `backups restore FILE` | List upgrade backups / put one back (`--yes`). |
+| `serve --detach` / `serve status` / `serve stop` | Keep the store warm for fast commands. |
+| `mcp` | Serve the store to MCP clients over stdio (below). |
+| `--version` | Print the installed version (`mark-sdk 0.2.0a10`). |
 
 **MCP.** `mark mcp` (or `python -m mark.adapters.mcp`, same options) serves
 the same store to any MCP client over stdio. A client configuration:
@@ -357,7 +381,7 @@ separated from its result. `create_mark_tools(LocalMarkBackend(mark))` (in
 | Surface | Entry point | Use it when |
 | --- | --- | --- |
 | Python | `Mark.local()`, `mark.memory`, `mark.runtime.memory(id)` | Your code owns the agent loop. |
-| Command line | `mark remember / recall / brief / resolve / forget / fact / timeline / export / config` | Shell scripts and coding agents that run commands. |
+| Command line | `mark remember / recall / brief / list / resolve / forget / fact / timeline / export / migrate / serve` | Shell scripts and coding agents that run commands. |
 | MCP | `mark mcp`, `python -m mark.adapters.mcp --db PATH` | Any MCP client (desktop assistants, IDE agents). |
 | LangChain | `MarkAgentMiddleware`, `create_mark_tools` | LangChain v1 agents. |
 | Plain loops | `ContextWatch` + `inject`, `MarkChat`, `mark.wrap_agent(fn)` | Any OpenAI-style message list or plain function. |
@@ -423,8 +447,8 @@ Reproduce with `uv run --extra fast python benchmarks/scale/bench.py --n
   `mark:untrusted` and labelled as untrusted wherever they are rendered;
   `Mark.local(..., injection="quarantine")` keeps them out of recall. Both
   screens are heuristics: treat recalled tool, document and web text as data.
-- **Private files.** On POSIX the store directory is `0700` and the database
-  and exports are `0600`.
+- **Private files.** On POSIX the store directory is `0700` and the database,
+  exports and upgrade backups are `0600`.
 - **Encryption at rest** with `mark-sdk[crypto]`:
   `Mark.local(".", encryption=FernetEncryptionProvider(passphrase=...))`. An
   encrypted store refuses to open without its key, and exports it only with
@@ -439,34 +463,52 @@ See [SECURITY.md](SECURITY.md) for the details and their limits.
 
 ## Upgrading
 
+MARK 0.2.0a10 needs Python 3.11 or newer (Python 3.10 reached end of life;
+on 3.10, stay on 0.2.0a9). Upgrade the package with `pip install -U
+mark-sdk`, or with `uv pip install -U mark-sdk` / `pipx upgrade mark-sdk`,
+whichever installed it.
+
 Stores upgrade in place on first open, after an automatic backup: MARK
 copies the older store to `memory.db.v<N>-backup-<UTC time>.db` next to it
 (owner-only), checks the copy, then migrates and checks again. On any
 failure the store is left as it was (or restored from the backup) and the
-error says why, with sizes. Stop every `mark serve`, MCP server and agent
-that uses the store first: 0.2.0a10 refuses to migrate while an older
-server runs (`StoreInUseError`).
+error says why, with sizes (`InsufficientSpaceError`, `BackupWriteError`,
+`BackupVerificationError`, `UpgradeFailedError`). Stop every `mark serve`,
+MCP server and agent that uses the store first: 0.2.0a10 refuses to migrate
+while an older server runs (`StoreInUseError`).
 
 ```bash
-mark migrate --dry-run   # schemas, the backup it would make, free-space check
+mark --version           # mark-sdk 0.2.0a10
+mark migrate --dry-run   # schemas, the backup it would make, free-space check (PASS/FAIL)
 mark migrate             # upgrade now (verified backup first)
-mark backups             # list backups: schema, size, date
-mark backups restore .mark/memory.db.v5-backup-20261025T101500Z.db --yes
+mark backups             # list backups: schema, size, date, and the last upgrade
+mark backups restore .mark/memory.db.v5-backup-20261025T101500Z.db --yes   # go back
 ```
+
+`mark migrate --backup-dir DIR` puts the backup on another disk and
+`--no-backup` skips it. From Python the same options are arguments:
 
 ```python
 from mark import Mark
 
-mark = Mark.local(".", backup_dir="/mnt/big-disk/mark-backups")  # backup elsewhere
+with Mark.local(".", backup_dir="/mnt/big-disk/mark-backups") as mark:   # backup elsewhere
+    print(mark.memory.count())
 # Mark.local(".", backup_on_upgrade=False) or MARK_BACKUP_ON_UPGRADE=0: no backup
 ```
 
+**Going back.** 0.2.0a9 refuses an upgraded store (`StoreVersionError`).
+`mark backups restore FILE` puts the pre-upgrade copy back, so 0.2.0a9 can
+open the store again; memories written after the upgrade are not in it, and
+the current store is kept as `memory.db.pre-restore-<time>.db`. Never open
+an upgraded store with 0.2.0a8 or older: they do not check the schema
+version and can damage it.
+
 A backup holds the same memories as the store (an encrypted store's backup
-stays encrypted); delete it once you no longer need it. Once
-upgraded, a store must not be reopened with 0.2.0a8 or older, which do not
-detect the newer schema (0.2.0a9 refuses it with `StoreVersionError`). The
-[changelog](CHANGELOG.md) lists every upgrade note, including the
-behaviour changes (redaction by default, whole-word `forget(match=)`,
+stays encrypted); delete it once you no longer need it. The `mark` command
+does not open encrypted stores: upgrade one by opening it from Python with
+its key (without the key it is refused before anything is copied or
+changed). The [changelog](CHANGELOG.md) lists every upgrade note, including
+the behaviour changes (redaction by default, whole-word `forget(match=)`,
 `resolve()` for TODOs and bugs only, curated top-level imports).
 
 ## Examples
