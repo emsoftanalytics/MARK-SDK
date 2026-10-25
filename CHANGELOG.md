@@ -328,6 +328,10 @@ a million memories.
   the sub-command; `brief` on an empty store says so; no more "same day"
   notes.
 - `mark --version` prints the installed version (`mark-sdk 0.2.0a10`).
+- When a `mark serve` from another MARK version answers, commands print the
+  "different MARK build" notice at most once, and not at all when the store
+  is refused with `StoreInUseError` (`mark serve --detach` printed it
+  repeatedly).
 
 ## 0.2.0a9 - 2026-10-15
 

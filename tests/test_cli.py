@@ -123,9 +123,10 @@ def test_mismatched_server_build_falls_back_in_process(tmp_path: Path, monkeypat
         import mark._cli.client as client
 
         monkeypatch.setattr(client, "protocol_fingerprint", lambda: "other-build")
+        monkeypatch.setattr(client, "_OTHER_BUILD", {"seen": False, "shown": False})
         assert cli._live_server(cli._state_path(db)) is None
-        assert "different MARK build" in capsys.readouterr().err
         assert cli.execute(db, "stats", {"agent": "x"})["memories"] == 0  # in-process
+        assert "different MARK build" in capsys.readouterr().err  # said once it ran in-process
     finally:
         stop.set()
 
