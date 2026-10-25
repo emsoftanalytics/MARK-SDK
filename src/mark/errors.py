@@ -186,3 +186,44 @@ class StoreInUseError(MarkError, RuntimeError):
         )
         self.path = path
         self.pid = pid
+
+
+# ── Upgrade backups (0.2.0a10) ───────────────────────────────────────────────
+# Messages are written by mark.store._sqlite.upgrade_messages (plain words,
+# with sizes); the numbers are also attributes, for programs.
+
+__all__ += ["BackupVerificationError", "BackupWriteError", "InsufficientSpaceError",
+            "UpgradeBackupError", "UpgradeFailedError"]
+
+
+class UpgradeBackupError(MarkError, RuntimeError):
+    """Upgrading an older store (or the safety backup taken first) failed.
+
+    ``path`` is the store; ``store_changed`` is False whenever the store was
+    left exactly as it was (always, except when even a restore failed).
+    """
+
+    def __init__(self, message: str, *, path: str, store_changed: bool = False, **numbers: object) -> None:
+        super().__init__(message)
+        self.path = path
+        self.store_changed = store_changed
+        for name, value in numbers.items():
+            setattr(self, name, value)
+
+
+class InsufficientSpaceError(UpgradeBackupError):
+    """Not enough free disk space for the backup (``store_bytes``, ``wal_bytes``,
+    ``required_bytes``, ``free_bytes``, ``shortfall_bytes``, ``directory``)."""
+
+
+class BackupWriteError(UpgradeBackupError):
+    """The backup file could not be written (``backup_path``, ``errno``, ``strerror``)."""
+
+
+class BackupVerificationError(UpgradeBackupError):
+    """The backup did not match the store (``backup_path``, ``differences``); it was removed."""
+
+
+class UpgradeFailedError(UpgradeBackupError):
+    """The migration failed and was undone (``backup_path``, ``from_version``,
+    ``to_version``, ``restored``: True when the store was restored from the backup)."""

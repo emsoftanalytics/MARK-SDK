@@ -59,6 +59,14 @@ Data and processes
     config show [--json] | config user-subject NAME
                                                  store settings; the user subject (who
                                                  "I"/"my" is) is stored with the store
+Upgrades
+    migrate [--dry-run] [--no-backup] [--backup-dir DIR]
+                                                 upgrade a store from an older MARK now,
+                                                 after a verified backup (--dry-run shows
+                                                 the plan and the free-space check)
+    backups [--backup-dir DIR] | backups restore FILE [--yes]
+                                                 list the upgrade backups; put one back
+                                                 (the current store is kept first)
 
 KINDS for --kind: decision, todo, bug, fix, preference, snippet, api, note. Without
 --kind, a leading "TODO:", "DECISION:"/"ADR:", "BUG:", "FIX:", "DONE:"/"NOTE:", "API:"
@@ -151,6 +159,10 @@ def main(argv: list[str] | None = None) -> int:
 
             run_mcp(_db_path(args.mcp_db) if args.mcp_db else db, args.mcp_agent or agent, args)
             return 0
+        if args.cmd in ("migrate", "backups"):
+            from mark._cli.upgrade_cmd import run as run_upgrade
+
+            return run_upgrade(args, db)
         cmd, payload = _request(args, agent)
         if cmd in _READ_ONLY and not db.exists():
             raise FileNotFoundError(f"no store at {db} (`mark remember TEXT` creates one; "

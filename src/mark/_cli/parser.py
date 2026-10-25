@@ -9,6 +9,7 @@ import argparse
 from typing import Any
 
 from mark._cli.config import DEFAULT_AGENT
+from mark._cli.upgrade_cmd import add_parsers as _upgrade_parsers
 from mark.kinds import KINDS
 
 
@@ -109,6 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=0)
     _config_parser(sub)
     _mcp_parser(sub)
+    _upgrade_parsers(sub)  # migrate, backups (mark._cli.upgrade_cmd)
     _accept_after_command(sub)
     return parser
 

@@ -98,13 +98,37 @@ class SchemaMixin(SchemaDDL):
         before anything is written: older code must never "migrate" or write
         into a layout it does not understand.
         """
-        self._refuse_newer_schema()
+        self._refuse_newer_schema()  # these two guards: mark.store._sqlite.upgrade
         self._refuse_migration_under_server()
+        try:
+            error = self._init_schema_tx()
+            if self._upgrade_plan is not None:
+                self._upgrade_plan.committed = True  # the transaction above has been saved
+                self._upgrade_confirm(self._upgrade_plan)  # post-commit check + one success log line
+        except BaseException as exc:
+            # Rolled back by _writing; a committed upgrade is restored from its backup.
+            failure = self._upgrade_failed(self._upgrade_plan, exc)
+            if failure is None:
+                raise
+            raise failure from exc
+        if error is not None:
+            # Markers decided in the transaction are committed; then refuse the open.
+            self.close()
+            raise error
+
+    def _init_schema_tx(self) -> Exception | None:
+        """The schema transaction of ``_init_schema``; returns the encryption error to raise, if any.
+
+        A due upgrade's plan (and backup) is kept in ``_upgrade_plan`` so a
+        failure anywhere after it can still be undone.
+        """
         with self._writing() as conn:
             # Take the write lock before reading the schema stamp: two processes
             # creating the same new database must not both run migrations.
             if not conn.in_transaction:
                 conn.execute("BEGIN IMMEDIATE")
+            # Before any DDL touches the file: back up an older store (verified).
+            upgrade = self._upgrade_plan = self._upgrade_begin(conn)
             for ddl in [self._DDL_SCHEMA_INFO, self._DDL_BLOCKS, self._DDL_FRAGMENTS,
                         self._DDL_DOCUMENTS, self._DDL_NODES, self._DDL_EDGES,
                         self._DDL_SESSION_EVENTS, self._DDL_BLOCK_NODES, self._DDL_BLOCK_LINKS, WRITE_LOG_DDL,
@@ -142,44 +166,9 @@ class SchemaMixin(SchemaDDL):
                 self._quarantine_unreadable(conn)  # plaintext written by a keyless a8 (see unreadable.py)
             if error is None:
                 self._init_fts(conn)
-        if error is not None:
-            # Markers decided above are committed; then refuse the open.
-            self.close()
-            raise error
-
-    def _refuse_newer_schema(self) -> None:
-        """Raise StoreVersionError if the store was written by a newer MARK."""
-        from mark.errors import StoreVersionError
-
-        with self._reading() as conn:
-            try:
-                row = conn.execute("SELECT value FROM schema_info WHERE key = 'schema_version'").fetchone()
-            except sqlite3.OperationalError:  # new database: no schema_info yet
-                return
-        if row is not None and int(row[0]) > self.CURRENT_SCHEMA_VERSION:
-            self.close()
-            raise StoreVersionError(str(self.db_path), int(row[0]), self.CURRENT_SCHEMA_VERSION)
-
-    def _refuse_migration_under_server(self) -> None:
-        """Raise StoreInUseError if a migration is due while another process serves the store.
-
-        See :mod:`mark.store._sqlite.server_guard`: an older ``mark serve``
-        would keep writing into the migrated layout with its old code.
-        """
-        from mark.store._sqlite.server_guard import StoreInUseError, foreign_server
-
-        if self.db_path == ":memory:":
-            return
-        try:
-            row = self._fetchone("SELECT value FROM schema_info WHERE key = 'schema_version'")
-        except sqlite3.OperationalError:  # new database: nothing to migrate
-            return
-        if row is None or int(row[0]) >= self.CURRENT_SCHEMA_VERSION:
-            return
-        held, pid = foreign_server(self.db_path)
-        if held:
-            self.close()
-            raise StoreInUseError(self.db_path, pid)
+            if upgrade is not None:
+                self._upgrade_verify(conn, upgrade)  # nothing lost; raises to roll back
+        return error
 
     def _run_migrations(self, conn: sqlite3.Connection, from_version: int) -> None:
         """Bring the schema up to CURRENT_SCHEMA_VERSION.

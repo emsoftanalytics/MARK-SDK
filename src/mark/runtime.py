@@ -24,7 +24,6 @@ from mark.runtime_data import MarkDataMixin, resolve_store_location
 if TYPE_CHECKING:
     from mark.middlewares.media_continuity.world_bible import WorldBibleMemory
     from mark.memory.observe import ObserveResult
-    from mark.middlewares import MarkMiddleware
 
 
 class Mark(MarkDataMixin, MarkConfigureMixin):
@@ -95,6 +94,7 @@ class Mark(MarkDataMixin, MarkConfigureMixin):
         redact:          object = True,
         injection:       str = "tag",
         user_subject:    str | None = None,
+        backup_on_upgrade: bool = True, backup_dir: str | Path | None = None,
     ) -> "Mark":
         """
         Create a local Mark instance backed by SQLite.
@@ -136,6 +136,8 @@ class Mark(MarkDataMixin, MarkConfigureMixin):
             user_subject:    Who "I"/"my" is ("ana"): stored with the store and
                              applied on every later open, by Python, the CLI and
                              MCP alike. None keeps the stored one (default "user").
+            backup_on_upgrade: Back up an older store (verified, next to it) before
+                             upgrading it (default True); backup_dir: another folder.
 
         The store folder is created if it does not exist (mode 0700 on
         POSIX); the SQLite database in it is created 0600.
@@ -162,6 +164,8 @@ class Mark(MarkDataMixin, MarkConfigureMixin):
             max_memory_bytes     = max_memory_bytes,
             redact               = redact,
             injection            = injection,
+            backup_on_upgrade    = backup_on_upgrade,
+            backup_dir           = backup_dir,
         )
 
         apply_user_subject(runtime, user_subject)  # stored with the store; None = keep stored

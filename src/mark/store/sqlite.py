@@ -60,6 +60,7 @@ from mark.store._sqlite.schema import SchemaMixin
 from mark.store._sqlite.search import SearchMixin
 from mark.store._sqlite.sketch_search import SketchSearchMixin
 from mark.store._sqlite.unreadable import UnreadableRowsMixin
+from mark.store._sqlite.upgrade import UpgradeMixin
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,7 @@ class LocalMemoryStore(
     EventMixin,
     RowDecodingMixin,
     SchemaMixin,
+    UpgradeMixin,
     EncryptionGuardMixin,
     UnreadableRowsMixin,
     ConnectionMixin,
@@ -107,8 +109,12 @@ class LocalMemoryStore(
         path: str | Path = ":memory:",
         *,
         encryption: EncryptionProvider | None = None,
+        backup_on_upgrade: bool = True,
+        backup_dir: str | Path | None = None,
     ) -> None:
         self.db_path = str(path)
+        self.backup_on_upgrade = backup_on_upgrade
+        self.backup_dir = backup_dir
         self.encryption = encryption or NoOpEncryptionProvider()
         # Re-entrant: write helpers may call other locked helpers.
         self._lock = threading.RLock()

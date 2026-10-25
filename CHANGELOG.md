@@ -15,9 +15,16 @@ a million memories.
 - **Python 3.11 or newer is required.** Python 3.10 reached end of life in
   October 2026, and the patched versions of optional dependencies (Pillow 13,
   filelock 4.2) need 3.11; on Python 3.10, stay on 0.2.0a9.
-- **Back up first.** Copy `memory.db` (with its `-wal` and `-shm` files)
-  before the first open with 0.2.0a10. The store is upgraded in place to
-  schema version 6.
+- **Automatic backup, then the upgrade.** The first open with 0.2.0a10
+  copies an older store to `memory.db.v<N>-backup-<UTC time>.db` next to it
+  (owner-only), checks the copy, and only then upgrades the store in place
+  to schema version 6. If anything fails, the store is left as it was (or
+  restored from the backup) and the error says why. The backup needs about
+  as much free space as the store: `backup_dir=` (or `mark migrate
+  --backup-dir`) puts it on another disk, `backup_on_upgrade=False` (or
+  `MARK_BACKUP_ON_UPGRADE=0`) skips it. Run `mark migrate --dry-run` to see
+  the plan first, and delete the backup once you no longer need it: it holds
+  the same memories as the store.
 - **Stop everything that uses the store** (`mark serve`, MCP servers,
   agents) before upgrading. 0.2.0a10 refuses to migrate a store while a
   0.2.0a8 or 0.2.0a9 `mark serve` is running on it and raises
@@ -60,6 +67,30 @@ a million memories.
 
 ### Added
 
+- **Safe upgrades with a verified backup.** Opening a store written by an
+  older MARK (from Python, the CLI, `mark serve` or MCP) first checks free
+  space, copies the store with SQLite's online backup API into an
+  owner-only file that never overwrites another, and verifies it (row
+  counts, plus an integrity check, or a page-by-page compare above 200 MB)
+  before migrating; at 1M memories (1.7 GB) the backup takes about 13 s and
+  the check about 19 s. The migration runs in one
+  transaction and is checked again (no memories, facts or documents lost);
+  on failure it is rolled back, or restored from the backup if it had been
+  saved. `Mark.local()` and `MarkRuntime.local()` take `backup_on_upgrade=`
+  and `backup_dir=`; the upgrade is logged once with sizes and timings and
+  recorded in the store (`last_upgrade`).
+- **`mark migrate`** (`--dry-run`, `--no-backup`, `--backup-dir DIR`)
+  upgrades a store explicitly; the dry run prints the schemas, the backup
+  path and the free-space math with PASS/FAIL. **`mark backups`** lists a
+  store's backups (schema, size, date) and **`mark backups restore FILE`**
+  puts one back, keeping the current store as `<db>.pre-restore-<time>.db`;
+  it refuses while `mark serve` holds the store and asks first unless
+  `--yes`.
+- **Upgrade errors that explain themselves.** `UpgradeBackupError` and its
+  subclasses `InsufficientSpaceError`, `BackupWriteError`,
+  `BackupVerificationError` and `UpgradeFailedError` state the sizes, free
+  space, differing row counts or OS error, what to do, and whether the store
+  was changed; the numbers are also attributes.
 - **One memory API.** `mark.memory` and `runtime.memory(agent_id)` share the
   verbs `remember`, `remember_many`, `recall`, `brief`, `forget`, `get`,
   `list`, `count`, `update`, `supersede`, `resolve`, `facts`, `timeline`,
