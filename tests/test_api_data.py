@@ -80,7 +80,7 @@ def test_encrypted_store_exports_plaintext_only_when_asked(tmp_path: Path) -> No
     runtime = MarkRuntime.local(store_path=tmp_path / "e.db",
                                 encryption=FernetEncryptionProvider(passphrase="pw"))
     memory = runtime.memory("a")
-    memory.remember("The safe code is 4821.")
+    memory.remember("Shelf 4821 holds the spare keys.")  # plain text: access codes are redacted
     with pytest.raises(StoreEncryptionError, match="decrypt=True"):
         memory.export_jsonl(tmp_path / "e.jsonl")
     assert memory.export_jsonl(tmp_path / "e.jsonl", decrypt=True)["memories"] == 1
