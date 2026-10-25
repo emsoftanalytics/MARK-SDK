@@ -163,3 +163,32 @@ def test_failure_without_a_backup_still_rolls_back(old, monkeypatch) -> None:
         LocalMemoryStore(db, backup_on_upgrade=False)
     assert info.value.backup_path is None and "no backup was taken" in str(info.value).lower()
     _assert_unchanged(db, original, raw)
+
+
+def test_large_backup_with_different_pages_is_removed(old, monkeypatch) -> None:
+    from mark.store._sqlite import upgrade_backup, upgrade_files
+
+    db, _before, original, raw = old
+    monkeypatch.setattr(upgrade_backup, "FULL_CHECK_LIMIT", 0)
+    monkeypatch.setattr(upgrade_files, "same_pages", lambda a, b: "content differs within bytes 0-4,096")
+    with pytest.raises(BackupVerificationError) as info:
+        LocalMemoryStore(db)
+    assert "page compare: content differs within bytes 0-4,096" in str(info.value)
+    assert backups(db.parent) == []
+    _assert_unchanged(db, original, raw)
+
+
+def test_page_compare_spots_a_changed_byte(tmp_path: Path) -> None:
+    from mark.store._sqlite.upgrade_files import same_pages
+
+    a, b = tmp_path / "a.db", tmp_path / "b.db"
+    data = bytearray(range(256)) * 4096
+    a.write_bytes(bytes(data))
+    data[50] ^= 1  # inside the 100-byte header: allowed to differ
+    b.write_bytes(bytes(data))
+    assert same_pages(a, b) is None
+    data[300_000] ^= 1
+    b.write_bytes(bytes(data))
+    assert "differs" in same_pages(a, b)
+    b.write_bytes(bytes(data[:-1]))
+    assert "file size" in same_pages(a, b)

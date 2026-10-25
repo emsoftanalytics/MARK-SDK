@@ -14,13 +14,16 @@ store untouched:
    switched to a self-contained rollback-journal file and fsynced
    (:class:`~mark.errors.BackupWriteError`);
 3. verify: ``COUNT(*)`` of every key table must equal the store's, and
-   ``PRAGMA integrity_check`` (``quick_check`` above 200 MB) must say ok
-   (:class:`~mark.errors.BackupVerificationError`); only then is the file
+   ``PRAGMA integrity_check`` must say ok; above 200 MB the copy is instead
+   compared page by page with the checkpointed store (``quick_check`` of the
+   data tables when the WAL could not be fully checkpointed)
+   (:class:`~mark.errors.BackupVerificationError`). Only then is the file
    linked to its final name, which never replaces an existing file.
 
-Why the backup API and not ``VACUUM INTO``: it copies pages as they are (as
-fast as the disk), while VACUUM INTO rebuilds every table and index; on a
-1M-memory store it was several times slower (benchmarks/scale/upgrade_bench.py).
+Why the backup API and not ``VACUUM INTO``: it copies pages as they are, at
+about disk speed, while VACUUM INTO rebuilds every table and index (1.2x to
+1.6x slower at 100k-1M memories in benchmarks/scale/upgrade_bench.py), and
+only an exact page copy can be verified by comparing pages.
 The caller must hold the store's write lock, so nothing changes between the
 counts and the copy. Encrypted stores are copied as they are: the backup
 holds the same ciphertext and needs the same key.
@@ -37,6 +40,7 @@ from pathlib import Path
 
 from mark._private_fs import FILE_MODE, ensure_private_dir
 from mark.errors import BackupVerificationError, BackupWriteError, InsufficientSpaceError
+from mark.store._sqlite import upgrade_files as files
 from mark.store._sqlite import upgrade_messages as messages
 
 #: Tables whose rows are the user's data: a backup or a migration must keep every one.
@@ -44,7 +48,7 @@ KEY_TABLES = ("fragments", "facts", "documents", "nodes", "edges", "blocks", "bl
               "block_links", "session_events", "fact_extractions")
 MARGIN = 0.10
 MIN_MARGIN = 1_000_000
-#: Above this size the cheaper ``quick_check`` replaces the full ``integrity_check``.
+#: Above this size only the data tables are checked, with ``quick_check`` (see health_check).
 FULL_CHECK_LIMIT = 200_000_000
 
 
@@ -98,14 +102,14 @@ def target_dir(db_path: str | Path, backup_dir: str | Path | None) -> Path:
 def space_check(db_path: str | Path, backup_dir: str | Path | None = None) -> SpaceCheck:
     """How much the backup needs and how much is free where it would go."""
     db = Path(db_path)
-    store, wal = _size(db), _size(Path(f"{db}-wal"))
+    store, wal = files.file_size(db), files.file_size(f"{db}-wal")
     folder = target_dir(db, backup_dir)
     probe = folder
     while not probe.exists() and probe != probe.parent:  # a backup_dir not created yet
         probe = probe.parent
     required = int((store + wal) * (1 + MARGIN)) + MIN_MARGIN
     free = shutil.disk_usage(probe).free
-    return SpaceCheck(db.name, str(folder), _mount(probe), store, wal, required, free)
+    return SpaceCheck(db.name, str(folder), files.mount_of(probe), store, wal, required, free)
 
 
 def _timestamp() -> str:
@@ -129,10 +133,20 @@ def table_counts(conn: sqlite3.Connection) -> dict[str, int]:
 
 
 def health_check(conn: sqlite3.Connection, size: int) -> tuple[str, list[str]]:
-    """(check name, problems): full integrity_check for small files, quick_check for big ones."""
-    pragma = "integrity_check" if size < FULL_CHECK_LIMIT else "quick_check"
-    rows = [str(row[0]) for row in conn.execute(f"PRAGMA {pragma}(20)")]
-    return pragma, ([] if rows == ["ok"] else [f"{pragma}: {row}" for row in rows])
+    """(check name, problems): the whole file below 200 MB, the data tables above.
+
+    Small files get a full ``integrity_check``. Above FULL_CHECK_LIMIT (when
+    a page compare is not possible, see ``_verify``) only the tables holding
+    the user's data (KEY_TABLES and schema_info, with their indexes) get
+    ``quick_check``: the rest is derived data (keyword indexes, vector
+    snapshots, sketches) that dominates the file and can be rebuilt.
+    """
+    if size < FULL_CHECK_LIMIT or sqlite3.sqlite_version_info < (3, 33, 0):
+        pragma = "integrity_check" if size < FULL_CHECK_LIMIT else "quick_check"
+        rows = [str(row[0]) for row in conn.execute(f"PRAGMA {pragma}(20)")]
+        return pragma, ([] if rows == ["ok"] else [f"{pragma}: {row}" for row in rows])
+    tables = [t for t in (*KEY_TABLES, "schema_info") if t in ordinary_tables(conn)]
+    return "quick_check(data tables)", check_tables(conn, tables)
 
 
 def ordinary_tables(conn: sqlite3.Connection) -> set[str]:
@@ -193,22 +207,22 @@ def create_backup(db_path: str | Path, version: int, *, backup_dir: str | Path |
         started = time.perf_counter()
         checkpointed, expected = _copy(db, partial, counts)
         copied = time.perf_counter()
-        size = _size(partial)
-        check, problems, found = _verify(partial, size)
+        size = files.file_size(partial)
+        check, problems, found = _verify(db, partial, size, checkpointed)
     except (OSError, sqlite3.Error) as exc:
-        _remove(partial)
+        files.remove_db_files(partial)
         raise _write_error(db, str(final), exc) from exc
     differences = count_differences(expected, found, "store", "backup") + problems
     if differences:
-        _remove(partial)
+        files.remove_db_files(partial)
         raise BackupVerificationError(messages.verify_failed(Path(db).name, str(final), differences),
                                       path=db, backup_path=str(final), differences=differences)
     try:
-        _publish(partial, final)
+        files.publish(partial, final)
     except OSError as exc:
-        _remove(partial)
+        files.remove_db_files(partial)
         raise _write_error(db, str(final), exc) from exc
-    return Backup(str(final), version, size, _size(Path(db)), space.wal_bytes, copied - started,
+    return Backup(str(final), version, size, files.file_size(db), space.wal_bytes, copied - started,
                   time.perf_counter() - copied, check, checkpointed, expected)
 
 
@@ -216,7 +230,7 @@ def _copy(db: str, partial: Path, counts: dict[str, int] | None) -> tuple[bool, 
     """Checkpoint, count and copy; returns (WAL fully checkpointed?, the store's counts)."""
     src = sqlite3.connect(db, timeout=5.0)
     try:
-        busy, _log, _done = src.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
+        busy, log, done = src.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
         expected = dict(counts) if counts is not None else table_counts(src)
         dst = sqlite3.connect(partial)
         try:
@@ -227,33 +241,23 @@ def _copy(db: str, partial: Path, counts: dict[str, int] | None) -> tuple[bool, 
             dst.close()
     finally:
         src.close()
-    fd = os.open(partial, os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    return busy == 0, expected
+    files.fsync_file(partial)
+    return busy == 0 and log == done, expected  # (0, -1, -1) without WAL: the file is complete
 
 
-def _verify(path: Path, size: int) -> tuple[str, list[str], dict[str, int]]:
-    conn = sqlite3.connect(read_only_uri(path), uri=True)
+def _verify(db: str, path: Path, size: int, checkpointed: bool) -> tuple[str, list[str], dict[str, int]]:
+    """(check, problems, counts) of the copy: integrity_check when small, else a page compare."""
+    conn = sqlite3.connect(files.read_only_uri(path), uri=True)
     try:
-        check, problems = health_check(conn, size)
-        return check, problems, table_counts(conn)
+        found = table_counts(conn)
+        if size < FULL_CHECK_LIMIT or not checkpointed:
+            check, problems = health_check(conn, size)
+            return check, problems, found
     finally:
         conn.close()
-
-
-def _publish(partial: Path, final: Path) -> None:
-    """Give the verified copy its final name without ever replacing an existing file."""
-    try:
-        os.link(partial, final)  # fails with FileExistsError instead of overwriting
-    except (AttributeError, NotImplementedError, PermissionError):  # no hard links (some filesystems)
-        if final.exists():
-            raise FileExistsError(17, "File exists", str(final)) from None
-        os.rename(partial, final)
-        return
-    os.unlink(partial)
+    # Large and fully checkpointed: every byte equal to the store (see upgrade_files).
+    difference = files.same_pages(db, path)
+    return "page compare", ([f"page compare: {difference}"] if difference else []), found
 
 
 def _write_error(db: str, final: str, exc: BaseException) -> BackupWriteError:
@@ -261,29 +265,6 @@ def _write_error(db: str, final: str, exc: BaseException) -> BackupWriteError:
                             errno=getattr(exc, "errno", None), strerror=getattr(exc, "strerror", None) or str(exc))
 
 
-def _remove(path: Path) -> None:
-    for item in (path, Path(f"{path}-journal"), Path(f"{path}-wal"), Path(f"{path}-shm")):
-        try:
-            item.unlink()
-        except OSError:
-            pass
-
-
-def read_only_uri(path: str | Path) -> str:
-    """A ``mode=ro`` URI for *path* (percent-encoded: spaces, ``?`` and ``#`` are safe)."""
-    return Path(path).expanduser().resolve().as_uri() + "?mode=ro"
-
-
-def _size(path: Path) -> int:
-    try:
-        return path.stat().st_size
-    except OSError:
-        return 0
-
-
-def _mount(path: Path) -> str:
-    """The mount point holding *path* (what ``df`` names), for messages."""
-    path = path.resolve()
-    while not os.path.ismount(path) and path != path.parent:
-        path = path.parent
-    return str(path)
+# Kept importable from here (the restore module and tests use these names).
+read_only_uri = files.read_only_uri
+_size = files.file_size

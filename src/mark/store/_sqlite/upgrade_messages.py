@@ -39,7 +39,8 @@ def size_math(space) -> str:
 
 def no_space(space, purpose: str) -> str:
     """*purpose*: "before upgrading it from schema 5 to 6", "before restoring a backup over it"."""
-    return (f"Not enough free space to back up {space.db_name} {purpose}: the backup needs about {fmt_size(space.required_bytes)} "
+    return (f"Not enough free space to back up {space.db_name} {purpose}: the backup needs about "
+            f"{fmt_size(space.required_bytes)} "
             f"(store {fmt_size(space.store_bytes)} + WAL {fmt_size(space.wal_bytes)} + "
             f"{space.margin_percent}% margin) but only {fmt_size(space.free_bytes)} is free on "
             f"{space.mount} (folder {space.directory}; short by {fmt_size(space.shortfall_bytes)}). "
@@ -117,7 +118,8 @@ def record_summary(record: dict, *, with_path: bool = True) -> str:
     parts = {name: record[key] for name, key in keys if isinstance(record.get(key), (int, float))}
     total = sum(parts.values())
     if record.get("backup") and parts.get("backup"):
-        parts["backup"] = f"{parts['backup']:.2f} s at {fmt_size((record.get('backup_bytes') or 0) / parts['backup'])}/s"
+        speed = fmt_size((record.get("backup_bytes") or 0) / parts["backup"])
+        parts["backup"] = f"{parts['backup']:.2f} s at {speed}/s"
     timing = ", ".join(f"{name} {value if isinstance(value, str) else f'{value:.2f} s'}"
                        for name, value in parts.items())
     head = (f"schema {record.get('from_schema')} -> {record.get('to_schema')} on {record.get('at')} "

@@ -179,3 +179,27 @@ def test_runtime_reopens_upgraded_store_with_its_memories(tmp_path: Path) -> Non
     hits = rt.memory(AGENT).retrieve_sync("上海仓库").fragments
     assert hits and "上海" in hits[0].content
     rt.shutdown()
+
+
+def test_large_backups_are_compared_page_by_page(tmp_path: Path, monkeypatch) -> None:
+    from mark.store._sqlite import upgrade_backup
+
+    db = tmp_path / "memory.db"
+    build_store(db)
+    monkeypatch.setattr(upgrade_backup, "FULL_CHECK_LIMIT", 0)  # every file counts as large
+    store = LocalMemoryStore(db)
+    assert store.last_upgrade["check"] == "page compare"
+    store.close()
+
+
+def test_large_backup_without_full_checkpoint_checks_the_data_tables(tmp_path: Path, monkeypatch) -> None:
+    from mark.store._sqlite import upgrade_backup
+
+    db = tmp_path / "memory.db"
+    build_store(db)
+    monkeypatch.setattr(upgrade_backup, "FULL_CHECK_LIMIT", 0)
+    copy = upgrade_backup._copy
+    monkeypatch.setattr(upgrade_backup, "_copy", lambda *a: (False, copy(*a)[1]))
+    store = LocalMemoryStore(db)
+    assert store.last_upgrade["check"] == "quick_check(data tables)"
+    store.close()
