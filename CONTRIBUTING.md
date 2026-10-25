@@ -5,6 +5,8 @@ tests, and features.
 
 ## Quick start
 
+You need Python 3.11 or newer and [uv](https://docs.astral.sh/uv/) (or pip).
+
 ```bash
 git clone https://github.com/emsoftanalytics/MARK-SDK.git
 cd MARK-SDK

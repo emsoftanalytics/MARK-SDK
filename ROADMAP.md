@@ -35,6 +35,10 @@ encryption at rest), plus:
   embedder; no migration under a running older server; a close gate for
   stores shared with background threads; bounded shutdown and crash-safe
   fact jobs.
+- **Verified upgrades.** An automatic, checked backup before every schema
+  upgrade, rollback on failure, plain-words errors, `mark migrate
+  --dry-run`, and `mark backups restore` to go back.
+- **Python 3.11 to 3.14.**
 
 ## Next: 1.0.0
 
@@ -56,17 +60,22 @@ Known gaps to close before or soon after 1.0:
   with any built-in embedder.
 - **Indirect questions** that share no words with the answer remain the
   weakest recall category with the default hash embedder.
-- **Cold start at a million memories** takes about 8 s of CPU, but 14-16 s
-  of wall time on a loaded machine; the goal is under 10 s wall anywhere.
 - **Multi-hop questions for small models.** Chains that combine two facts
-  about the user (a visitor coming to "my" city after a move) still fail
-  with 1-3B models.
+  about the user (a visitor coming to "my" city after a move, probe P23)
+  still fail with 1-3B models, and models of 1B or smaller sometimes misread
+  a correct briefing.
 - **Facts from developer notes.** `TODO:` and `DECISION:` notes always set
   a memory's kind, but become facts only when they state a value in a
   recognised pattern ("the job queue uses SQLite"); open TODOs and decisions
   such as "we use Postgres for billing-api" yield no fact yet.
-- **Encryption support in the command line**, and alias resolution in
-  timelines (one subject under several names).
+- **Encryption in the command line.** The `mark` command, including
+  `mark serve` and `mark migrate`, does not open encrypted stores yet; they
+  are used and upgraded from Python.
+- **Wall time at a million memories on a loaded machine.** Cold start takes
+  about 8 s of CPU but 14-16 s of wall time under load, and the upgrade
+  backup and its check took 32.6 s; the goal is under 10 s cold start
+  anywhere.
+- **Alias resolution in timelines** (one subject under several names).
 
 ## Later
 
