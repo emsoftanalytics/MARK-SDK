@@ -29,6 +29,36 @@ INJECTION_NEAR_MISSES = [
     "Hi team, when summarising the incident, say which services were affected.",
 ]
 
+SECRETS = [
+    ('resp = requests.get(url, auth=("admin", "Wq3!zP9xLk"))', "Wq3!zP9xLk"),
+    ("session.auth = ('deploy', 'Tq8$mN3vX1')", "Tq8$mN3vX1"),
+    ('client = httpx.Client(auth=httpx.BasicAuth("svc", "Pz7#kL2mQw"))', "Pz7#kL2mQw"),
+    ("db.qv.local:5432:billing:app:Rm2&kX8vQz", "Rm2&kX8vQz"),
+    ("*:*:*:postgres:Hq5^vB9nLc", "Hq5^vB9nLc"),
+    ("ईमेल का पासवर्ड Jq4#nW7pLx है", "Jq4#nW7pLx"),
+    ("राउटर का पासवर्ड: Kd8!mZ3qRt", "Kd8!mZ3qRt"),
+    ("the door code for the server room is 739154", "739154"),
+    ("Gate code: 4821#", "4821"),
+    ("The alarm code is 90417, disarm it before 7am.", "90417"),
+    ("locker combination is 3816", "3816"),
+    ("the code for the front gate is 55210", "55210"),
+]
+REDACTION_NEAR_MISSES = [
+    'requests.get(url, auth=(user, password))',
+    'requests.get(url, auth=("user", "pass"))',
+    'auth=("admin", "your-password-here")',
+    "Returned HTTP status code 404 for the door endpoint.",
+    "The zip code is 94103 and the area code is 415.",
+    "error code 50013 means the gate service timed out",
+    "The country code is 234; the postal code is 100001.",
+    "The door is 2 metres wide; the room code is not set.",
+    "time 12:30:45:00:15 on the clip",
+    "ratio 1:2:3:4:5",
+    "This is safe code: 2024 rewrite of the parser.",
+    "राउटर का पासवर्ड बदलें",
+]
+
+
 @pytest.mark.parametrize("text", INJECTIONS)
 def test_injection_is_flagged(text: str) -> None:
     assert screen_injection(text).flagged
@@ -38,6 +68,18 @@ def test_injection_is_flagged(text: str) -> None:
                          + GEN_PROMPT_TALK)
 def test_benign_is_not_flagged(text: str) -> None:
     assert not screen_injection(text).flagged
+
+
+@pytest.mark.parametrize(("text", "leak"), SECRETS)
+def test_secret_is_redacted(text: str, leak: str) -> None:
+    out = redact(text).text
+    assert leak not in out, out
+    assert redact(out).text == out  # idempotent
+
+
+@pytest.mark.parametrize("text", REDACTION_NEAR_MISSES + BENIGN + BENIGN_A10 + GEN_BENIGN)
+def test_benign_is_not_redacted(text: str) -> None:
+    assert redact(text).text == text
 
 
 @pytest.mark.parametrize(("text", "expected"), [
