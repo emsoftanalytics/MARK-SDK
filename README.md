@@ -439,9 +439,30 @@ See [SECURITY.md](SECURITY.md) for the details and their limits.
 
 ## Upgrading
 
-Stores upgrade in place on first open. Back up `memory.db` first, and stop
-every `mark serve`, MCP server and agent that uses the store: 0.2.0a10
-refuses to migrate while an older server runs (`StoreInUseError`). Once
+Stores upgrade in place on first open, after an automatic backup: MARK
+copies the older store to `memory.db.v<N>-backup-<UTC time>.db` next to it
+(owner-only), checks the copy, then migrates and checks again. On any
+failure the store is left as it was (or restored from the backup) and the
+error says why, with sizes. Stop every `mark serve`, MCP server and agent
+that uses the store first: 0.2.0a10 refuses to migrate while an older
+server runs (`StoreInUseError`).
+
+```bash
+mark migrate --dry-run   # schemas, the backup it would make, free-space check
+mark migrate             # upgrade now (verified backup first)
+mark backups             # list backups: schema, size, date
+mark backups restore .mark/memory.db.v5-backup-20261025T101500Z.db --yes
+```
+
+```python
+from mark import Mark
+
+mark = Mark.local(".", backup_dir="/mnt/big-disk/mark-backups")  # backup elsewhere
+# Mark.local(".", backup_on_upgrade=False) or MARK_BACKUP_ON_UPGRADE=0: no backup
+```
+
+A backup holds the same memories as the store (an encrypted store's backup
+stays encrypted); delete it once you no longer need it. Once
 upgraded, a store must not be reopened with 0.2.0a8 or older, which do not
 detect the newer schema (0.2.0a9 refuses it with `StoreVersionError`). The
 [changelog](CHANGELOG.md) lists every upgrade note, including the

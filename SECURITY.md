@@ -336,7 +336,20 @@ the server. Treat it like the database file itself.
   recorded port. If one runs, the open is refused with `StoreInUseError`
   and nothing is written; `mark serve` also refuses to start next to one.
   Stop every server, MCP server and agent that uses a store before upgrading
-  MARK, and back the store up first.
+  MARK.
+- **Upgrade backups.** Before migrating an older store, MARK copies it to
+  `<db>.v<N>-backup-<UTC time>.db` (or into `backup_dir`). A backup holds the
+  same data as the store, so treat it like the store: it is created mode
+  `0600` with `O_EXCL` (never replacing an existing file); the store's
+  folder keeps its permissions, and a `backup_dir` MARK creates is `0700`.
+  An encrypted store's backup is a raw copy and stays encrypted with the
+  same key; MARK never decrypts it. The backup is checked (row counts and an
+  integrity check) before the migration starts, and a failed migration is
+  rolled back or restored from it. Forgetting a memory later, even with
+  `secure=True`, does not touch existing backups: delete backups you no
+  longer need (`mark backups` lists them). `mark backups restore` keeps the
+  current store as `<db>.pre-restore-<time>.db` (also `0600`) and refuses
+  while a `mark serve` holds the store.
 - **Older versions.** 0.2.0a9 refuses a store with a newer schema
   (`StoreVersionError`). 0.2.0a8 and older have no such check and must never
   open a store written by a newer version (see "Rows written without the
