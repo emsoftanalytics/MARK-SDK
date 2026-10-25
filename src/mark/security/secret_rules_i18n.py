@@ -39,6 +39,11 @@ _PROSE = lazy_compile(
 _PROSE_CJK = lazy_compile(
     rf"(?P<kw>{_CJK_WORDS})(?:[^\s:：。，]{{0,6}}?)(?:是|为|為|は|는|은|:|：|=)[ \t]*{_VALUE}")
 
+# Hindi puts the copula last: "ईमेल का पासवर्ड X है", "राउटर का पासवर्ड: X".
+_PROSE_HI = lazy_compile(
+    r"(?P<kw>पासवर्ड|पासकोड|कूटशब्द)[ \t]*(?:(?:है|था)[ \t]*)?[:=：-]?[ \t]*[\"'“‘]?(?P<v>[^\s\"'“”‘’।]+?)"
+    r"(?=[\"'”’]?(?:[ \t]+(?:है|था|हैं)(?![^\s।.,;!?])|[।.,;!?]*(?:\s|$)))")
+
 # "boarding pass is 14B", "ski pass: Gold2024": a pass that is a ticket.
 _TICKET = lazy_compile(r"(?i)\b(?:boarding|bus|day|season|ski|hall|backstage|press|guest|free|rail|travel|park"
                        r"|visitor|access|gym|e-?|mountain|festival|weekly|monthly|annual|vip)[ \t-]*$")
@@ -64,6 +69,7 @@ INTL_PROSE_RULES: list[Rule] = [
                "nenosiri", "khẩu", "kata ", "пароль", "κωδικός", "סיסמ", "كلمة")),
     Rule("password", _PROSE_CJK, validate=lambda m: credential_like(value_of(m)),
          hint=("密码", "密碼", "口令", "パスワード", "暗証番号", "비밀번호", "암호")),
+    Rule("password", _PROSE_HI, validate=lambda m: credential_like(value_of(m)), hint=("पासवर्ड", "पासकोड", "कूटशब्द")),
 ]
 
 __all__ = ["INTL_PROSE_RULES"]

@@ -121,11 +121,28 @@ def _seed_ok(match: "re.Match[str]") -> bool:
     return len(words) in (12, 15, 18, 21, 24) and not _FUNCTION_WORDS.intersection(words)
 
 
+# ── physical access codes: "the door code for the server room is 739154" ─────
+
+# Only with an access noun (door, gate, alarm, safe, …): status, error, zip,
+# postal, area and country codes never qualify. 4-10 digits that end the clause.
+_ACCESS_NOUN = (r"(?:door|gate|alarm|safe|locker|lock|padlock|lockbox|key[ \t-]?box|keypad|vault|garage|entry"
+                r"|entrance|access|building|room|cabinet)")
+_CODE_WORD = r"(?:code|combination|combo|passcode|pin)"
+_ACCESS_CODE = lazy_compile(
+    rf"(?im)(?<![\w-])(?:{_ACCESS_NOUN}[ \t]+{_CODE_WORD}(?:[ \t]+(?:for|to|of|on|at)[ \t]+(?:[\w'’-]+[ \t]+){{0,3}}?)?"
+    rf"|{_CODE_WORD}[ \t]+(?:for|to|of|on|at)[ \t]+(?:the[ \t]+|our[ \t]+|my[ \t]+|your[ \t]+)?(?:[\w'’-]+[ \t]+){{0,2}}?"
+    rf"{_ACCESS_NOUN}[ \t]*)"
+    r"(?:[ \t]+(?:is|was)[ \t]+|[ \t]*[:=][ \t]*)[#*]?(?P<v>\d{4,10})"
+    # The number ends the clause ("safe code: 2024 rewrite" is about code).
+    r"(?=[#*]?(?:[.,;!?)]*$|[.,;!?)]+\s|\s+(?:and|or|but|so|to|for|on|at|if|when|then|until|before|after"
+    r"|which|please|[\u2014-])(?!\w)))")
+
 PROSE_SECRET_RULES: list[Rule] = [
     Rule("seed_phrase", _SEED_PHRASE, validate=_seed_ok, hint=("seed", "recovery", "mnemonic")),
     Rule("password", _PROSE_PASSWORD, validate=_prose_password_ok, hint=("pass", "pwd")),
     Rule("password", _SHORT_PASSWORD, validate=_short_password_ok, hint=("pw", "pass")),
     Rule("api_key", _LONG_KEY, validate=_long_key_ok, kind_of=_long_key_kind, hint=("key", "secret", "token")),
+    Rule("access_code", _ACCESS_CODE, hint=("code", "combination", "combo", "pin")),
 ]
 
 

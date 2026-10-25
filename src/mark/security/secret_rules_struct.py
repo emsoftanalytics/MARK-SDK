@@ -188,6 +188,27 @@ def _netrc_ok(match: "re.Match[str]") -> bool:
     return credential_like(value_of(match)) and _plausible_value(match, strict_word=True, min_length=4)
 
 
+# ── HTTP basic-auth tuples and .pgpass lines ─────────────────────────────────
+
+# requests/httpx: auth=("admin", "V"), session.auth = ('u', 'V'), BasicAuth("u", "V").
+_AUTH_TUPLE = lazy_compile(
+    r"""(?:\bauth[ \t]*=[ \t]*\(|\b(?:HTTPBasicAuth|HTTPDigestAuth|BasicAuth|DigestAuth|HTTPProxyAuth)[ \t]*\()"""
+    r"""[ \t]*(?P<q>["'])[\w.@+-]{1,64}(?P=q)[ \t]*,[ \t]*(?:"(?P<vq>[^"\n]{4,})"|'(?P<vs>[^'\n]{4,})')[ \t]*\)""")
+# .pgpass: hostname:port:database:username:password, one entry per line.
+_PGPASS = lazy_compile(r"^[ \t]*(?P<h>[\w.-]+|\*):(?:\d{1,5}|\*):[\w.*-]+:[\w.@*-]+:(?P<v>\S+)[ \t]*$", re.MULTILINE)
+
+
+def _auth_tuple_ok(match: "re.Match[str]") -> bool:
+    return _plausible_value(match, strict_word=True, min_length=4)
+
+
+def _pgpass_ok(match: "re.Match[str]") -> bool:
+    host = match.group("h")
+    if host != "*" and not re.search(r"[A-Za-z.]", host):
+        return False   # "12:30:45:00:15" is a time code, not a host
+    return credential_like(value_of(match)) and _plausible_value(match, strict_word=True, min_length=4)
+
+
 STRUCT_SECRET_RULES: list[Rule] = [
     # Hints are cheap substring checks; prefilters are cheap regexes that start
     # with a literal, so most memories skip these rules without a full scan.
@@ -196,6 +217,8 @@ STRUCT_SECRET_RULES: list[Rule] = [
          prefilter=lazy_compile(r"[ \t]-(?:[pawu]|-user)")),
     Rule("secret", _LONG_FLAG, validate=_flag_ok, kind_of=_flag_kind, hint="--"),
     Rule("password", _NETRC, validate=_netrc_ok, hint=("login", "account", "machine", "default")),
+    Rule("password", _AUTH_TUPLE, validate=_auth_tuple_ok, hint="auth"),
+    Rule("password", _PGPASS, validate=_pgpass_ok, prefilter=lazy_compile(r":(?:\d{1,5}|\*):")),
     Rule("secret", _ASSIGN, validate=_assign_ok, kind_of=_assign_kind,
          hint=("pass", "pwd", "secret", "token", "key", "auth", "sig", "psk", "cred", "cookie", "session",
                "sas", "bearer", "private", "sid", "hmac"), prefilter=lazy_compile(r"[:=]")),

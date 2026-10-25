@@ -111,8 +111,9 @@ def _plausible_value(match: "re.Match[str]", *, strict_word: bool, min_length: i
 # ── generic assignments ──────────────────────────────────────────────────────
 
 # Unquoted values run to the next whitespace (so "Hunter2!xyz&3" is redacted
-# whole — the old "[REDACTED]&3" leak), minus trailing sentence/JSON punctuation.
-_VALUE = r"""(?:"(?P<vq>[^"\n]*)"|'(?P<vs>[^'\n]*)'|(?P<v>\S+?)(?=[,;.)\]}`]*(?:\s|$)))"""
+# whole — the old "[REDACTED]&3" leak), minus trailing sentence/JSON punctuation
+# and a closing quote (curl -H 'X-API-Key: V' keeps its quoting).
+_VALUE = r"""(?:"(?P<vq>[^"\n]*)"|'(?P<vs>[^'\n]*)'|(?P<v>\S+?)(?=["']?[,;.)\]}`]*(?:\s|$)))"""
 _SEP = r"""["']?(?:[ \t]*[:=](?![/=])[ \t]*|[ \t]+(?:is|was)[ \t]+)"""
 # Patterns start at the sensitive *keyword* (fast literal scan); the full key
 # ("DB_PASSWORD", "client_secret") is recovered by scanning back in _key_of.

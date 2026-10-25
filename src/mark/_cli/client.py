@@ -48,14 +48,32 @@ def _live_server(state: Path) -> dict[str, Any] | None:
             return None
         if hello.get("protocol") != protocol_fingerprint():
             # A server from another build may not accept this client's
-            # arguments: run in-process instead of failing mid-command.
-            print("mark: server runs a different MARK build; running in-process "
-                  "(restart `mark serve` to use the server)", file=sys.stderr)
+            # arguments: run in-process instead of failing mid-command. The
+            # notice waits until the in-process open succeeds (_open_engine).
+            _OTHER_BUILD["seen"] = True
             return None
         return data
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         pass
     return None
+
+
+# An answering server from another build was found; "shown" once the notice is printed.
+_OTHER_BUILD = {"seen": False, "shown": False}
+
+
+def _open_engine(db: Path) -> _Engine:
+    """Open *db* in-process; say once per process that another build's server was bypassed.
+
+    Nothing is printed when the open is refused (e.g. ``StoreInUseError``
+    because that older server holds the store): the refusal says it all.
+    """
+    engine = _Engine(db)
+    if _OTHER_BUILD["seen"] and not _OTHER_BUILD["shown"]:
+        _OTHER_BUILD["shown"] = True
+        print("mark: server runs a different MARK build; running in-process "
+              "(restart `mark serve` to use the server)", file=sys.stderr)
+    return engine
 
 
 def _base_url(server: dict[str, Any]) -> str:
@@ -106,7 +124,7 @@ def execute(db: Path, cmd: str, args: dict[str, Any], *, use_server: bool = True
 
 def _run_local(db: Path, cmd: str, args: dict[str, Any], *, retry_since: float | None = None) -> dict[str, Any]:
     """Run *cmd* in this process; ``retry_since`` marks a retry after the server died mid-request."""
-    engine = _Engine(db)
+    engine = _open_engine(db)
     try:
         if retry_since is not None:
             done = _already_applied(engine, cmd, args, retry_since)
@@ -174,7 +192,7 @@ def _ingest_in_chunks(server: dict[str, Any] | None, args: dict[str, Any], db: P
     result: dict[str, Any] = {"stored": 0}
     chunk: list[str] = []
     size = 0
-    local: list[Any] = [] if server is not None else [_Engine(db)]  # in-process once the server is gone
+    local: list[Any] = [] if server is not None else [_open_engine(db)]  # in-process once the server is gone
 
     def send() -> None:
         # Counts add up; other fields (e.g. current "facts") come from the last chunk.
@@ -185,7 +203,7 @@ def _ingest_in_chunks(server: dict[str, Any] | None, args: dict[str, Any], db: P
                 part = _call_server(server, "ingest", request)
             except _ServerGone:
                 print("mark: the server stopped during the ingest; finishing it in-process", file=sys.stderr)
-                local.append(_Engine(db))
+                local.append(_open_engine(db))
         if local:
             part = local[0].run("ingest", request)
         summed = {key: result.get(key, 0) + part[key]

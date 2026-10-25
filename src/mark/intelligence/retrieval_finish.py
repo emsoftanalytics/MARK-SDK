@@ -18,12 +18,17 @@ Three rules keep what a caller sees honest and small:
    relevant returns nothing. A pure listing question with a time window
    ("what happened since Monday?") keeps its in-window results. The best
    match always stays outside a time window (the gap report says how weak
-   it is), and so do pinned memories (importance >= ``PINNED``).
+   it is), and so do pinned memories (importance >= ``PINNED``). The parts
+   of a numbered sequence ("Step 2: …", "days 4 to 6 …") stay together:
+   once one part clears the floor, the others with any evidence do too.
 
 Expects nothing from the host class beyond the methods defined here.
 """
 from __future__ import annotations
 
+import re
+
+from mark.intelligence._lazy_re import lazy
 from mark.intelligence.query_understanding import _content_terms
 from mark.types import MemoryFragment
 
@@ -40,6 +45,16 @@ OUTDATED_FACTOR = 0.8
 _LISTING_TERMS = frozenset(_content_terms(
     "happen happened do did done new news change changes changed update updates updated discuss discussed "
     "talk talked work worked going on anything everything"))
+
+
+# One part of a numbered sequence ("Step 2: …", "days 4 to 6 …"); group 1 is its unit.
+_SEQUENCE_PART = lazy(r"\b(step|day|part|phase|stage|week|round)s?\s+\d+", re.IGNORECASE)
+
+
+def sequence_unit(text: str) -> str | None:
+    """``"step"``, ``"day"``, … when *text* is a part of a numbered sequence, else None."""
+    match = _SEQUENCE_PART.search(text or "")
+    return match.group(1).lower() if match else None
 
 
 def demoted_relevance(relevance: float, signals: dict | None) -> float:
@@ -143,4 +158,11 @@ def apply_floor(query: str, fragments: list[MemoryFragment], scores: list[float]
     # window was asked for; pinned memories (importance >= PINNED) always stay.
     keep = [i for i, rel in enumerate(relevances)
             if rel >= floor or (i == 0 and not time_scoped) or fragments[i].importance >= PINNED]
+    # The other parts of a kept sequence: "Step 2: …" scores low for "how many steps?".
+    units = {sequence_unit(fragments[i].content) for i in keep} - {None}
+    if units:
+        minimum = TIME_SCOPED_FLOOR if time_scoped else ABSOLUTE_FLOOR
+        kept = set(keep)
+        keep = [i for i, rel in enumerate(relevances) if i in kept
+                or (rel >= minimum and sequence_unit(fragments[i].content) in units)]
     return [fragments[i] for i in keep], [scores[i] for i in keep], [relevances[i] for i in keep]
