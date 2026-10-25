@@ -260,6 +260,11 @@ mark timeline payments-api owner                    # every owner change, oldest
 mark forget --match "orders.created_at" --dry-run   # see what a match would delete, then --yes
 ```
 
+Before upgrading MARK, run `mark --version` and `mark migrate --dry-run`
+(schemas, the backup it will take, free space), and stop `mark serve` first
+(`mark serve stop`). The upgrade keeps a verified backup: `mark backups`
+lists it and `mark backups restore FILE` goes back.
+
 ## What To Remember
 
 Store durable project facts, user-approved decisions, tested procedures,

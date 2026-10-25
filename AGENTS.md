@@ -48,6 +48,13 @@ timeline (`memory.timeline(subject, attribute)` or `mark timeline`) instead
 of a top-k recall. Never store secrets (MARK redacts common ones, but do not
 rely on it) or hidden reasoning; `forget(id, secure=True)` removes a mistake.
 
+Before upgrading `mark-sdk`, check the installed version with
+`mark --version`, stop `mark serve` (`mark serve stop`) and any MCP server
+using the store, and run `mark migrate --dry-run` to see the schema change,
+the backup it will take and the free-space check. The upgrade keeps a
+verified backup (`mark backups` lists it; `mark backups restore FILE` goes
+back).
+
 When demonstrating MARK, show the same task without MARK and with MARK.
 
 ## SDK integration modes
@@ -60,7 +67,7 @@ When demonstrating MARK, show the same task without MARK and with MARK.
 | Middleware | `MarkAgentMiddleware` (LangChain, `anticipate=True` by default; `budget_tokens=`, `history="mark"`, `preset=`); `mark.middlewares` for runtime operations | Memory should be injected and recorded automatically. |
 | Tools | `create_mark_tools(...)`: `mark_retrieve`, `mark_write`, `mark_observe` | The model should decide when to read or write memory. |
 | MCP | `mark mcp` or `python -m mark.adapters.mcp` (same options: `--db`, `--agent`, `--briefing`, `--preset`, `--tools` (may name `mark_briefing`), `--allow-agent`, `--user-subject`, `--extract-facts`); `create_mark_mcp_server(...)`: `mark_brief`, `mark_retrieve`, `mark_write` (`kind`), `mark_observe`, `mark_fact`, `mark_timeline`, `mark_list`, `mark_resolve`, `mark_supersede`, `mark_forget` (id, or whole-word `match` with `confirm=true` for several; `secure`); `--briefing` adds `mark_briefing`; unknown arguments are errors | External MCP clients need memory. |
-| CLI | `mark remember --kind`, `recall [--kind K [--all]] [--open]`, `brief`, `resolve`, `supersede`, `forget ID [--secure]` / `forget --match TEXT [--dry-run] [--yes] [--all]`, `list --kind --open`, `fact set/get/history/list/retract`, `timeline`, `ingest [--extract-facts]`, `export`/`import`, `stats`, `config show` / `config user-subject NAME`, `serve --detach` / `serve status` / `serve stop` (agents: always `--detach`), `mcp` | Scripts, shells, and agents that run commands. |
+| CLI | `mark remember --kind`, `recall [--kind K [--all]] [--open]`, `brief`, `resolve`, `supersede`, `forget ID [--secure]` / `forget --match TEXT [--dry-run] [--yes] [--all]`, `list --kind --open`, `fact set/get/history/list/retract`, `timeline`, `ingest [--extract-facts]`, `export`/`import`, `stats`, `config show` / `config user-subject NAME`, `serve --detach` / `serve status` / `serve stop` (agents: always `--detach`), `mcp`, `migrate [--dry-run]`, `backups [restore FILE]`, `--version` | Scripts, shells, and agents that run commands. |
 | Skill | `src/mark/middlewares/skills/mark-usage/SKILL.md` (opt-in `mark-memory-compact` for small models) | An agent loads portable `SKILL.md` instructions. |
 
 `mark.memory`, the LangChain and MCP adapters, and the CLI all default to the
